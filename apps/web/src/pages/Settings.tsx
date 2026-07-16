@@ -13,6 +13,7 @@ interface Project {
 }
 
 export function Settings() {
+  const qc = useQueryClient();
   const projects = useQuery({ queryKey: ['projects'], queryFn: () => api<Project[]>('/projects') });
   const project = projects.data?.[0];
   const keys = useQuery({
@@ -20,6 +21,14 @@ export function Settings() {
     enabled: !!project?.id,
     queryFn: () => api<{ publicKey: string; isActive: boolean; rateLimit: number }[]>(`/projects/${project!.id}/keys`),
   });
+  const usage = useQuery({
+    queryKey: ['usage', project?.id],
+    enabled: !!project?.id,
+    queryFn: () => api<{ perDay: { day: string; count: number }[]; replayBytes: number; replayCount: number; totalEvents: number }>(`/projects/${project!.id}/usage`),
+  });
+  const invalKeys = () => qc.invalidateQueries({ queryKey: ['keys', project?.id] });
+  const regen = useMutation({ mutationFn: () => api(`/projects/${project!.id}/keys/regenerate`, { method: 'POST' }), onSuccess: invalKeys });
+  const revoke = useMutation({ mutationFn: (k: string) => api(`/keys/${k}/revoke`, { method: 'POST' }), onSuccess: invalKeys });
 
   if (projects.isLoading) return <div className="p-6"><Skeleton className="h-40 w-full" /></div>;
   const dsn = keys.data?.[0];
@@ -48,8 +57,16 @@ export function Settings() {
                 <span className={`text-caption ${k.isActive ? 'text-status-resolved' : 'text-status-muted'}`}>
                   {k.isActive ? 'active' : 'revoked'}
                 </span>
+                {k.isActive && (
+                  <button onClick={() => revoke.mutate(k.publicKey)} className="text-caption text-level-error hover:underline">revoke</button>
+                )}
               </div>
             ))}
+            <div>
+              <Button size="sm" variant="secondary" disabled={regen.isPending} onClick={() => regen.mutate()}>
+                {regen.isPending ? 'Regenerating…' : 'Regenerate key'}
+              </Button>
+            </div>
             <div className="mt-2">
               <div className="mb-1 text-caption uppercase text-text-faint">Sentry.init DSN</div>
               <pre className="overflow-x-auto rounded-md border border-border bg-bg px-3 py-2 font-mono text-mono text-text">
@@ -72,6 +89,10 @@ export function Settings() {
         {project ? <KillSwitch projectId={project.id} enabled={project.ingestEnabled} /> : null}
       </Section>
 
+      <Section title="System metrics" hint="Queue depth, processing latency, dropped-event counters (NFR-MNT-2, FR-ING-6).">
+        <SystemMetrics />
+      </Section>
+
       <Section title="Members" hint="Invite teammates; admin-only controls are gated (FR-ADM-6, NFR-SEC-6).">
         <Members />
       </Section>
@@ -80,11 +101,42 @@ export function Settings() {
         {project ? <GithubApp projectId={project.id} /> : null}
       </Section>
 
-      <Section title="Retention & Usage" hint="Purge ages out old data to control cost (FR-RET-1).">
-        <Row k="Events" v="30 days" />
-        <Row k="Replays" v="14 days" />
-        <Row k="Source maps" v="aligned to release retention" />
+      <Section title="Retention & Usage" hint="Purge ages out old data to control cost (FR-RET-1/3).">
+        <Row k="Events retention" v="30 days" />
+        <Row k="Replays retention" v="14 days" />
+        <Row k="Total events" v={usage.data ? String(usage.data.totalEvents) : '…'} />
+        <Row k="Events (7d)" v={usage.data ? String(usage.data.perDay.reduce((a, d) => a + d.count, 0)) : '…'} />
+        <Row k="Replay storage" v={usage.data ? `${(usage.data.replayBytes / 1024).toFixed(1)} KB · ${usage.data.replayCount}` : '…'} />
       </Section>
+    </div>
+  );
+}
+
+function SystemMetrics() {
+  const m = useQuery({
+    queryKey: ['metrics'],
+    queryFn: () => api<{ queue: Record<string, number>; latencyMs: { p50: number; p95: number; samples: number }; dropsToday: Record<string, number> }>('/metrics'),
+    refetchInterval: 5000,
+  });
+  if (m.isLoading || !m.data) return <Skeleton className="h-16 w-full" />;
+  const drops = Object.entries(m.data.dropsToday);
+  return (
+    <div className="grid grid-cols-2 gap-x-6 text-small">
+      <Row k="Queue waiting" v={String(m.data.queue.waiting)} />
+      <Row k="Queue active" v={String(m.data.queue.active)} />
+      <Row k="Dead-letter" v={String(m.data.queue.deadLetter)} />
+      <Row k="Latency p50 / p95" v={`${m.data.latencyMs.p50} / ${m.data.latencyMs.p95} ms`} />
+      <div className="col-span-2 mt-1 flex flex-wrap gap-2">
+        {drops.length === 0 ? (
+          <span className="text-caption text-text-faint">No drops today.</span>
+        ) : (
+          drops.map(([reason, n]) => (
+            <span key={reason} className="rounded-md border border-border bg-bg px-2 py-0.5 font-mono text-caption text-text-muted">
+              {reason}: {n}
+            </span>
+          ))
+        )}
+      </div>
     </div>
   );
 }
@@ -137,6 +189,10 @@ function Members() {
     mutationFn: (id: string) => api(`/members/${id}/remove`, { method: 'POST' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['members'] }),
   });
+  const role = useMutation({
+    mutationFn: (v: { id: string; role: string }) => api(`/members/${v.id}/role`, { method: 'POST', body: JSON.stringify({ role: v.role }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['members'] }),
+  });
 
   const inp = 'h-8 rounded-md border border-border bg-bg px-2 text-small text-text';
   return (
@@ -149,7 +205,14 @@ function Members() {
               <span className="ml-2 font-mono text-caption text-text-muted">{m.email}</span>
             </div>
             <div className="flex items-center gap-2">
-              <span className="rounded-full border border-border px-2 py-0.5 text-caption capitalize text-text-muted">{m.role}</span>
+              <select
+                value={m.role}
+                onChange={(e) => role.mutate({ id: m.id, role: e.target.value })}
+                className="h-7 rounded-md border border-border bg-bg px-1.5 text-caption text-text"
+              >
+                <option value="member">member</option>
+                <option value="admin">admin</option>
+              </select>
               <button onClick={() => remove.mutate(m.id)} className="text-caption text-level-error hover:underline">
                 remove
               </button>

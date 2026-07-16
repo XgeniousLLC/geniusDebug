@@ -1,4 +1,4 @@
-import { db, sql, events, replays, sourceMapArtifacts, releases, issueCounts } from '@geniusdebug/db';
+import { db, sql, events, replays, sourceMapArtifacts, releases, issueCounts, ensurePartitions, dropAgedPartitions } from '@geniusdebug/db';
 import { lt, inArray } from 'drizzle-orm';
 import { deleteObjects } from './r2';
 
@@ -15,7 +15,12 @@ function cutoff(days: number): Date {
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 }
 
-export async function purge(): Promise<{ events: number; replays: number; maps: number }> {
+export async function purge(): Promise<{ events: number; replays: number; maps: number; partitions: { created: string[]; dropped: string[] } }> {
+  // Roll partitions forward + drop aged ones (NFR-SCALE-3) BEFORE row-level purge.
+  const now = new Date();
+  const created = await ensurePartitions(now, 3);
+  const dropped = await dropAgedPartitions(now, EVENT_DAYS);
+
   // Replays: delete R2 blobs first (by prefix), then metadata.
   const oldReplays = await db
     .select({ id: replays.id, r2Prefix: replays.r2Prefix })
@@ -50,13 +55,16 @@ export async function purge(): Promise<{ events: number; replays: number; maps: 
   await db.delete(issueCounts).where(lt(issueCounts.bucket, cutoff(EVENT_DAYS)));
 
   const evCount = (evRes as unknown as { count?: number }).count ?? 0;
-  return { events: evCount, replays: oldReplays.length, maps: mapCount };
+  return { events: evCount, replays: oldReplays.length, maps: mapCount, partitions: { created, dropped } };
 }
 
 /** Standalone runner for the `purge` script / manual verification. */
 export async function runPurgeOnce(): Promise<void> {
   const res = await purge();
   // eslint-disable-next-line no-console
-  console.log(`[retention] purged events=${res.events} replays=${res.replays} maps=${res.maps}`);
+  console.log(
+    `[retention] purged events=${res.events} replays=${res.replays} maps=${res.maps} ` +
+      `partitions:+[${res.partitions.created.join(',')}] -[${res.partitions.dropped.join(',')}]`,
+  );
   await sql.end();
 }

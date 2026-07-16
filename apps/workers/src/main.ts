@@ -4,6 +4,9 @@ import IORedis from 'ioredis';
 import { parseEnvelope } from './parse-envelope';
 import { processEnvelope } from './processor';
 import { purge } from './retention';
+import { recordLatency } from './metrics';
+
+const SHED_THRESHOLD = Number(process.env.QUEUE_SHED_THRESHOLD ?? 5000);
 
 const REDIS_URL = process.env.REDIS_URL ?? 'redis://localhost:6379';
 const connection = new IORedis(REDIS_URL, { maxRetriesPerRequest: null });
@@ -21,12 +24,18 @@ interface IngestJob {
 /** Dead-letter queue for poison events (FR-WRK-1 / NFR-REL-1). */
 const dlq = new Queue(DLQ, { connection });
 
+const ingestQueue = new Queue(INGEST_QUEUE, { connection });
+
 const worker = new Worker<IngestJob>(
   INGEST_QUEUE,
   async (job) => {
+    const started = Date.now();
     const bytes = Buffer.from(job.data.envelopeB64, 'base64');
     const parsed = parseEnvelope(bytes);
-    await processEnvelope(job.data.projectId, parsed);
+    // Back-pressure: shed low-value items when the queue is deep (FR-WRK-4).
+    const waiting = await ingestQueue.getWaitingCount().catch(() => 0);
+    await processEnvelope(job.data.projectId, parsed, { shedLowValue: waiting > SHED_THRESHOLD });
+    await recordLatency(Date.now() - started).catch(() => {});
   },
   {
     connection,

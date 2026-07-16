@@ -3,7 +3,15 @@ import type { Request, Response } from 'express';
 import { DsnService } from './dsn.service';
 import { RateLimitService } from './ratelimit.service';
 import { EnvelopeService } from './envelope.service';
-import { ingestQueue, type IngestJob } from './queue';
+import { ingestQueue, connection, type IngestJob } from './queue';
+
+/** Aggregate dropped-event counters (FR-ING-6) — cheap Redis INCR, daily bucket. */
+async function countDrop(projectId: string, reason: string): Promise<void> {
+  const day = new Date().toISOString().slice(0, 10);
+  const key = `drops:${projectId}:${reason}:${day}`;
+  const n = await connection.incr(key);
+  if (n === 1) await connection.expire(key, 60 * 60 * 24 * 8);
+}
 
 /**
  * Sentry envelope endpoint (FR-ING-1..7). Authenticate → rate-limit →
@@ -74,17 +82,24 @@ export class EnvelopeController {
     if (!key) return res.status(403).json({ error: 'invalid or disabled key' });
 
     // Remote kill switch (FR-SDK-8): drop cheaply if ingest disabled for project.
-    if (!key.ingestEnabled) return res.status(202).json({ status: 'disabled' });
+    if (!key.ingestEnabled) {
+      await countDrop(projectId, 'disabled');
+      return res.status(202).json({ status: 'disabled' });
+    }
 
     const gate = await this.rl.check(projectId, key.rateLimit);
     if (gate.limited) {
+      await countDrop(projectId, 'rate_limited');
       res.setHeader('Retry-After', String(gate.retryAfter));
       return res.status(429).json({ error: 'rate limited' });
     }
 
     const raw: Buffer = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body ?? '');
     const result = this.env.shallowValidate(raw, contentEncoding);
-    if (!result.ok) return res.status(result.status ?? 400).json({ error: result.reason });
+    if (!result.ok) {
+      await countDrop(projectId, result.status === 413 ? 'too_large' : 'invalid');
+      return res.status(result.status ?? 400).json({ error: result.reason });
+    }
 
     const job: IngestJob = {
       projectId,

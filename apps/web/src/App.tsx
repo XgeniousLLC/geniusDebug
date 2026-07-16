@@ -3,6 +3,9 @@ import { useUi } from './store/ui';
 import { getToken } from './lib/api';
 import { Shell } from './components/Shell';
 import { Login } from './pages/Login';
+import { Forgot } from './pages/Forgot';
+import { Reset } from './pages/Reset';
+import { Onboarding } from './pages/Onboarding';
 import { Issues } from './pages/Issues';
 import { IssueDetail } from './pages/IssueDetail';
 import { Traces } from './pages/Traces';
@@ -22,6 +25,9 @@ export function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/forgot" element={<Forgot />} />
+      <Route path="/reset" element={<Reset />} />
+      <Route path="/onboarding" element={<RequireAuth><Onboarding /></RequireAuth>} />
       <Route path="/" element={<Navigate to="/issues" replace />} />
       <Route path="/issues" element={<RequireAuth><Issues /></RequireAuth>} />
       <Route path="/issues/:shortId" element={<RequireAuth><IssueDetail /></RequireAuth>} />

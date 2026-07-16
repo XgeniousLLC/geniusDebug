@@ -13,7 +13,7 @@ import {
 import type { Request } from 'express';
 import { randomBytes } from 'node:crypto';
 import bcrypt from 'bcryptjs';
-import { db, repositories, releases, orgTokens, sourceMapArtifacts, projects, users, memberships } from '@geniusdebug/db';
+import { db, repositories, releases, orgTokens, sourceMapArtifacts, projects, users, memberships, dsnKeys } from '@geniusdebug/db';
 import { and, eq, ne } from 'drizzle-orm';
 import { JwtGuard, type AuthPrincipal } from '../auth/jwt.guard';
 
@@ -93,6 +93,35 @@ export class AdminController {
     await this.assertProjectInOrg(req.user!.orgId, id);
     await db.update(projects).set({ ingestEnabled: body.enabled !== false }).where(eq(projects.id, id));
     return { ok: true, ingestEnabled: body.enabled !== false };
+  }
+
+  /* --------------------- DSN key regenerate / revoke (FR-ADM-5) ------------ */
+  @Post('projects/:id/keys/regenerate')
+  @UseGuards(JwtGuard)
+  async regenerateKey(@Req() req: Request & { user?: AuthPrincipal }, @Param('id') id: string) {
+    if (req.user!.role !== 'admin') throw new ForbiddenException('admin only');
+    await this.assertProjectInOrg(req.user!.orgId, id);
+    // Revoke current active keys, mint a fresh one.
+    await db.update(dsnKeys).set({ isActive: false, revokedAt: new Date() }).where(and(eq(dsnKeys.projectId, id), eq(dsnKeys.isActive, true)));
+    const publicKey = randomBytes(16).toString('hex');
+    await db.insert(dsnKeys).values({ projectId: id, publicKey, rateLimit: 3000 });
+    return { ok: true, publicKey };
+  }
+
+  @Post('keys/:publicKey/revoke')
+  @UseGuards(JwtGuard)
+  async revokeKey(@Req() req: Request & { user?: AuthPrincipal }, @Param('publicKey') publicKey: string) {
+    if (req.user!.role !== 'admin') throw new ForbiddenException('admin only');
+    // Ensure the key belongs to a project in the caller's org.
+    const rows = await db
+      .select({ projectId: dsnKeys.projectId })
+      .from(dsnKeys)
+      .innerJoin(projects, eq(projects.id, dsnKeys.projectId))
+      .where(and(eq(dsnKeys.publicKey, publicKey), eq(projects.orgId, req.user!.orgId)))
+      .limit(1);
+    if (rows.length === 0) throw new ForbiddenException('key not in org');
+    await db.update(dsnKeys).set({ isActive: false, revokedAt: new Date() }).where(eq(dsnKeys.publicKey, publicKey));
+    return { ok: true };
   }
 
   /* ------------------------ Secret upload token (FR-ADM-5) ----------------- */

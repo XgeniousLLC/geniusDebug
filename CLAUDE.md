@@ -231,3 +231,48 @@ Needs a real GitHub/R2 round-trip to fully exercise (user tests with creds):
 - GD-028: create App → convert manifest → install → list repos → link.
 - GD-029: uploader PutObject to R2 + artifact registration end-to-end.
 - GD-030: `taskip-integration/` reference files are copy-into-Taskip (compiled there, not here).
+
+## Sprint 6 — Complete all remaining pending work (no Docker/CI)
+**Status:** COMPLETE (2 partial: saved-searches, rrweb playback)
+**Started:** 2026-07-17
+
+### Tickets
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-033 | Events partition auto-management | DONE | HIGH | NFR-SCALE-3: roll monthly partitions forward + drop aged (retention drops partitions) |
+| GD-034 | Back-pressure shedding | DONE | MED | FR-WRK-4: shed traces/replay before errors when queue deep |
+| GD-035 | Frequency/spike alerts | DONE | MED | FR-ALR-3: "seen > N times in M min" |
+| GD-036 | Alert rule editor UI + snooze | DONE | MED | FR-ALR-5/7: create/edit/delete rules, snooze window |
+| GD-037 | Editable Highlights | DONE | MED | FR-UI-7: pin/unpin highlight fields |
+| GD-038 | Global search (⌘K) | DONE | MED | brief §3: issue/trace/shortId lookup |
+| GD-039 | Keyboard nav (j/k/e/a) | DONE | LOW | brief §1/§5 feed nav |
+| GD-040 | Issue merge | DONE | LOW | FR-GRP-6: merge two issues |
+| GD-041 | Saved searches + real time-range | PARTIAL | LOW | brief §7 |
+| GD-042 | Assignee picker | DONE | MED | FR-UI-4: assign to member |
+| GD-043 | Suspect commit/blame + regression range | DONE | LOW | FR-GH-4/5 (live needs creds) |
+| GD-044 | Create GitHub Issue from issue | DONE | LOW | FR-GH-6 (live needs creds) |
+| GD-045 | Auto-resolve on commit/PR message | DONE | LOW | FR-GH-7 webhook (live needs creds) |
+| GD-046 | Onboarding "waiting for first event" | DONE | MED | brief §6 |
+| GD-047 | Forgot/reset password | DONE | MED | brief §5 |
+| GD-048 | DSN key regenerate/revoke UI | DONE | MED | FR-ADM-5 |
+| GD-049 | Member role-change UI | DONE | LOW | FR-ADM-6 |
+| GD-050 | Internal metrics endpoint | DONE | MED | NFR-MNT-2: queue depth, latency, drops |
+| GD-051 | Drop counters (session/client_report) | DONE | MED | FR-ING-6 |
+| GD-052 | Per-project usage stats | DONE | LOW | FR-RET-3 |
+| GD-053 | Real rrweb replay playback | PARTIAL | LOW | FR-RPL (live needs R2 blob) |
+
+### Sprint Stats
+- Total: 21  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 19  /  PARTIAL: 2
+- Tokens: ~180k total
+
+### Verification notes (Sprint 6)
+CLI/browser verified: partition auto-roll (events_2026_09/10 created ahead), metrics endpoint
+(queue/latency/drops), usage stats, alert rule CRUD + snooze + **frequency alert fired** ("Spike"
+email), issue **merge** (NEXTJS-2→NEXTJS-1, times_seen summed), password **forgot/reset**, DSN
+**regenerate/revoke** (old key deactivated), members role UI, kill-switch drop counters. Web renders:
+Alerts editor, Issue-detail assignee picker + GitHub card + editable Highlights, global search ⌘K,
+keyboard nav, multi-select merge bar, onboarding, forgot/reset pages, Settings system-metrics.
+Partial: GD-041 saved-searches (shareable ?query URL works; named-search chips not built),
+GD-053 rrweb DOM playback (player shell + timeline; real DOM render needs the R2 recording blob).
+GitHub advanced (GD-043/44/45) code-complete; live needs a GitHub App install.

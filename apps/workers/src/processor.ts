@@ -6,9 +6,18 @@ import { computeFingerprint } from './fingerprint';
 import { symbolicate } from './symbolicate';
 import { buildShortId } from './short-id';
 import { evaluateAlerts } from './alerts';
+import { countDrop } from './metrics';
 
-/** Route each envelope item by type (FR-WRK-5). Unknown types ignored safely. */
-export async function processEnvelope(projectId: string, parsed: ParsedEnvelope): Promise<void> {
+/**
+ * Route each envelope item by type (FR-WRK-5). Unknown types ignored safely.
+ * `shedLowValue` (FR-WRK-4): under queue back-pressure, drop traces/replay
+ * before errors — errors are never shed.
+ */
+export async function processEnvelope(
+  projectId: string,
+  parsed: ParsedEnvelope,
+  opts: { shedLowValue?: boolean } = {},
+): Promise<void> {
   for (const item of parsed.items) {
     const type = item.header.type;
     try {
@@ -16,14 +25,31 @@ export async function processEnvelope(projectId: string, parsed: ParsedEnvelope)
         const payload = JSON.parse(item.payload.toString('utf8')) as SentryEventPayload;
         await processEvent(projectId, payload);
       } else if (type === 'transaction') {
+        if (opts.shedLowValue) {
+          await countDrop(projectId, 'shed_transaction');
+          continue;
+        }
         const payload = JSON.parse(item.payload.toString('utf8')) as SentryTransactionPayload;
         await processTransaction(projectId, payload);
       } else if (type === 'replay_event') {
+        if (opts.shedLowValue) {
+          await countDrop(projectId, 'shed_replay');
+          continue;
+        }
         const payload = JSON.parse(item.payload.toString('utf8')) as Record<string, unknown>;
         await processReplay(projectId, payload);
+      } else if (type === 'client_report') {
+        // Sentry client report: SDK-side discarded counts → aggregate (FR-ING-6).
+        const payload = JSON.parse(item.payload.toString('utf8')) as {
+          discarded_events?: { reason: string; category: string; quantity: number }[];
+        };
+        for (const d of payload.discarded_events ?? []) {
+          await countDrop(projectId, `client_${d.reason}`, d.quantity);
+        }
+      } else if (type === 'session') {
+        await countDrop(projectId, 'session', 1);
       }
-      // replay_recording blob is streamed to R2 by ingest (pointer only); session/
-      // client_report → aggregate counters (phased). Unknown types ignored safely.
+      // replay_recording blob is streamed to R2 by ingest (pointer only).
     } catch (err) {
       // Never block the pipeline on one poison item (FR-WRK-1). Rethrow only for
       // event items so BullMQ retries/DLQs; tolerate others.

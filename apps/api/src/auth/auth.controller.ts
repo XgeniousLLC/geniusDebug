@@ -28,6 +28,18 @@ export class AuthController {
     return this.auth.login(parsed.data);
   }
 
+  @Post('forgot')
+  async forgot(@Body() body: { email?: string }) {
+    if (!body.email) throw new BadRequestException('email required');
+    return this.auth.forgot(body.email);
+  }
+
+  @Post('reset')
+  async reset(@Body() body: { email?: string; token?: string; password?: string }) {
+    if (!body.email || !body.token || !body.password) throw new BadRequestException('email, token, password required');
+    return this.auth.reset(body.email, body.token, body.password);
+  }
+
   @Get('me')
   @UseGuards(JwtGuard)
   async me(@Req() req: Request & { user?: AuthPrincipal }) {

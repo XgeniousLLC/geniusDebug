@@ -31,4 +31,14 @@ export class IssuesController {
     if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
     return this.issues.act(req.user!.orgId, shortId, req.user!.userId, parsed.data);
   }
+
+  @Post(':shortId/merge')
+  async merge(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Param('shortId') shortId: string,
+    @Body() body: { targetShortId?: string },
+  ) {
+    if (!body.targetShortId) throw new BadRequestException('targetShortId required');
+    return this.issues.merge(req.user!.orgId, shortId, body.targetShortId, req.user!.userId);
+  }
 }

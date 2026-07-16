@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { GeniusDebugIcon } from '../brand/GeniusDebugIcon';
 import { Button } from '../components/ui';
@@ -49,7 +49,7 @@ export function Login() {
         body: JSON.stringify(body),
       });
       setAuth(res.token, res.user);
-      navigate('/issues');
+      navigate(mode === 'register' ? '/onboarding' : '/issues');
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Something went wrong');
     } finally {
@@ -121,6 +121,12 @@ export function Login() {
               autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
             />
           </Field>
+
+          {mode === 'login' && (
+            <Link to="/forgot" className="-mt-1 text-right text-caption text-text-muted hover:text-accent">
+              Forgot password?
+            </Link>
+          )}
 
           <Button type="submit" variant="primary" disabled={loading} className="mt-1">
             {loading ? 'Please wait…' : mode === 'register' ? 'Create account' : 'Sign in'}

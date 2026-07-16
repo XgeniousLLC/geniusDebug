@@ -24,6 +24,48 @@ const NAV = [
   { to: '/settings', label: 'Settings', Icon: SettingsIcon },
 ];
 
+/** Global search (brief §3): ⌘K to focus; routes trace IDs / short IDs / free text. */
+function GlobalSearch() {
+  const navigate = useNavigate();
+  const ref = React.useRef<HTMLInputElement>(null);
+  const [q, setQ] = React.useState('');
+
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        ref.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
+    const s = q.trim();
+    if (!s) return;
+    if (/^[0-9a-f]{32}$/i.test(s)) navigate(`/traces/${s}`);
+    else if (/^[A-Z][A-Z0-9-]+-[A-Z0-9]+$/i.test(s)) navigate(`/issues/${s.toUpperCase()}`);
+    else navigate(`/issues?query=${encodeURIComponent(s)}`);
+    setQ('');
+    ref.current?.blur();
+  }
+
+  return (
+    <form onSubmit={submit} className="relative w-full max-w-md">
+      <SearchIcon size={15} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-text-faint" />
+      <input
+        ref={ref}
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder="Search issues, trace IDs…  (⌘K)"
+        className="w-full rounded-md border border-border bg-surface py-1.5 pl-8 pr-3 text-small text-text placeholder:text-text-faint"
+      />
+    </form>
+  );
+}
+
 export function Shell({ children }: { children: React.ReactNode }) {
   const { user, signOut, theme, toggleTheme, environment, setEnvironment } = useUi();
   const navigate = useNavigate();
@@ -118,13 +160,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
               </option>
             ))}
           </select>
-          <div className="relative flex-1">
-            <SearchIcon size={15} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-text-faint" />
-            <input
-              placeholder="Search issues, trace IDs…  (⌘K)"
-              className="w-full max-w-md rounded-md border border-border bg-surface py-1.5 pl-8 pr-3 text-small text-text placeholder:text-text-faint"
-            />
-          </div>
+          <GlobalSearch />
+          <div className="flex-1" />
           <span className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-small text-text-muted">
             Since First Seen ▾
           </span>

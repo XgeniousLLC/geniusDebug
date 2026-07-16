@@ -23,6 +23,22 @@ export function IssueDetail() {
   const qc = useQueryClient();
   const [tab, setTab] = React.useState<Tab>('stack');
   const [eventIdx, setEventIdx] = React.useState(0);
+  const [editingHi, setEditingHi] = React.useState(false);
+  const [pinned, setPinned] = React.useState<Set<string>>(() => {
+    try {
+      const s = localStorage.getItem('gd_highlights');
+      return new Set(s ? (JSON.parse(s) as string[]) : ['handled', 'level', 'transaction', 'url', 'trace']);
+    } catch {
+      return new Set(['handled', 'level', 'transaction', 'url', 'trace']);
+    }
+  });
+  const togglePin = (k: string) =>
+    setPinned((s) => {
+      const n = new Set(s);
+      n.has(k) ? n.delete(k) : n.add(k);
+      localStorage.setItem('gd_highlights', JSON.stringify([...n]));
+      return n;
+    });
 
   const q = useQuery({
     queryKey: ['issue', shortId],
@@ -33,6 +49,20 @@ export function IssueDetail() {
     mutationFn: (action: string) =>
       api(`/issues/${shortId}/actions`, { method: 'POST', body: JSON.stringify({ action }) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['issue', shortId] }),
+  });
+  const members = useQuery({ queryKey: ['members'], queryFn: () => api<{ id: string; name: string }[]>('/members') });
+  const assign = useMutation({
+    mutationFn: (assigneeUserId: string) =>
+      api(`/issues/${shortId}/actions`, { method: 'POST', body: JSON.stringify({ action: 'assign', assigneeUserId: assigneeUserId || undefined }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['issue', shortId] }),
+  });
+  const suspect = useQuery({
+    queryKey: ['suspect', shortId],
+    queryFn: () => api<{ available: boolean; commits?: { sha: string; message: string; author: string; url: string }[] }>(`/github/issues/${shortId}/suspect-commits`),
+  });
+  const createIssue = useMutation({
+    mutationFn: () => api<{ url: string }>(`/github/issues/${shortId}/create`, { method: 'POST' }),
+    onSuccess: (r) => window.open(r.url, '_blank'),
   });
 
   if (q.isLoading) return <div className="p-6"><Skeleton className="h-40 w-full" /></div>;
@@ -69,6 +99,17 @@ export function IssueDetail() {
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          <select
+            value={issue.assigneeUserId ?? ''}
+            onChange={(e) => assign.mutate(e.target.value)}
+            className="h-9 rounded-md border border-border bg-surface px-2 text-small text-text"
+            title="Assign"
+          >
+            <option value="">Unassigned</option>
+            {members.data?.map((m) => (
+              <option key={m.id} value={m.id}>{m.name}</option>
+            ))}
+          </select>
           <Button variant="primary" onClick={() => act.mutate('resolve')}><CheckIcon size={15} /> Resolve</Button>
           <Button onClick={() => act.mutate('archive')}><ArchiveIcon size={15} /> Archive</Button>
           <Button onClick={() => act.mutate('mute')}><BellOffIcon size={15} /> Mute</Button>
@@ -96,26 +137,41 @@ export function IssueDetail() {
           <Card className="mb-4 p-4">
             <div className="mb-2 flex items-center justify-between">
               <h2 className="text-h2 font-semibold">Highlights</h2>
-              <button className="text-caption text-text-faint hover:text-accent">Edit</button>
+              <button onClick={() => setEditingHi((e) => !e)} className="text-caption text-text-faint hover:text-accent">
+                {editingHi ? 'Done' : 'Edit'}
+              </button>
             </div>
-            <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-small">
-              <Highlight k="handled" v={event ? (event.handled ? 'true' : 'false') : '—'} />
-              <Highlight k="level" v={event?.level ?? issue.level} />
-              <Highlight k="transaction" v={event?.transaction ?? '—'} mono />
-              <Highlight
-                k="url"
-                v={event?.url ? <a href={event.url} className="text-accent hover:underline" target="_blank" rel="noreferrer">{event.url}</a> : '—'}
-              />
-              <div className="col-span-2 flex items-center gap-2">
-                <span className="text-text-muted">Trace ID</span>
-                {event?.traceId ? (
-                  <Link to={`/traces/${event.traceId}`}>
-                    <IdChip value={event.traceId} />
-                  </Link>
-                ) : (
-                  <span className="text-text-faint">—</span>
-                )}
+            {editingHi && (
+              <div className="mb-3 flex flex-wrap gap-3 rounded-md border border-border bg-bg px-3 py-2 text-caption">
+                {(['handled', 'level', 'transaction', 'url', 'trace'] as const).map((k) => (
+                  <label key={k} className="flex items-center gap-1.5 capitalize text-text-muted">
+                    <input type="checkbox" checked={pinned.has(k)} onChange={() => togglePin(k)} /> {k}
+                  </label>
+                ))}
               </div>
+            )}
+            <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-small">
+              {pinned.has('handled') && <Highlight k="handled" v={event ? (event.handled ? 'true' : 'false') : '—'} />}
+              {pinned.has('level') && <Highlight k="level" v={event?.level ?? issue.level} />}
+              {pinned.has('transaction') && <Highlight k="transaction" v={event?.transaction ?? '—'} mono />}
+              {pinned.has('url') && (
+                <Highlight
+                  k="url"
+                  v={event?.url ? <a href={event.url} className="text-accent hover:underline" target="_blank" rel="noreferrer">{event.url}</a> : '—'}
+                />
+              )}
+              {pinned.has('trace') && (
+                <div className="col-span-2 flex items-center gap-2">
+                  <span className="text-text-muted">Trace ID</span>
+                  {event?.traceId ? (
+                    <Link to={`/traces/${event.traceId}`}>
+                      <IdChip value={event.traceId} />
+                    </Link>
+                  ) : (
+                    <span className="text-text-faint">—</span>
+                  )}
+                </div>
+              )}
             </div>
           </Card>
 
@@ -202,6 +258,26 @@ export function IssueDetail() {
             ) : (
               <div className="text-small text-text-muted">No trace linked.</div>
             )}
+          </Card>
+          {suspect.data?.available && (suspect.data.commits?.length ?? 0) > 0 && (
+            <Card className="p-4">
+              <div className="mb-2 text-h2 font-semibold">Suspect commits</div>
+              <div className="flex flex-col gap-1.5">
+                {suspect.data.commits!.slice(0, 3).map((c) => (
+                  <a key={c.sha} href={c.url} target="_blank" rel="noreferrer" className="block text-caption hover:text-accent">
+                    <span className="font-mono text-text-faint">{c.sha.slice(0, 7)}</span>{' '}
+                    <span className="text-text">{c.message.split('\n')[0]}</span>
+                    <span className="text-text-faint"> · {c.author}</span>
+                  </a>
+                ))}
+              </div>
+            </Card>
+          )}
+          <Card className="p-4">
+            <div className="mb-2 text-h2 font-semibold">GitHub</div>
+            <button onClick={() => createIssue.mutate()} disabled={createIssue.isPending} className="text-small text-accent hover:underline disabled:opacity-50">
+              {createIssue.isPending ? 'Creating…' : 'Create GitHub Issue →'}
+            </button>
           </Card>
           <Card className="p-4">
             <div className="mb-2 text-h2 font-semibold">Stats</div>

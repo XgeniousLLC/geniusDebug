@@ -139,6 +139,31 @@ export class IssuesService {
     return { ok: true };
   }
 
+  /** Merge `sourceShortId` into `targetShortId` (FR-GRP-6). */
+  async merge(orgId: string, sourceShortId: string, targetShortId: string, userId: string) {
+    const projectIds = (await db.select({ id: projects.id }).from(projects).where(eq(projects.orgId, orgId))).map((r) => r.id);
+    const rows = await db
+      .select({ id: issues.id, shortId: issues.shortId, timesSeen: issues.timesSeen, usersAffected: issues.usersAffected })
+      .from(issues)
+      .where(and(inArray(issues.shortId, [sourceShortId, targetShortId]), inArray(issues.projectId, projectIds)));
+    const source = rows.find((r) => r.shortId === sourceShortId);
+    const target = rows.find((r) => r.shortId === targetShortId);
+    if (!source || !target) throw new NotFoundException('issue not found');
+    if (source.id === target.id) throw new NotFoundException('cannot merge into itself');
+
+    await db.update(events).set({ issueId: target.id }).where(eq(events.issueId, source.id));
+    await db
+      .update(issues)
+      .set({
+        timesSeen: target.timesSeen + source.timesSeen,
+        usersAffected: target.usersAffected + source.usersAffected,
+      })
+      .where(eq(issues.id, target.id));
+    await db.insert(issueActivity).values({ issueId: target.id, userId, action: 'merged', payload: { from: sourceShortId } });
+    await db.delete(issues).where(eq(issues.id, source.id));
+    return { ok: true, into: targetShortId };
+  }
+
   private toDto = (r: typeof issues.$inferSelect): IssueDto => ({
     id: r.id,
     shortId: r.shortId,

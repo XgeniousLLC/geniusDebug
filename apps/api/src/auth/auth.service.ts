@@ -108,6 +108,35 @@ export class AuthService {
     });
   }
 
+  /** Start password reset (brief §5). Returns the link in dev (SES sends it later). */
+  async forgot(email: string): Promise<{ ok: true; devLink?: string }> {
+    const rows = await db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
+    if (rows.length === 0) return { ok: true }; // don't leak which emails exist
+    const token = randomBytes(24).toString('hex');
+    const tokenHash = await bcrypt.hash(token, 10);
+    const expires = new Date(Date.now() + 60 * 60 * 1000); // 1h
+    await db.update(users).set({ resetTokenHash: tokenHash, resetExpires: expires }).where(eq(users.id, rows[0].id));
+    const link = `${process.env.WEB_URL ?? 'http://localhost:5199'}/reset?token=${token}&email=${encodeURIComponent(email)}`;
+    // eslint-disable-next-line no-console
+    console.log(`[auth] password reset link for ${email}: ${link}`);
+    return { ok: true, devLink: process.env.NODE_ENV === 'production' ? undefined : link };
+  }
+
+  async reset(email: string, token: string, newPassword: string): Promise<{ ok: true }> {
+    if (newPassword.length < 8) throw new ConflictException('password too short');
+    const rows = await db
+      .select({ id: users.id, hash: users.resetTokenHash, expires: users.resetExpires })
+      .from(users)
+      .where(eq(users.email, email))
+      .limit(1);
+    const u = rows[0];
+    if (!u?.hash || !u.expires || u.expires.getTime() < Date.now()) throw new UnauthorizedException('invalid or expired token');
+    if (!(await bcrypt.compare(token, u.hash))) throw new UnauthorizedException('invalid token');
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    await db.update(users).set({ passwordHash, resetTokenHash: null, resetExpires: null }).where(eq(users.id, u.id));
+    return { ok: true };
+  }
+
   private sign(p: { userId: string; orgId: string; role: 'admin' | 'member'; email: string }): string {
     return this.jwt.sign(p);
   }

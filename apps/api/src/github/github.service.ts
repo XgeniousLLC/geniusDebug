@@ -68,6 +68,38 @@ export class GithubService {
     return res.json() as never;
   }
 
+  /** Commits that last touched a file → suspect commits (FR-GH-4). */
+  async commitsForFile(
+    installToken: string,
+    owner: string,
+    repo: string,
+    path: string,
+  ): Promise<{ sha: string; message: string; author: string; date: string; url: string }[]> {
+    const res = await fetch(
+      `${GH_API}/repos/${owner}/${repo}/commits?path=${encodeURIComponent(path)}&per_page=5`,
+      { headers: { authorization: `Bearer ${installToken}`, accept: 'application/vnd.github+json' } },
+    );
+    if (!res.ok) throw new Error(`commits failed: ${res.status}`);
+    const body = (await res.json()) as {
+      sha: string;
+      html_url: string;
+      commit: { message: string; author: { name: string; date: string } };
+    }[];
+    return body.map((c) => ({ sha: c.sha, message: c.commit.message, author: c.commit.author.name, date: c.commit.author.date, url: c.html_url }));
+  }
+
+  /** Create a GitHub Issue prefilled from a geniusDebug issue (FR-GH-6). */
+  async createIssue(installToken: string, owner: string, repo: string, title: string, body: string): Promise<string> {
+    const res = await fetch(`${GH_API}/repos/${owner}/${repo}/issues`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${installToken}`, accept: 'application/vnd.github+json', 'content-type': 'application/json' },
+      body: JSON.stringify({ title, body }),
+    });
+    if (!res.ok) throw new Error(`create issue failed: ${res.status}`);
+    const created = (await res.json()) as { html_url: string };
+    return created.html_url;
+  }
+
   private appHeaders(creds: AppCreds): Record<string, string> {
     return { authorization: `Bearer ${this.appJwt(creds)}`, accept: 'application/vnd.github+json' };
   }

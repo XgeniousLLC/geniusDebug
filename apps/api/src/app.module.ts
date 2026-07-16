@@ -10,6 +10,8 @@ import { MiscController } from './misc/misc.controller';
 import { AdminController } from './admin/admin.controller';
 import { GithubController } from './github/github.controller';
 import { GithubService } from './github/github.service';
+import { AlertsController } from './alerts/alerts.controller';
+import { MetricsController } from './metrics/metrics.controller';
 
 @Controller()
 class HealthController {
@@ -34,6 +36,8 @@ class HealthController {
     MiscController,
     AdminController,
     GithubController,
+    AlertsController,
+    MetricsController,
   ],
   providers: [AuthService, IssuesService, JwtGuard, GithubService],
 })

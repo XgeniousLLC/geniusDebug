@@ -43,6 +43,9 @@ export const users = pgTable(
     email: varchar('email', { length: 255 }).notNull(),
     passwordHash: text('password_hash').notNull(),
     name: varchar('name', { length: 160 }).notNull(),
+    // Password reset (brief §5). Token stored hashed; never plaintext.
+    resetTokenHash: text('reset_token_hash'),
+    resetExpires: timestamp('reset_expires', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => ({ emailUq: uniqueIndex('users_email_uq').on(t.email) }),
@@ -322,6 +325,7 @@ export const alertRules = pgTable('alert_rules', {
   channel: alertChannel('channel').notNull().default('email'),
   throttleWindow: integer('throttle_window').notNull().default(3600), // seconds (FR-ALR-4)
   isActive: boolean('is_active').notNull().default(true),
+  mutedUntil: timestamp('muted_until', { withTimezone: true }), // snooze window (FR-ALR-7)
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 

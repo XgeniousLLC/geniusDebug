@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Param, Post, Query, Req, Res, UseGuards, ForbiddenException, BadRequestException } from '@nestjs/common';
 import type { Request, Response } from 'express';
-import { db, githubApps, repositories, projects } from '@geniusdebug/db';
-import { and, eq } from 'drizzle-orm';
+import { db, githubApps, repositories, projects, issues, releases, issueActivity } from '@geniusdebug/db';
+import { and, eq, inArray } from 'drizzle-orm';
 import { JwtGuard, type AuthPrincipal } from '../auth/jwt.guard';
 import { GithubService } from './github.service';
 import { encrypt } from '../crypto';
@@ -137,5 +137,80 @@ export class GithubController {
       connectedByUserId: req.user!.userId,
     });
     return { ok: true };
+  }
+
+  /* -------------- Suspect commits / blame for an issue (FR-GH-4) ----------- */
+  @Get('issues/:shortId/suspect-commits')
+  @UseGuards(JwtGuard)
+  async suspectCommits(@Req() req: Request & { user?: AuthPrincipal }, @Param('shortId') shortId: string) {
+    const ctx = await this.issueRepoContext(req.user!.orgId, shortId);
+    if (!ctx) return { available: false };
+    const creds = await this.gh.appForOrg(req.user!.orgId);
+    if (!creds || !ctx.installationId) return { available: false, reason: 'no GitHub App installation' };
+    const token = await this.gh.installationToken(creds, ctx.installationId);
+    const path = (ctx.culprit ?? '').replace(/^\.\//, '');
+    const commits = await this.gh.commitsForFile(token, ctx.owner, ctx.name, path);
+    return { available: true, commits };
+  }
+
+  /* --------------- Create a GitHub Issue from an issue (FR-GH-6) ----------- */
+  @Post('issues/:shortId/create')
+  @UseGuards(JwtGuard)
+  async createGithubIssue(@Req() req: Request & { user?: AuthPrincipal }, @Param('shortId') shortId: string) {
+    if (req.user!.role !== 'admin') throw new ForbiddenException('admin only');
+    const ctx = await this.issueRepoContext(req.user!.orgId, shortId);
+    if (!ctx) throw new BadRequestException('issue or repo not found');
+    const creds = await this.gh.appForOrg(req.user!.orgId);
+    if (!creds || !ctx.installationId) throw new BadRequestException('no GitHub App installation');
+    const token = await this.gh.installationToken(creds, ctx.installationId);
+    const body = `**Culprit:** \`${ctx.culprit}\`\n**geniusDebug:** ${WEB_URL}/issues/${shortId}\n\nType: ${ctx.type ?? ''}`;
+    const url = await this.gh.createIssue(token, ctx.owner, ctx.name, ctx.title, body);
+    return { ok: true, url };
+  }
+
+  /* ------- Auto-resolve on commit/PR "fixes <shortId>" (FR-GH-7) ----------- */
+  @Post('webhook')
+  async webhook(@Body() body: Record<string, unknown>) {
+    // Scan commit messages / PR title for a geniusDebug short id we can resolve.
+    const texts: string[] = [];
+    const commits = (body.commits as { message?: string }[] | undefined) ?? [];
+    for (const c of commits) if (c.message) texts.push(c.message);
+    const pr = body.pull_request as { title?: string; body?: string } | undefined;
+    if (pr?.title) texts.push(pr.title);
+    if (pr?.body) texts.push(pr.body);
+
+    const resolved: string[] = [];
+    const re = /(?:fix(?:es|ed)?|close(?:s|d)?|resolve(?:s|d)?)\s+([A-Z][A-Z0-9-]+-[A-Z0-9]+)/gi;
+    for (const t of texts) {
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(t))) {
+        const shortId = m[1].toUpperCase();
+        const rows = await db.select({ id: issues.id }).from(issues).where(eq(issues.shortId, shortId)).limit(1);
+        if (rows[0]) {
+          await db.update(issues).set({ status: 'resolved', isRegressed: false }).where(eq(issues.id, rows[0].id));
+          await db.insert(issueActivity).values({ issueId: rows[0].id, action: 'resolve', payload: { via: 'github-webhook' } });
+          resolved.push(shortId);
+        }
+      }
+    }
+    return { ok: true, resolved };
+  }
+
+  private async issueRepoContext(orgId: string, shortId: string) {
+    const pids = (await db.select({ id: projects.id }).from(projects).where(eq(projects.orgId, orgId))).map((r) => r.id);
+    if (pids.length === 0) return null;
+    const iss = await db
+      .select({ projectId: issues.projectId, title: issues.title, culprit: issues.culprit, type: issues.type })
+      .from(issues)
+      .where(and(eq(issues.shortId, shortId), inArray(issues.projectId, pids)))
+      .limit(1);
+    if (iss.length === 0) return null;
+    const repo = await db
+      .select({ owner: repositories.owner, name: repositories.name, installationId: repositories.installationId })
+      .from(repositories)
+      .where(eq(repositories.projectId, iss[0].projectId))
+      .limit(1);
+    if (repo.length === 0) return null;
+    return { ...iss[0], ...repo[0] };
   }
 }

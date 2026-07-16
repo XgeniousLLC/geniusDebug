@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import type { IssueDto } from '@geniusdebug/shared';
 import { api } from '../lib/api';
@@ -13,10 +13,20 @@ type Sort = 'lastSeen' | 'firstSeen' | 'events' | 'users';
 
 export function Issues() {
   const environment = useUi((s) => s.environment);
+  const navigate = useNavigate();
+  const [params] = useSearchParams();
   const [status, setStatus] = React.useState<StatusFilter>('unresolved');
   const [sort, setSort] = React.useState<Sort>('lastSeen');
-  const [query, setQuery] = React.useState('');
+  const [query, setQuery] = React.useState(params.get('query') ?? '');
+  const [cursor, setCursor] = React.useState(0); // keyboard nav selection
+  const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const qc = useQueryClient();
+
+  // Keep query in sync when the global search routes here with ?query=.
+  React.useEffect(() => {
+    const q = params.get('query');
+    if (q !== null) setQuery(q);
+  }, [params]);
 
   const key = ['issues', { environment, status, sort, query }];
   const issues = useQuery({
@@ -35,6 +45,44 @@ export function Issues() {
       api(`/issues/${v.shortId}/actions`, { method: 'POST', body: JSON.stringify({ action: v.action }) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['issues'] }),
   });
+  const merge = useMutation({
+    mutationFn: (v: { source: string; target: string }) =>
+      api(`/issues/${v.source}/merge`, { method: 'POST', body: JSON.stringify({ targetShortId: v.target }) }),
+    onSuccess: () => {
+      setSelected(new Set());
+      qc.invalidateQueries({ queryKey: ['issues'] });
+    },
+  });
+
+  const rows = issues.data ?? [];
+
+  // Keyboard nav (brief §5): j/k move, e resolve, enter open.
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+      if (e.key === 'j') setCursor((c) => Math.min(rows.length - 1, c + 1));
+      else if (e.key === 'k') setCursor((c) => Math.max(0, c - 1));
+      else if (e.key === 'e' && rows[cursor]) act.mutate({ shortId: rows[cursor].shortId, action: 'resolve' });
+      else if (e.key === 'Enter' && rows[cursor]) navigate(`/issues/${rows[cursor].shortId}`);
+      else if (e.key === 'x' && rows[cursor]) {
+        setSelected((s) => {
+          const n = new Set(s);
+          n.has(rows[cursor].shortId) ? n.delete(rows[cursor].shortId) : n.add(rows[cursor].shortId);
+          return n;
+        });
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [rows, cursor, act, navigate]);
+
+  function doMerge() {
+    const ids = [...selected];
+    if (ids.length < 2) return;
+    const target = ids[0]; // merge the rest into the first selected
+    for (const s of ids.slice(1)) merge.mutate({ source: s, target });
+  }
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-5">
@@ -72,6 +120,19 @@ export function Issues() {
         </select>
       </div>
 
+      {selected.size > 0 && (
+        <div className="mb-2 flex items-center gap-3 rounded-md border border-accent/40 bg-accent/10 px-3 py-2 text-small">
+          <span className="text-text">{selected.size} selected</span>
+          <Button size="sm" variant="secondary" disabled={selected.size < 2 || merge.isPending} onClick={doMerge}>
+            Merge into first
+          </Button>
+          <button onClick={() => setSelected(new Set())} className="text-caption text-text-muted hover:text-text">
+            clear
+          </button>
+          <span className="ml-auto text-caption text-text-faint">j/k move · x select · e resolve · ↵ open</span>
+        </div>
+      )}
+
       {issues.isLoading ? (
         <div className="flex flex-col gap-2">
           {Array.from({ length: 5 }).map((_, i) => (
@@ -88,17 +149,32 @@ export function Issues() {
         />
       ) : (
         <div className="overflow-hidden rounded-md border border-border">
-          <div className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-4 border-b border-border bg-surface px-4 py-2 text-caption uppercase tracking-wide text-text-faint">
+          <div className="grid grid-cols-[auto_1fr_auto_auto_auto] items-center gap-4 border-b border-border bg-surface px-4 py-2 text-caption uppercase tracking-wide text-text-faint">
+            <span className="w-4" />
             <span>Issue</span>
             <span className="w-16 text-right">Events</span>
             <span className="w-16 text-right">Users</span>
             <span className="w-16 text-right">Age</span>
           </div>
-          {issues.data!.map((it) => (
+          {rows.map((it, idx) => (
             <div
               key={it.id}
-              className="group grid grid-cols-[1fr_auto_auto_auto] items-center gap-4 border-b border-border bg-bg px-4 py-3 last:border-0 hover:bg-surface-2"
+              className={`group grid grid-cols-[auto_1fr_auto_auto_auto] items-center gap-4 border-b border-border px-4 py-3 last:border-0 hover:bg-surface-2 ${
+                idx === cursor ? 'bg-surface-2 ring-1 ring-inset ring-accent/40' : 'bg-bg'
+              }`}
             >
+              <input
+                type="checkbox"
+                checked={selected.has(it.shortId)}
+                onChange={(e) => {
+                  setSelected((s) => {
+                    const n = new Set(s);
+                    e.target.checked ? n.add(it.shortId) : n.delete(it.shortId);
+                    return n;
+                  });
+                }}
+                className="h-4 w-4 accent-[color:var(--accent)]"
+              />
               <div className="min-w-0">
                 <div className="mb-1 flex items-center gap-2">
                   <LevelPill level={it.level} />

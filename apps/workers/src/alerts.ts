@@ -1,5 +1,5 @@
-import { db, alertRules, notifications } from '@geniusdebug/db';
-import { and, eq, gt } from 'drizzle-orm';
+import { db, alertRules, notifications, events } from '@geniusdebug/db';
+import { and, eq, gt, sql as dsql } from 'drizzle-orm';
 import { sendAlertEmail } from './ses';
 
 interface AlertCtx {
@@ -11,30 +11,35 @@ interface AlertCtx {
 }
 
 /**
- * Evaluate alert rules and send deduped/throttled email (FR-ALR-1/2/4/6).
- * Anti-spam is first-class: within a rule's throttle window we send at most one
- * email per dedupe key. SES send is stubbed in dev (logged); the throttle +
- * notification ledger is real.
+ * Evaluate alert rules: new issue (FR-ALR-1), regression (FR-ALR-2), and
+ * frequency/spike — "seen > N times in M minutes" (FR-ALR-3). Deduped + throttled
+ * (FR-ALR-4) and respects a per-rule snooze window (FR-ALR-7). SES send activates
+ * when configured; dev logs.
  */
 export async function evaluateAlerts(ctx: AlertCtx): Promise<void> {
-  if (!ctx.isNew && !ctx.regressed) return; // only new / regressed trigger in v1
-
   const rules = await db
     .select()
     .from(alertRules)
     .where(and(eq(alertRules.projectId, ctx.projectId), eq(alertRules.isActive, true)));
 
+  const now = Date.now();
   for (const rule of rules) {
-    const conditions = (rule.conditions ?? {}) as Record<string, unknown>;
-    const wantsNew = conditions.new === true;
-    const wantsRegression = conditions.regression === true;
-    if (ctx.isNew && !wantsNew) continue;
-    if (ctx.regressed && !wantsRegression) continue;
+    if (rule.mutedUntil && rule.mutedUntil.getTime() > now) continue; // snoozed (FR-ALR-7)
 
-    const kind = ctx.isNew ? 'new' : 'regression';
+    const cond = (rule.conditions ?? {}) as {
+      new?: boolean;
+      regression?: boolean;
+      frequency?: { count: number; windowMin: number };
+    };
+
+    let kind: string | null = null;
+    if (ctx.isNew && cond.new) kind = 'new';
+    else if (ctx.regressed && cond.regression) kind = 'regression';
+    else if (cond.frequency && (await frequencyExceeded(ctx.issueId, cond.frequency))) kind = 'frequency';
+    if (!kind) continue;
+
     const dedupeKey = `${rule.id}:${ctx.issueId}:${kind}`;
-    const windowStart = new Date(Date.now() - rule.throttleWindow * 1000);
-
+    const windowStart = new Date(now - rule.throttleWindow * 1000);
     const recent = await db
       .select({ id: notifications.id })
       .from(notifications)
@@ -54,8 +59,21 @@ export async function evaluateAlerts(ctx: AlertCtx): Promise<void> {
   }
 }
 
+async function frequencyExceeded(issueId: string, freq: { count: number; windowMin: number }): Promise<boolean> {
+  const since = new Date(Date.now() - freq.windowMin * 60 * 1000);
+  const rows = await db
+    .select({ c: dsql<number>`count(*)::int` })
+    .from(events)
+    .where(and(eq(events.issueId, issueId), gt(events.timestamp, since)));
+  return (rows[0]?.c ?? 0) >= freq.count;
+}
+
 async function sendEmail(recipients: string[], title: string, kind: string): Promise<void> {
-  const subject = kind === 'regression' ? `[geniusDebug] Regression: ${title}` : `[geniusDebug] New issue: ${title}`;
-  const html = `<h2>${title}</h2><p>${kind === 'regression' ? 'A resolved issue has regressed.' : 'A new issue was detected.'}</p>`;
-  await sendAlertEmail(recipients, subject, html);
+  const subjectMap: Record<string, string> = {
+    new: `[geniusDebug] New issue: ${title}`,
+    regression: `[geniusDebug] Regression: ${title}`,
+    frequency: `[geniusDebug] Spike: ${title}`,
+  };
+  const html = `<h2>${title}</h2><p>Trigger: ${kind}</p>`;
+  await sendAlertEmail(recipients, subjectMap[kind] ?? title, html);
 }
