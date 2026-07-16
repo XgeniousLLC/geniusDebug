@@ -302,3 +302,19 @@ GitHub advanced (GD-043/44/45) code-complete; live needs a GitHub App install.
 - GD-056 (Laravel/PHP v2 readiness, SRS §12): tests prove a `platform:"php"` event normalizes with
   native frames, groups deterministically (FR-WRK-7), and skips symbolication (FR-MAP-10). Adding
   `sentry/sentry-laravel` in v2 is therefore client-config only — no backend change.
+
+## Sprint 8 — Docs: README + screenshots, DEPLOY.md, INTEGRATION.md
+**Status:** COMPLETE
+**Started:** 2026-07-17
+
+### Tickets
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-057 | README rewrite + page screenshots | DONE | HIGH | overview, architecture, features, quickstart + 7 embedded screenshots |
+| GD-058 | DEPLOY.md (Coolify + VPS) | DONE | HIGH | provision, env, migrate, Nixpacks per-service / pm2, maps, GitHub App, ops |
+| GD-059 | INTEGRATION.md (existing Sentry apps) | DONE | HIGH | repoint DSN, tunnel, disable SaaS upload, kill switch, other SDKs, migration |
+
+### Sprint Stats
+- Total: 3  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 3  /  BLOCKED: 0
+- Tokens: ~45k total
