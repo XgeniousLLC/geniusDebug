@@ -158,3 +158,34 @@ Wired but need live data / prod creds to be fully exercised (not blockers for v1
 ### Sprint Stats
 - Total: 3  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 3  /  BLOCKED: 0
 - Tokens: ~60k total
+
+## Sprint 3 — Safety, retention, members, replay; wire creds-blocked paths
+**Status:** LOCAL COMPLETE (3 BLOCKED on creds)
+**Started:** 2026-07-17
+
+### Tickets
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-020 | Kill switch toggle UI + verify | DONE | HIGH | FR-SDK-8/NFR-PERF-4: toggle project.ingestEnabled; ingest drops with 202 disabled |
+| GD-021 | Retention purge job (events/replays/maps) | DONE | HIGH | FR-RET-1: scheduled purge of aged events/replays/source maps + R2 |
+| GD-022 | Member management (invite/list/role/remove) | DONE | MED | FR-ADM-6: admin-gated members UI + API |
+| GD-023 | Replay player shell + seeded replay | DONE | MED | FR-RPL-3/5/6: replay metadata + player timeline, masked blocks |
+| GD-024 | Real source-map application (R2) | BLOCKED | MED | FR-MAP-3/4: fetch map from R2, apply, source context — needs R2 creds |
+| GD-025 | SES email send | BLOCKED | MED | FR-ALR-6: AWS SES SendEmail templated alert — needs SES creds |
+| GD-026 | GitHub App OAuth install flow | BLOCKED | LOW | FR-GH-1: App install → callback → repo pick — needs GitHub App creds |
+
+### Sprint Stats
+- Total: 7  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 4  /  BLOCKED: 3
+- Tokens: ~70k total
+
+### Verification notes (Sprint 3)
+Browser + CLI verified: kill switch (disable → ingest drops event, count unchanged, 202),
+member invite/list (admin+member, remove), replay ingest → player (masked input, error-marker
+timeline, meta), retention purge job runs.
+Creds-blocked (code wired, need secrets in `.env` to exercise — never paste secrets in chat):
+- GD-024 R2: `r2.ts` getObject/deleteObjects wired + used by retention; **applying** maps in
+  `symbolicate.ts` still TODO (needs R2_* + a real .map).
+- GD-025 SES: `ses.ts` SendEmail wired into alerts; activates when SES_* set (dev logs).
+- GD-026 GitHub App OAuth install: NOT built — manual repo-link (Settings) works today; OAuth
+  install→callback→repo-pick still needs GITHUB_APP_* creds.

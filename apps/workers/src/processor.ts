@@ -1,4 +1,4 @@
-import { db, sql, issues, events, projects, environments, releases, issueActivity, traces, spans, issueCounts } from '@geniusdebug/db';
+import { db, sql, issues, events, projects, environments, releases, issueActivity, traces, spans, issueCounts, replays } from '@geniusdebug/db';
 import { and, eq, sql as dsql } from 'drizzle-orm';
 import type { ParsedEnvelope, SentryEventPayload, SentryTransactionPayload } from '@geniusdebug/shared';
 import { normalizeEvent } from './normalize';
@@ -18,8 +18,12 @@ export async function processEnvelope(projectId: string, parsed: ParsedEnvelope)
       } else if (type === 'transaction') {
         const payload = JSON.parse(item.payload.toString('utf8')) as SentryTransactionPayload;
         await processTransaction(projectId, payload);
+      } else if (type === 'replay_event') {
+        const payload = JSON.parse(item.payload.toString('utf8')) as Record<string, unknown>;
+        await processReplay(projectId, payload);
       }
-      // replay_event/replay_recording/session/client_report: phased later (FR-WRK-5).
+      // replay_recording blob is streamed to R2 by ingest (pointer only); session/
+      // client_report → aggregate counters (phased). Unknown types ignored safely.
     } catch (err) {
       // Never block the pipeline on one poison item (FR-WRK-1). Rethrow only for
       // event items so BullMQ retries/DLQs; tolerate others.
@@ -220,6 +224,37 @@ async function upsertIssue(a: UpsertArgs): Promise<{ issueId: string; regressed:
     .where(and(eq(issues.projectId, a.projectId), eq(issues.fingerprint, a.fingerprint)))
     .limit(1);
   return { issueId: again[0].id, regressed: false };
+}
+
+async function processReplay(projectId: string, payload: Record<string, unknown>): Promise<void> {
+  // Assemble replay metadata (FR-RPL-3/5); the recording blob lives in R2 (pointer).
+  const traceIds = (payload.trace_ids as string[] | undefined) ?? [];
+  const traceId = traceIds[0];
+  const start = payload.replay_start_timestamp
+    ? new Date(Number(payload.replay_start_timestamp) * 1000)
+    : new Date();
+  const end = payload.timestamp ? new Date(Number(payload.timestamp) * 1000) : new Date();
+  const durationMs = Math.max(0, end.getTime() - start.getTime());
+  const segmentId = typeof payload.segment_id === 'number' ? payload.segment_id : 0;
+
+  // Link to the issue that shares this trace, if any.
+  let issueId: string | undefined;
+  if (traceId) {
+    const ev = await db.select({ issueId: events.issueId }).from(events).where(eq(events.traceId, traceId)).limit(1);
+    issueId = ev[0]?.issueId;
+  }
+
+  await db.insert(replays).values({
+    projectId,
+    issueId,
+    traceId,
+    user: (payload.user as Record<string, unknown>) ?? undefined,
+    startedAt: start,
+    durationMs,
+    segmentCount: segmentId + 1,
+    r2Prefix: `replays/${projectId}/${payload.replay_id ?? 'unknown'}`,
+    size: 0,
+  });
 }
 
 async function processTransaction(projectId: string, payload: SentryTransactionPayload): Promise<void> {

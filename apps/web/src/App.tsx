@@ -7,6 +7,7 @@ import { Issues } from './pages/Issues';
 import { IssueDetail } from './pages/IssueDetail';
 import { Traces } from './pages/Traces';
 import { Replays } from './pages/Replays';
+import { ReplayPlayer } from './pages/ReplayPlayer';
 import { Alerts } from './pages/Alerts';
 import { Settings } from './pages/Settings';
 
@@ -27,6 +28,7 @@ export function App() {
       <Route path="/traces" element={<RequireAuth><Traces /></RequireAuth>} />
       <Route path="/traces/:traceId" element={<RequireAuth><Traces /></RequireAuth>} />
       <Route path="/replays" element={<RequireAuth><Replays /></RequireAuth>} />
+      <Route path="/replays/:replayId" element={<RequireAuth><ReplayPlayer /></RequireAuth>} />
       <Route path="/alerts" element={<RequireAuth><Alerts /></RequireAuth>} />
       <Route path="/settings" element={<RequireAuth><Settings /></RequireAuth>} />
       <Route path="*" element={<Navigate to="/issues" replace />} />

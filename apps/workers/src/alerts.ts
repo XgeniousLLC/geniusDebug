@@ -1,5 +1,6 @@
 import { db, alertRules, notifications } from '@geniusdebug/db';
-import { and, eq, gt, sql as dsql } from 'drizzle-orm';
+import { and, eq, gt } from 'drizzle-orm';
+import { sendAlertEmail } from './ses';
 
 interface AlertCtx {
   projectId: string;
@@ -54,7 +55,7 @@ export async function evaluateAlerts(ctx: AlertCtx): Promise<void> {
 }
 
 async function sendEmail(recipients: string[], title: string, kind: string): Promise<void> {
-  // TODO: wire AWS SES SendEmail here (server-side creds only). Dev = log.
-  // eslint-disable-next-line no-console
-  console.log(`[alert] ${kind} → ${recipients.join(', ') || '(no recipients)'}: ${title}`);
+  const subject = kind === 'regression' ? `[geniusDebug] Regression: ${title}` : `[geniusDebug] New issue: ${title}`;
+  const html = `<h2>${title}</h2><p>${kind === 'regression' ? 'A resolved issue has regressed.' : 'A new issue was detected.'}</p>`;
+  await sendAlertEmail(recipients, subject, html);
 }

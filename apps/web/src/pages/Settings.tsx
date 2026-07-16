@@ -68,7 +68,11 @@ export function Settings() {
       </Section>
 
       <Section title="Remote config / Kill switch" hint="Throttle or disable geniusDebug in Taskip without a redeploy (FR-SDK-8, NFR-PERF-4).">
-        <Row k="Ingest enabled" v={project?.ingestEnabled ? 'Yes — accepting events' : 'No — dropping cheaply'} />
+        {project ? <KillSwitch projectId={project.id} enabled={project.ingestEnabled} /> : null}
+      </Section>
+
+      <Section title="Members" hint="Invite teammates; admin-only controls are gated (FR-ADM-6, NFR-SEC-6).">
+        <Members />
       </Section>
 
       <Section title="GitHub Integration" hint="Connect a repo so stack frames deep-link to source at the deployed commit (FR-GH-1/3).">
@@ -80,6 +84,91 @@ export function Settings() {
         <Row k="Replays" v="14 days" />
         <Row k="Source maps" v="aligned to release retention" />
       </Section>
+    </div>
+  );
+}
+
+function KillSwitch({ projectId, enabled }: { projectId: string; enabled: boolean }) {
+  const qc = useQueryClient();
+  const toggle = useMutation({
+    mutationFn: (next: boolean) =>
+      api(`/projects/${projectId}/ingest`, { method: 'POST', body: JSON.stringify({ enabled: next }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }),
+  });
+  return (
+    <div className="flex items-center justify-between text-small">
+      <span className={enabled ? 'text-status-resolved' : 'text-level-error'}>
+        Ingest {enabled ? 'enabled — accepting events' : 'disabled — dropping cheaply (202)'}
+      </span>
+      <Button
+        size="sm"
+        variant={enabled ? 'danger' : 'primary'}
+        disabled={toggle.isPending}
+        onClick={() => toggle.mutate(!enabled)}
+      >
+        {enabled ? 'Disable ingest' : 'Enable ingest'}
+      </Button>
+    </div>
+  );
+}
+
+interface Member {
+  id: string;
+  name: string;
+  email: string;
+  role: 'admin' | 'member';
+}
+function Members() {
+  const qc = useQueryClient();
+  const members = useQuery({ queryKey: ['members'], queryFn: () => api<Member[]>('/members') });
+  const [name, setName] = React.useState('');
+  const [email, setEmail] = React.useState('');
+
+  const invite = useMutation({
+    mutationFn: () => api('/members', { method: 'POST', body: JSON.stringify({ name, email, role: 'member' }) }),
+    onSuccess: () => {
+      setName('');
+      setEmail('');
+      qc.invalidateQueries({ queryKey: ['members'] });
+    },
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => api(`/members/${id}/remove`, { method: 'POST' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['members'] }),
+  });
+
+  const inp = 'h-8 rounded-md border border-border bg-bg px-2 text-small text-text';
+  return (
+    <div>
+      <div className="mb-3 overflow-hidden rounded-md border border-border">
+        {members.data?.map((m) => (
+          <div key={m.id} className="flex items-center justify-between border-b border-border px-3 py-2 text-small last:border-0">
+            <div>
+              <span className="text-text">{m.name}</span>
+              <span className="ml-2 font-mono text-caption text-text-muted">{m.email}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="rounded-full border border-border px-2 py-0.5 text-caption capitalize text-text-muted">{m.role}</span>
+              <button onClick={() => remove.mutate(m.id)} className="text-caption text-level-error hover:underline">
+                remove
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="flex items-end gap-2">
+        <label className="flex flex-col gap-1">
+          <span className="text-caption text-text-faint">name</span>
+          <input className={inp} value={name} onChange={(e) => setName(e.target.value)} />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-caption text-text-faint">email</span>
+          <input className={inp} value={email} onChange={(e) => setEmail(e.target.value)} />
+        </label>
+        <Button size="sm" variant="primary" disabled={invite.isPending || !name || !email} onClick={() => invite.mutate()}>
+          {invite.isPending ? 'Inviting…' : 'Invite'}
+        </Button>
+      </div>
     </div>
   );
 }

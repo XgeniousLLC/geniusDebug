@@ -20,7 +20,8 @@
     "generate": "drizzle-kit generate",
     "migrate": "tsx src/migrate.ts",
     "seed": "tsx src/seed.ts",
-    "seed:trace": "tsx src/seed-trace.ts"
+    "seed:trace": "tsx src/seed-trace.ts",
+    "seed:replay": "tsx src/seed-replay.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

@@ -13,8 +13,8 @@ import {
 import type { Request } from 'express';
 import { randomBytes } from 'node:crypto';
 import bcrypt from 'bcryptjs';
-import { db, repositories, releases, orgTokens, sourceMapArtifacts, projects } from '@geniusdebug/db';
-import { and, eq } from 'drizzle-orm';
+import { db, repositories, releases, orgTokens, sourceMapArtifacts, projects, users, memberships } from '@geniusdebug/db';
+import { and, eq, ne } from 'drizzle-orm';
 import { JwtGuard, type AuthPrincipal } from '../auth/jwt.guard';
 
 /**
@@ -81,6 +81,20 @@ export class AdminController {
     return { ok: true, repositoryId: repo[0].id };
   }
 
+  /* ---------------- Remote kill switch (FR-SDK-8 / NFR-PERF-4) -------------- */
+  @Post('projects/:id/ingest')
+  @UseGuards(JwtGuard)
+  async setIngest(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Param('id') id: string,
+    @Body() body: { enabled?: boolean },
+  ) {
+    if (req.user!.role !== 'admin') throw new ForbiddenException('admin only');
+    await this.assertProjectInOrg(req.user!.orgId, id);
+    await db.update(projects).set({ ingestEnabled: body.enabled !== false }).where(eq(projects.id, id));
+    return { ok: true, ingestEnabled: body.enabled !== false };
+  }
+
   /* ------------------------ Secret upload token (FR-ADM-5) ----------------- */
   @Post('projects/:id/upload-token')
   @UseGuards(JwtGuard)
@@ -92,6 +106,63 @@ export class AdminController {
     await db.insert(orgTokens).values({ orgId: req.user!.orgId, tokenHash, scope: 'source-map-upload' });
     // Shown ONCE — never stored in plaintext (NFR-SEC-2/5).
     return { token };
+  }
+
+  /* --------------------------- Members (FR-ADM-6) -------------------------- */
+  @Get('members')
+  @UseGuards(JwtGuard)
+  async listMembers(@Req() req: Request & { user?: AuthPrincipal }) {
+    return db
+      .select({ id: users.id, name: users.name, email: users.email, role: memberships.role })
+      .from(memberships)
+      .innerJoin(users, eq(users.id, memberships.userId))
+      .where(eq(memberships.orgId, req.user!.orgId));
+  }
+
+  @Post('members')
+  @UseGuards(JwtGuard)
+  async invite(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Body() body: { name?: string; email?: string; role?: 'admin' | 'member' },
+  ) {
+    if (req.user!.role !== 'admin') throw new ForbiddenException('admin only');
+    if (!body.email || !body.name) throw new BadRequestException('name and email required');
+    const existing = await db.select({ id: users.id }).from(users).where(eq(users.email, body.email)).limit(1);
+    if (existing.length > 0) throw new BadRequestException('email already a member');
+    // v1 invite: create the user with a random temp password (they reset on first login).
+    const tempHash = await bcrypt.hash(`temp_${randomBytes(12).toString('hex')}`, 10);
+    const u = await db
+      .insert(users)
+      .values({ orgId: req.user!.orgId, email: body.email, name: body.name, passwordHash: tempHash })
+      .returning({ id: users.id });
+    await db.insert(memberships).values({ orgId: req.user!.orgId, userId: u[0].id, role: body.role ?? 'member' });
+    return { ok: true, id: u[0].id };
+  }
+
+  @Post('members/:id/role')
+  @UseGuards(JwtGuard)
+  async setRole(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Param('id') id: string,
+    @Body() body: { role?: 'admin' | 'member' },
+  ) {
+    if (req.user!.role !== 'admin') throw new ForbiddenException('admin only');
+    if (id === req.user!.userId) throw new BadRequestException('cannot change your own role');
+    await db
+      .update(memberships)
+      .set({ role: body.role ?? 'member' })
+      .where(and(eq(memberships.orgId, req.user!.orgId), eq(memberships.userId, id)));
+    return { ok: true };
+  }
+
+  @Post('members/:id/remove')
+  @UseGuards(JwtGuard)
+  async removeMember(@Req() req: Request & { user?: AuthPrincipal }, @Param('id') id: string) {
+    if (req.user!.role !== 'admin') throw new ForbiddenException('admin only');
+    if (id === req.user!.userId) throw new BadRequestException('cannot remove yourself');
+    await db.delete(memberships).where(and(eq(memberships.orgId, req.user!.orgId), eq(memberships.userId, id)));
+    await db.delete(users).where(and(eq(users.id, id), eq(users.orgId, req.user!.orgId), ne(users.id, req.user!.userId)));
+    return { ok: true };
   }
 
   /* --------------- Deploy-pipeline artifact registration (FR-BLD-2) -------- */

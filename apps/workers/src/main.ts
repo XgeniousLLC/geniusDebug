@@ -3,6 +3,7 @@ import { Worker, Queue } from 'bullmq';
 import IORedis from 'ioredis';
 import { parseEnvelope } from './parse-envelope';
 import { processEnvelope } from './processor';
+import { purge } from './retention';
 
 const REDIS_URL = process.env.REDIS_URL ?? 'redis://localhost:6379';
 const connection = new IORedis(REDIS_URL, { maxRetriesPerRequest: null });
@@ -51,3 +52,21 @@ worker.on('failed', async (job, err) => {
 
 // eslint-disable-next-line no-console
 console.log('[worker] consuming queue "ingest" (concurrency 8)');
+
+/* ------------------------- Retention purge (FR-RET-1) ---------------------- */
+const RETENTION_QUEUE = 'retention';
+const retentionQueue = new Queue(RETENTION_QUEUE, { connection });
+
+new Worker(
+  RETENTION_QUEUE,
+  async () => {
+    const res = await purge();
+    // eslint-disable-next-line no-console
+    console.log(`[retention] purged events=${res.events} replays=${res.replays} maps=${res.maps}`);
+  },
+  { connection },
+);
+
+// Schedule a daily purge (idempotent repeatable job).
+retentionQueue.add('daily', {}, { repeat: { every: 24 * 60 * 60 * 1000 }, jobId: 'retention-daily' }).catch(() => {});
+

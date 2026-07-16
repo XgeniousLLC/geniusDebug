@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { Card, EmptyState, Skeleton } from '../components/ui';
@@ -25,12 +26,16 @@ export function Replays() {
       ) : (
         <Card className="overflow-hidden">
           {q.data!.map((r) => (
-            <div key={r.id} className="flex items-center justify-between border-b border-border px-4 py-3 last:border-0">
-              <span className="font-mono text-small text-text">{r.id.slice(0, 12)}…</span>
+            <Link
+              key={r.id}
+              to={`/replays/${r.id}`}
+              className="flex items-center justify-between border-b border-border px-4 py-3 last:border-0 hover:bg-surface-2"
+            >
+              <span className="font-mono text-small text-accent">{r.id.slice(0, 12)}…</span>
               <span className="text-small text-text-muted">{r.segmentCount} segments</span>
-              <span className="text-small text-text-muted">{r.durationMs ?? 0}ms</span>
+              <span className="text-small text-text-muted">{((r.durationMs ?? 0) / 1000).toFixed(1)}s</span>
               <span className="text-small text-text-faint">{timeAgo(r.createdAt)} ago</span>
-            </div>
+            </Link>
           ))}
         </Card>
       )}
