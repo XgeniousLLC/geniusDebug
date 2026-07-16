@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { randomBytes } from 'node:crypto';
 import { db, sql } from './client';
 import { projects, dsnKeys } from '../schema';
 import { eq, and } from 'drizzle-orm';
@@ -11,7 +12,9 @@ import { eq, and } from 'drizzle-orm';
 const INGEST = `http://localhost:${process.env.INGEST_PORT ?? 4001}`;
 
 function buildEnvelope(publicKey: string, projectId: string): { body: string; eventId: string } {
-  const eventId = '844c595511064f80a01aa8a83c6318e8';
+  // Fresh event_id per run → re-seeding adds occurrences (and picks up a newly
+  // linked GitHub repo on the frames). Trace/issue identity stays the reference.
+  const eventId = randomBytes(16).toString('hex');
   const traceId = 'bba7158e21264876b051c6a0535d0375';
   const now = new Date().toISOString();
   const header = {

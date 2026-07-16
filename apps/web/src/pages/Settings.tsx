@@ -1,6 +1,7 @@
-import { useQuery } from '@tanstack/react-query';
+import * as React from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { Card, IdChip, Skeleton } from '../components/ui';
+import { Button, Card, IdChip, Skeleton } from '../components/ui';
 
 interface Project {
   id: string;
@@ -71,7 +72,7 @@ export function Settings() {
       </Section>
 
       <Section title="GitHub Integration" hint="Connect a repo so stack frames deep-link to source at the deployed commit (FR-GH-1/3).">
-        <div className="text-small text-text-muted">Not connected. Connecting a repo enables per-frame “Open in GitHub” links.</div>
+        {project ? <GithubLink projectId={project.id} /> : null}
       </Section>
 
       <Section title="Retention & Usage" hint="Purge ages out old data to control cost (FR-RET-1).">
@@ -79,6 +80,68 @@ export function Settings() {
         <Row k="Replays" v="14 days" />
         <Row k="Source maps" v="aligned to release retention" />
       </Section>
+    </div>
+  );
+}
+
+function GithubLink({ projectId }: { projectId: string }) {
+  const qc = useQueryClient();
+  const repo = useQuery({
+    queryKey: ['repo', projectId],
+    queryFn: () => api<{ owner: string; name: string; defaultBranch: string } | null>(`/projects/${projectId}/repository`),
+  });
+  const [owner, setOwner] = React.useState('XgeniousLLC');
+  const [name, setName] = React.useState('taskip');
+  const [branch, setBranch] = React.useState('main');
+  const [commitSha, setCommitSha] = React.useState('ab12cd34');
+
+  const link = useMutation({
+    mutationFn: () =>
+      api(`/projects/${projectId}/repository`, {
+        method: 'POST',
+        body: JSON.stringify({ owner, name, defaultBranch: branch, releaseVersion: 'ab12cd34', commitSha }),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['repo', projectId] }),
+  });
+
+  if (repo.isLoading) return <Skeleton className="h-8 w-full" />;
+
+  if (repo.data) {
+    return (
+      <div className="flex items-center justify-between text-small">
+        <div>
+          <span className="font-mono text-text">
+            {repo.data.owner}/{repo.data.name}
+          </span>
+          <span className="ml-2 text-text-muted">@ {repo.data.defaultBranch}</span>
+        </div>
+        <span className="text-status-resolved">connected · frame deep-links on</span>
+      </div>
+    );
+  }
+
+  const inp = 'h-8 rounded-md border border-border bg-bg px-2 text-small text-text';
+  return (
+    <div className="flex flex-wrap items-end gap-2">
+      <label className="flex flex-col gap-1">
+        <span className="text-caption text-text-faint">owner</span>
+        <input className={inp} value={owner} onChange={(e) => setOwner(e.target.value)} />
+      </label>
+      <label className="flex flex-col gap-1">
+        <span className="text-caption text-text-faint">repo</span>
+        <input className={inp} value={name} onChange={(e) => setName(e.target.value)} />
+      </label>
+      <label className="flex flex-col gap-1">
+        <span className="text-caption text-text-faint">branch</span>
+        <input className={inp} value={branch} onChange={(e) => setBranch(e.target.value)} />
+      </label>
+      <label className="flex flex-col gap-1">
+        <span className="text-caption text-text-faint">commit (release ab12cd34)</span>
+        <input className={inp} value={commitSha} onChange={(e) => setCommitSha(e.target.value)} />
+      </label>
+      <Button variant="primary" size="sm" disabled={link.isPending} onClick={() => link.mutate()}>
+        {link.isPending ? 'Linking…' : 'Connect repository'}
+      </Button>
     </div>
   );
 }

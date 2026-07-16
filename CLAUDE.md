@@ -142,3 +142,19 @@ Wired but need live data / prod creds to be fully exercised (not blockers for v1
 - **Replays (FR-RPL):** on-error metadata path + list/player shell — needs `replay_recording` items + R2.
 - **SES send (FR-ALR-6):** throttle/ledger real; actual SendEmail is stubbed (logged) pending SES creds.
 - **GitHub App (FR-GH-1):** repo-link model + frame deep-link builder present; OAuth install flow pending.
+
+## Sprint 2 — Close local acceptance gaps: trace waterfall + GitHub deep-links
+**Status:** COMPLETE
+**Started:** 2026-07-17
+
+### Tickets
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-017 | Transaction ingest → live Trace waterfall | DONE | HIGH | FR-TRC-1..4: send `transaction` envelope, worker stores trace+spans, waterfall renders + links back to issue |
+| GD-018 | GitHub repo link + frame "Open in GitHub" | DONE | HIGH | FR-GH-1/3, FR-MAP-6: link repo (admin API), stamp release commit, in-app frames deep-link to exact line |
+| GD-019 | Releases artifact-registration endpoint | DONE | MED | FR-BLD-2 / §4.3 API: secret org-token auth, register Debug-ID/R2-key/commit index |
+
+### Sprint Stats
+- Total: 3  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 3  /  BLOCKED: 0
+- Tokens: ~60k total

@@ -7,6 +7,7 @@ import { IssuesController } from './issues/issues.controller';
 import { IssuesService } from './issues/issues.service';
 import { ProjectsController } from './projects/projects.controller';
 import { MiscController } from './misc/misc.controller';
+import { AdminController } from './admin/admin.controller';
 
 @Controller()
 class HealthController {
@@ -23,7 +24,7 @@ class HealthController {
       signOptions: { expiresIn: process.env.JWT_EXPIRES_IN ?? '7d' },
     }),
   ],
-  controllers: [HealthController, AuthController, IssuesController, ProjectsController, MiscController],
+  controllers: [HealthController, AuthController, IssuesController, ProjectsController, MiscController, AdminController],
   providers: [AuthService, IssuesService, JwtGuard],
 })
 export class AppModule {}
