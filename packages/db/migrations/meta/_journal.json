@@ -15,6 +15,13 @@
       "when": 1784228572775,
       "tag": "0001_events_partitioning",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1784237889049,
+      "tag": "0002_nebulous_gressill",
+      "breakpoints": true
     }
   ]
 }

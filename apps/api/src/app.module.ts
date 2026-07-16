@@ -8,6 +8,8 @@ import { IssuesService } from './issues/issues.service';
 import { ProjectsController } from './projects/projects.controller';
 import { MiscController } from './misc/misc.controller';
 import { AdminController } from './admin/admin.controller';
+import { GithubController } from './github/github.controller';
+import { GithubService } from './github/github.service';
 
 @Controller()
 class HealthController {
@@ -24,7 +26,15 @@ class HealthController {
       signOptions: { expiresIn: process.env.JWT_EXPIRES_IN ?? '7d' },
     }),
   ],
-  controllers: [HealthController, AuthController, IssuesController, ProjectsController, MiscController, AdminController],
-  providers: [AuthService, IssuesService, JwtGuard],
+  controllers: [
+    HealthController,
+    AuthController,
+    IssuesController,
+    ProjectsController,
+    MiscController,
+    AdminController,
+    GithubController,
+  ],
+  providers: [AuthService, IssuesService, JwtGuard, GithubService],
 })
 export class AppModule {}

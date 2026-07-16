@@ -23,6 +23,31 @@ export class EnvelopeController {
     return { status: 'ok', service: 'ingest' };
   }
 
+  /**
+   * Public remote-config for the SDK kill switch (FR-SDK-8 / NFR-PERF-4). The
+   * write-only DSN key may read its own non-sensitive config. Taskip polls this
+   * (cached) so geniusDebug can be disabled/throttled without a redeploy.
+   */
+  @Get('api/:projectId/config')
+  async config(
+    @Param('projectId') projectId: string,
+    @Query() query: Record<string, unknown>,
+    @Headers('x-sentry-auth') sentryAuth: string | undefined,
+    @Res() res: Response,
+  ) {
+    const publicKey = this.extractKey(query, sentryAuth);
+    if (!publicKey) return res.status(403).json({ error: 'missing sentry_key' });
+    const key = await this.dsn.resolve(publicKey, projectId);
+    if (!key) return res.status(403).json({ error: 'invalid key' });
+    res.setHeader('Cache-Control', 'public, max-age=60');
+    return res.json({
+      enabled: key.ingestEnabled,
+      tracesSampleRate: 0.1,
+      replaysOnErrorSampleRate: 1.0,
+      replaysSessionSampleRate: 0,
+    });
+  }
+
   private extractKey(query: Record<string, unknown>, auth?: string): string | undefined {
     if (typeof query.sentry_key === 'string') return query.sentry_key;
     if (auth) {

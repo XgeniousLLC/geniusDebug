@@ -124,6 +124,30 @@ export const repositories = pgTable('repositories', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+/**
+ * GitHub App created via the Coolify-style manifest flow (FR-GH-1). One app per
+ * org (v1), created against a personal or org GitHub account. Secrets (PEM,
+ * client secret, webhook secret) are stored ENCRYPTED at rest (NFR-SEC-5).
+ */
+export const githubApps = pgTable(
+  'github_apps',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    orgId: uuid('org_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+    name: varchar('name', { length: 160 }).notNull(),
+    slug: varchar('slug', { length: 160 }).notNull(),
+    appId: varchar('app_id', { length: 64 }).notNull(),
+    clientId: varchar('client_id', { length: 128 }).notNull(),
+    clientSecretEnc: text('client_secret_enc').notNull(),
+    privateKeyEnc: text('private_key_enc').notNull(),
+    webhookSecretEnc: text('webhook_secret_enc'),
+    // GitHub account the app was created under (personal login or org).
+    ownerLogin: varchar('owner_login', { length: 160 }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => ({ orgUq: uniqueIndex('github_apps_org_uq').on(t.orgId) }),
+);
+
 export const releases = pgTable(
   'releases',
   {
@@ -333,6 +357,7 @@ export const schema = {
   dsnKeys,
   orgTokens,
   environments,
+  githubApps,
   repositories,
   releases,
   sourceMapArtifacts,

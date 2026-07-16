@@ -203,3 +203,31 @@ Creds-blocked (code wired, need secrets in `.env` to exercise — never paste se
 ### Sprint Stats
 - Total: 1  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 1  /  BLOCKED: 0
 - Tokens: ~35k total
+
+## Sprint 5 — Complete build: GitHub App OAuth, real R2 uploader, Taskip client wiring
+**Status:** CODE COMPLETE (network paths need creds to run)
+**Started:** 2026-07-17
+**Note:** creds-gated paths built blind; user tests with secrets in `.env` later.
+
+### Tickets
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-028 | GitHub App OAuth install flow | DONE | MED | FR-GH-1: install-url → callback → list installation repos → link; app-JWT → installation token |
+| GD-029 | Real R2 upload in upload-sourcemaps.mjs | DONE | MED | FR-BLD-2: S3 PutObject to R2 + Debug-ID injection, strip maps, register index |
+| GD-030 | Taskip @sentry/nextjs integration reference | DONE | HIGH | FR-SDK-1..8, FR-BLD-1: client/server/edge config, tunnel route, kill switch, withSentryConfig |
+
+### Sprint Stats
+- Total: 3  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 3  /  BLOCKED: 0
+- Tokens: ~85k total
+
+### Verification notes (Sprint 5)
+Verified locally (no external round-trip): GitHub App **manifest** generation (personal →
+github.com/settings/apps/new, org → /organizations/<org>/settings/apps/new, least-privilege
+contents+metadata read), `/github/app` state, kill-switch **config** endpoint on ingest
+(FR-SDK-8), Settings create-App UI renders. Also updated: GD-025 SES marked shipped-in-code,
+GD-024 R2 now applied in symbolicate + real PutObject in the uploader.
+Needs a real GitHub/R2 round-trip to fully exercise (user tests with creds):
+- GD-028: create App → convert manifest → install → list repos → link.
+- GD-029: uploader PutObject to R2 + artifact registration end-to-end.
+- GD-030: `taskip-integration/` reference files are copy-into-Taskip (compiled there, not here).

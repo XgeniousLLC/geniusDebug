@@ -21,7 +21,7 @@
  */
 import { readdir, readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 
 const {
   GENIUSDEBUG_API = 'http://localhost:4002',
@@ -52,10 +52,32 @@ function debugIdFor(buf) {
   return createHash('sha256').update(buf).digest('hex').slice(0, 32);
 }
 
-async function uploadToR2(/* key, buf */) {
-  // new S3Client({ endpoint: R2_ENDPOINT, credentials: {...} }).send(PutObjectCommand)
-  // Large maps go straight to R2; only the index below passes through the API.
-  return { r2Key: `sourcemaps/${GENIUSDEBUG_PROJECT_ID}/${randomUUID()}.map` };
+let _s3;
+async function s3() {
+  if (!_s3) {
+    const { S3Client } = await import('@aws-sdk/client-s3');
+    _s3 = new S3Client({
+      region: 'auto',
+      endpoint: process.env.R2_ENDPOINT,
+      credentials: {
+        accessKeyId: process.env.R2_ACCESS_KEY_ID,
+        secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+      },
+    });
+  }
+  return _s3;
+}
+
+async function uploadToR2(debugId, buf) {
+  // Large maps go STRAIGHT to R2 (keyed by projectId + debugId); only the light
+  // index passes through the geniusDebug API (§4.3, FR-BLD-2).
+  const r2Key = `sourcemaps/${GENIUSDEBUG_PROJECT_ID}/${debugId}.map`;
+  const { PutObjectCommand } = await import('@aws-sdk/client-s3');
+  const client = await s3();
+  await client.send(
+    new PutObjectCommand({ Bucket: R2_BUCKET, Key: r2Key, Body: buf, ContentType: 'application/json' }),
+  );
+  return { r2Key };
 }
 
 async function main() {
@@ -72,7 +94,7 @@ async function main() {
     const buf = await readFile(mapPath);
     const debugId = debugIdFor(buf);
     const checksum = createHash('sha1').update(buf).digest('hex');
-    const { r2Key } = await uploadToR2(/* debugId, buf */);
+    const { r2Key } = await uploadToR2(debugId, buf);
     artifacts.push({ debugId, r2Key, checksum, size: buf.length });
   }
 
