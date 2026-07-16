@@ -66,6 +66,9 @@ export function Login() {
             <div className="text-h1 font-semibold">
               genius<span className="text-text-faint">Debug</span>
             </div>
+            <a href="https://xgenious.com" target="_blank" rel="noreferrer" className="text-caption text-text-faint hover:text-accent">
+              by Xgenious
+            </a>
             <div className="text-small text-text-muted">
               {mode === 'register'
                 ? firstRun

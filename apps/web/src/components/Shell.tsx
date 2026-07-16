@@ -85,8 +85,16 @@ export function Shell({ children }: { children: React.ReactNode }) {
     <div className="flex h-full">
       {/* Left sidebar (brief §3) */}
       <aside className="flex w-[220px] shrink-0 flex-col border-r border-border bg-surface">
-        <div className="flex h-14 items-center px-4">
+        <div className="flex flex-col px-4 pt-3 pb-2">
           <GeniusDebugWordmark size={24} />
+          <a
+            href="https://xgenious.com"
+            target="_blank"
+            rel="noreferrer"
+            className="ml-[34px] mt-0.5 text-caption text-text-faint hover:text-accent"
+          >
+            by Xgenious
+          </a>
         </div>
         <div className="px-3 py-2">
           <div className="flex items-center gap-2 rounded-md border border-border bg-bg px-2.5 py-1.5 text-small text-text-muted">
