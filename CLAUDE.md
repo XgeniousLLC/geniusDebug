@@ -189,3 +189,17 @@ Creds-blocked (code wired, need secrets in `.env` to exercise — never paste se
 - GD-025 SES: `ses.ts` SendEmail wired into alerts; activates when SES_* set (dev logs).
 - GD-026 GitHub App OAuth install: NOT built — manual repo-link (Settings) works today; OAuth
   install→callback→repo-pick still needs GITHUB_APP_* creds.
+
+## Sprint 4 — Source-map application engine (creds-free part of GD-024)
+**Status:** COMPLETE
+**Started:** 2026-07-17
+
+### Tickets
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-027 | Source-map application + unit test | DONE | MED | FR-MAP-3/4: resolve minified frame→original via `source-map`; source context; unit-tested with a fixture map (R2 fetch already wired, GD-024) |
+
+### Sprint Stats
+- Total: 1  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 1  /  BLOCKED: 0
+- Tokens: ~35k total

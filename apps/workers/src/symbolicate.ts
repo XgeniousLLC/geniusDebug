@@ -1,6 +1,8 @@
 import { db, releases, repositories, sourceMapArtifacts } from '@geniusdebug/db';
 import { and, eq } from 'drizzle-orm';
 import type { NormalizedEvent, NormalizedFrame } from '@geniusdebug/shared';
+import { getObject, r2Configured } from './r2';
+import { symbolicateWithMap } from './apply-map';
 
 /**
  * Symbolication step (FR-MAP-3..10). SKIPS entirely when platform !== javascript
@@ -16,24 +18,39 @@ export async function symbolicate(e: NormalizedEvent, projectId: string): Promis
   // GitHub deep-link context: repo + release commit (FR-GH-3).
   const gh = await resolveGithub(projectId, e.release);
 
-  // Debug-ID lookup — presence proves a map is available for real symbolication.
-  if (e.debugIds.length > 0) {
-    for (const debugId of e.debugIds) {
-      await db
-        .select({ id: sourceMapArtifacts.id })
-        .from(sourceMapArtifacts)
-        .where(and(eq(sourceMapArtifacts.projectId, projectId), eq(sourceMapArtifacts.debugId, debugId)))
-        .limit(1);
-      // (R2 fetch + source-map application happens here when maps are uploaded.)
+  // Debug-ID lookup → fetch the map from R2 → apply it (FR-MAP-3/4). Falls back
+  // to the raw frames with a warning when no map is found/available (FR-MAP-8).
+  let frames: NormalizedFrame[] = e.frames;
+  const r2Key = await findMapR2Key(projectId, e.debugIds);
+  if (r2Key && r2Configured()) {
+    try {
+      const bytes = await getObject(r2Key);
+      if (bytes) frames = await symbolicateWithMap(frames, bytes.toString('utf8'));
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(`[symbolicate] map apply failed for ${r2Key}, using raw frames:`, (err as Error).message);
     }
   }
 
-  const frames: NormalizedFrame[] = e.frames.map((f) => ({
+  frames = frames.map((f) => ({
     ...f,
     githubUrl: f.inApp && gh ? buildGithubUrl(gh, f) : undefined,
   }));
 
   return { ...e, frames };
+}
+
+/** First matching artifact's R2 key for any of the event's Debug IDs (FR-MAP-2). */
+async function findMapR2Key(projectId: string, debugIds: string[]): Promise<string | null> {
+  for (const debugId of debugIds) {
+    const rows = await db
+      .select({ r2Key: sourceMapArtifacts.r2Key })
+      .from(sourceMapArtifacts)
+      .where(and(eq(sourceMapArtifacts.projectId, projectId), eq(sourceMapArtifacts.debugId, debugId)))
+      .limit(1);
+    if (rows[0]) return rows[0].r2Key;
+  }
+  return null;
 }
 
 interface GhCtx {
