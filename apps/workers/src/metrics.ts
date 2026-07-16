@@ -15,3 +15,8 @@ export async function recordLatency(ms: number): Promise<void> {
   await conn.lpush('metrics:proc_latency_ms', ms);
   await conn.ltrim('metrics:proc_latency_ms', 0, 199);
 }
+
+/** Close the Redis handle (tests / graceful shutdown). */
+export async function closeMetrics(): Promise<void> {
+  await conn.quit();
+}

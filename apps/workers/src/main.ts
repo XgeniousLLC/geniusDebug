@@ -14,11 +14,18 @@ const connection = new IORedis(REDIS_URL, { maxRetriesPerRequest: null });
 const INGEST_QUEUE = 'ingest';
 const DLQ = 'ingest-dead';
 
+interface BlobPointer {
+  type: string;
+  r2Key: string;
+  size: number;
+  filename?: string;
+}
 interface IngestJob {
   projectId: string;
   envelopeB64: string;
   eventId?: string;
   receivedAt: string;
+  blobs?: BlobPointer[];
 }
 
 /** Dead-letter queue for poison events (FR-WRK-1 / NFR-REL-1). */
@@ -34,7 +41,7 @@ const worker = new Worker<IngestJob>(
     const parsed = parseEnvelope(bytes);
     // Back-pressure: shed low-value items when the queue is deep (FR-WRK-4).
     const waiting = await ingestQueue.getWaitingCount().catch(() => 0);
-    await processEnvelope(job.data.projectId, parsed, { shedLowValue: waiting > SHED_THRESHOLD });
+    await processEnvelope(job.data.projectId, parsed, { shedLowValue: waiting > SHED_THRESHOLD, blobs: job.data.blobs });
     await recordLatency(Date.now() - started).catch(() => {});
   },
   {

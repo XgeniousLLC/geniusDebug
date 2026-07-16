@@ -276,3 +276,29 @@ keyboard nav, multi-select merge bar, onboarding, forgot/reset pages, Settings s
 Partial: GD-041 saved-searches (shareable ?query URL works; named-search chips not built),
 GD-053 rrweb DOM playback (player shell + timeline; real DOM render needs the R2 recording blob).
 GitHub advanced (GD-043/44/45) code-complete; live needs a GitHub App install.
+
+## Sprint 7 — Close no-creds gaps + prove v2 (Laravel) readiness
+**Status:** COMPLETE
+**Started:** 2026-07-17
+
+### Tickets
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-054 | Oversized blob → R2 streaming + pointer | DONE | HIGH | FR-ING-4/FR-RPL-2: stream oversized replay_recording/attachment to R2, enqueue pointer, local fallback |
+| GD-055 | Automated test suite | DONE | HIGH | ingest caps/gzip/framing + envelope round-trip smoke (ingest→pipeline→issue) |
+| GD-056 | Laravel/PHP v2 readiness proof | DONE | MED | FR-WRK-7/FR-MAP-10: platform:"php" event groups, symbolication skipped |
+
+### Sprint Stats
+- Total: 3  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 3  /  BLOCKED: 0
+- Tokens: ~55k total
+
+### Verification notes (Sprint 7)
+- GD-054: ingest streams oversized replay_recording/attachment to R2 + enqueues a pointer;
+  local fallback (no R2) keeps items inline — verified live: replay still round-trips (+1 row).
+- GD-055: 19 automated tests, all green (ingest 6: framing/caps/gzip/blob-fallback; workers 13:
+  fingerprint, source-map apply, envelope parse, PHP platform, ingest→pipeline→issue smoke +
+  idempotency). `npm test` at root runs them.
+- GD-056 (Laravel/PHP v2 readiness, SRS §12): tests prove a `platform:"php"` event normalizes with
+  native frames, groups deterministically (FR-WRK-7), and skips symbolication (FR-MAP-10). Adding
+  `sentry/sentry-laravel` in v2 is therefore client-config only — no backend change.

@@ -4,6 +4,7 @@ import { DsnService } from './dsn.service';
 import { RateLimitService } from './ratelimit.service';
 import { EnvelopeService } from './envelope.service';
 import { ingestQueue, connection, type IngestJob } from './queue';
+import { splitOversizedBlobs } from './split-blobs';
 
 /** Aggregate dropped-event counters (FR-ING-6) — cheap Redis INCR, daily bucket. */
 async function countDrop(projectId: string, reason: string): Promise<void> {
@@ -101,11 +102,16 @@ export class EnvelopeController {
       return res.status(result.status ?? 400).json({ error: result.reason });
     }
 
+    // Stream oversized replay/attachment blobs to R2; enqueue only a pointer so the
+    // big blob never sits in the queue (FR-ING-4/FR-RPL-2). No-op without R2.
+    const { inline, blobs } = await splitOversizedBlobs(result.bytes, projectId, result.eventId);
+
     const job: IngestJob = {
       projectId,
-      envelopeB64: result.bytes.toString('base64'),
+      envelopeB64: inline.toString('base64'),
       eventId: result.eventId,
       receivedAt: new Date().toISOString(),
+      blobs: blobs.length ? blobs : undefined,
     };
     // Idempotency key on event_id (FR-WRK-2 dedupe starts here).
     await ingestQueue.add('envelope', job, {

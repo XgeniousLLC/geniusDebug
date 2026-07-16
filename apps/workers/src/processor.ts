@@ -13,10 +13,17 @@ import { countDrop } from './metrics';
  * `shedLowValue` (FR-WRK-4): under queue back-pressure, drop traces/replay
  * before errors — errors are never shed.
  */
+interface BlobPointer {
+  type: string;
+  r2Key: string;
+  size: number;
+  filename?: string;
+}
+
 export async function processEnvelope(
   projectId: string,
   parsed: ParsedEnvelope,
-  opts: { shedLowValue?: boolean } = {},
+  opts: { shedLowValue?: boolean; blobs?: BlobPointer[] } = {},
 ): Promise<void> {
   for (const item of parsed.items) {
     const type = item.header.type;
@@ -37,7 +44,9 @@ export async function processEnvelope(
           continue;
         }
         const payload = JSON.parse(item.payload.toString('utf8')) as Record<string, unknown>;
-        await processReplay(projectId, payload);
+        // Blob(s) for this replay were streamed to R2 by ingest (FR-RPL-2).
+        const recBlob = (opts.blobs ?? []).find((b) => b.type === 'replay_recording');
+        await processReplay(projectId, payload, recBlob);
       } else if (type === 'client_report') {
         // Sentry client report: SDK-side discarded counts → aggregate (FR-ING-6).
         const payload = JSON.parse(item.payload.toString('utf8')) as {
@@ -252,7 +261,11 @@ async function upsertIssue(a: UpsertArgs): Promise<{ issueId: string; regressed:
   return { issueId: again[0].id, regressed: false };
 }
 
-async function processReplay(projectId: string, payload: Record<string, unknown>): Promise<void> {
+async function processReplay(
+  projectId: string,
+  payload: Record<string, unknown>,
+  recBlob?: { r2Key: string; size: number },
+): Promise<void> {
   // Assemble replay metadata (FR-RPL-3/5); the recording blob lives in R2 (pointer).
   const traceIds = (payload.trace_ids as string[] | undefined) ?? [];
   const traceId = traceIds[0];
@@ -278,8 +291,8 @@ async function processReplay(projectId: string, payload: Record<string, unknown>
     startedAt: start,
     durationMs,
     segmentCount: segmentId + 1,
-    r2Prefix: `replays/${projectId}/${payload.replay_id ?? 'unknown'}`,
-    size: 0,
+    r2Prefix: recBlob?.r2Key ?? `replays/${projectId}/${payload.replay_id ?? 'unknown'}`,
+    size: recBlob?.size ?? 0,
   });
 }
 

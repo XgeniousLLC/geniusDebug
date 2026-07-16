@@ -6,9 +6,11 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "node dist/main.js",
-    "start:dev": "ts-node --transpile-only -P tsconfig.json src/main.ts"
+    "start:dev": "ts-node --transpile-only -P tsconfig.json src/main.ts",
+    "test": "tsx --test --test-force-exit src/*.test.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1089.0",
     "@geniusdebug/db": "*",
     "@geniusdebug/shared": "*",
     "@nestjs/common": "^10.4.7",

@@ -12,6 +12,7 @@
   "scripts": {
     "build": "npm run build -w @geniusdebug/shared && npm run build -w @geniusdebug/db && npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test -w @geniusdebug/shared --if-present && npm run test -w @geniusdebug/ingest && npm run test -w @geniusdebug/workers",
     "db:generate": "npm run generate -w @geniusdebug/db",
     "db:migrate": "npm run migrate -w @geniusdebug/db",
     "db:seed": "npm run seed -w @geniusdebug/db",
