@@ -1,0 +1,28 @@
+# deps
+node_modules/
+.pnp.*
+.yarn/*
+
+# env / secrets (never commit)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# builds
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# drizzle
+packages/db/migrations/meta/_journal.lock
+
+# logs / os
+*.log
+npm-debug.log*
+.DS_Store
+coverage/
+.turbo/

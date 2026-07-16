@@ -1,0 +1,180 @@
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { db, issues, events, projects, environments, issueActivity, users, issueCounts } from '@geniusdebug/db';
+import { and, eq, desc, asc, ilike, or, inArray, sql as dsql, gte } from 'drizzle-orm';
+import type { IssueDto, EventDto, IssueListQuery, IssueActionInput } from '@geniusdebug/shared';
+
+@Injectable()
+export class IssuesService {
+  /** Resolve the target project within the caller's org (default = first project). */
+  private async resolveProject(orgId: string, projectId?: string): Promise<string | null> {
+    if (projectId) {
+      const rows = await db
+        .select({ id: projects.id })
+        .from(projects)
+        .where(and(eq(projects.id, projectId), eq(projects.orgId, orgId)))
+        .limit(1);
+      return rows[0]?.id ?? null;
+    }
+    const rows = await db.select({ id: projects.id }).from(projects).where(eq(projects.orgId, orgId)).limit(1);
+    return rows[0]?.id ?? null;
+  }
+
+  async list(orgId: string, q: IssueListQuery & { projectId?: string }): Promise<IssueDto[]> {
+    const projectId = await this.resolveProject(orgId, q.projectId);
+    if (!projectId) return [];
+
+    const conds = [eq(issues.projectId, projectId)];
+    const status = q.status ?? 'unresolved';
+    if (status !== 'all') conds.push(eq(issues.status, status));
+    if (q.query) {
+      const like = `%${q.query}%`;
+      conds.push(or(ilike(issues.title, like), ilike(issues.culprit, like), ilike(issues.shortId, like))!);
+    }
+    // Environment filter (FR-UI-2): issues with an event in that environment.
+    if (q.environment && q.environment !== 'all') {
+      const envRows = await db
+        .select({ id: environments.id })
+        .from(environments)
+        .where(and(eq(environments.projectId, projectId), eq(environments.name, q.environment)))
+        .limit(1);
+      if (envRows.length === 0) return [];
+      const evRows = await db
+        .selectDistinct({ issueId: events.issueId })
+        .from(events)
+        .where(and(eq(events.projectId, projectId), eq(events.environmentId, envRows[0].id)));
+      const ids = evRows.map((r) => r.issueId);
+      if (ids.length === 0) return [];
+      conds.push(inArray(issues.id, ids));
+    }
+
+    const order =
+      q.sort === 'firstSeen'
+        ? desc(issues.firstSeen)
+        : q.sort === 'events'
+          ? desc(issues.timesSeen)
+          : q.sort === 'users'
+            ? desc(issues.usersAffected)
+            : desc(issues.lastSeen);
+
+    const rows = await db
+      .select()
+      .from(issues)
+      .where(and(...conds))
+      .orderBy(order)
+      .limit(q.limit ?? 50);
+
+    return rows.map(this.toDto);
+  }
+
+  async detail(orgId: string, shortId: string) {
+    const projectIds = (
+      await db.select({ id: projects.id }).from(projects).where(eq(projects.orgId, orgId))
+    ).map((r) => r.id);
+    if (projectIds.length === 0) throw new NotFoundException('issue not found');
+
+    const rows = await db
+      .select()
+      .from(issues)
+      .where(and(eq(issues.shortId, shortId), inArray(issues.projectId, projectIds)))
+      .limit(1);
+    if (rows.length === 0) throw new NotFoundException('issue not found');
+    const issue = rows[0];
+
+    const evRows = await db
+      .select()
+      .from(events)
+      .where(eq(events.issueId, issue.id))
+      .orderBy(desc(events.timestamp))
+      .limit(50);
+
+    const activity = await db
+      .select({
+        id: issueActivity.id,
+        action: issueActivity.action,
+        payload: issueActivity.payload,
+        createdAt: issueActivity.createdAt,
+        userName: users.name,
+      })
+      .from(issueActivity)
+      .leftJoin(users, eq(users.id, issueActivity.userId))
+      .where(eq(issueActivity.issueId, issue.id))
+      .orderBy(desc(issueActivity.createdAt));
+
+    const counts = await db
+      .select({ bucket: issueCounts.bucket, count: issueCounts.count })
+      .from(issueCounts)
+      .where(eq(issueCounts.issueId, issue.id))
+      .orderBy(asc(issueCounts.bucket));
+
+    return {
+      issue: this.toDto(issue),
+      latestEvent: evRows[0] ? this.toEventDto(evRows[0]) : null,
+      events: evRows.map((e) => this.toEventDto(e)),
+      activity,
+      counts,
+    };
+  }
+
+  async act(orgId: string, shortId: string, userId: string, input: IssueActionInput) {
+    const projectIds = (
+      await db.select({ id: projects.id }).from(projects).where(eq(projects.orgId, orgId))
+    ).map((r) => r.id);
+    const rows = await db
+      .select({ id: issues.id })
+      .from(issues)
+      .where(and(eq(issues.shortId, shortId), inArray(issues.projectId, projectIds)))
+      .limit(1);
+    if (rows.length === 0) throw new NotFoundException('issue not found');
+    const issueId = rows[0].id;
+
+    const patch: Record<string, unknown> = {};
+    if (input.action === 'resolve') Object.assign(patch, { status: 'resolved', isRegressed: false });
+    else if (input.action === 'unresolve') Object.assign(patch, { status: 'unresolved' });
+    else if (input.action === 'archive') Object.assign(patch, { status: 'archived' });
+    else if (input.action === 'mute') Object.assign(patch, { status: 'muted' });
+    else if (input.action === 'assign') Object.assign(patch, { assigneeUserId: input.assigneeUserId ?? null });
+
+    await db.update(issues).set(patch).where(eq(issues.id, issueId));
+    await db.insert(issueActivity).values({ issueId, userId, action: input.action, payload: input as Record<string, unknown> });
+    return { ok: true };
+  }
+
+  private toDto = (r: typeof issues.$inferSelect): IssueDto => ({
+    id: r.id,
+    shortId: r.shortId,
+    projectId: r.projectId,
+    title: r.title,
+    culprit: r.culprit,
+    type: r.type,
+    level: r.level,
+    status: r.status,
+    isRegressed: r.isRegressed,
+    assigneeUserId: r.assigneeUserId,
+    firstSeen: r.firstSeen.toISOString(),
+    lastSeen: r.lastSeen.toISOString(),
+    timesSeen: r.timesSeen,
+    usersAffected: r.usersAffected,
+  });
+
+  private toEventDto = (e: typeof events.$inferSelect): EventDto => ({
+    id: e.id,
+    issueId: e.issueId,
+    timestamp: e.timestamp.toISOString(),
+    level: e.level,
+    handled: e.handled,
+    transaction: e.transaction,
+    url: e.url,
+    message: e.message,
+    release: null,
+    environment: '',
+    exception: (e.exception as EventDto['exception']) ?? null,
+    contexts: (e.contexts as Record<string, unknown>) ?? {},
+    request: (e.request as Record<string, unknown>) ?? null,
+    user: (e.user as Record<string, unknown>) ?? null,
+    tags: (e.tags as Record<string, string>) ?? {},
+    breadcrumbs: (e.breadcrumbs as Array<Record<string, unknown>>) ?? [],
+    sdk: (e.sdk as Record<string, unknown>) ?? null,
+    traceId: e.traceId,
+    spanId: e.spanId,
+  });
+}

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 120 120" fill="none" role="img" aria-label="geniusDebug">
+  <defs>
+    <linearGradient id="gd-icon" x1="0" y1="0" x2="120" y2="120" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6C5FC7"/>
+      <stop offset="1" stop-color="#7B2CBF"/>
+    </linearGradient>
+  </defs>
+  <rect width="120" height="120" rx="28" fill="url(#gd-icon)"/>
+  <rect x="1.5" y="1.5" width="117" height="117" rx="26.5" fill="none" stroke="#fff" stroke-opacity="0.10" stroke-width="3"/>
+  <circle cx="60" cy="60" r="31" stroke="#fff" stroke-width="6.5" opacity="0.30"/>
+  <path d="M27 62 L49 62 L57 45 L66 85 L73 57 L81 62 L93 62" stroke="#fff" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="66" cy="85" r="8" fill="#E5484D"/>
+</svg>

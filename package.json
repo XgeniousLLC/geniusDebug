@@ -1,0 +1,28 @@
+{
+  "name": "geniusdebug",
+  "version": "1.0.0",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @geniusdebug/shared && npm run build -w @geniusdebug/db && npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "db:generate": "npm run generate -w @geniusdebug/db",
+    "db:migrate": "npm run migrate -w @geniusdebug/db",
+    "db:seed": "npm run seed -w @geniusdebug/db",
+    "dev:api": "npm run start:dev -w @geniusdebug/api",
+    "dev:ingest": "npm run start:dev -w @geniusdebug/ingest",
+    "dev:workers": "npm run start:dev -w @geniusdebug/workers",
+    "dev:web": "npm run dev -w @geniusdebug/web",
+    "dev": "concurrently -n api,ingest,workers,web -c blue,green,magenta,cyan \"npm run dev:api\" \"npm run dev:ingest\" \"npm run dev:workers\" \"npm run dev:web\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "typescript": "^5.6.3"
+  }
+}

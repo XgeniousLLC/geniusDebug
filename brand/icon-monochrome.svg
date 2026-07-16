@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 120 120" fill="none" color="#8A8A98" role="img" aria-label="geniusDebug">
+  <!-- Tintable: set CSS `color` (or the `color` attr) to recolor the whole mark. -->
+  <rect x="3" y="3" width="114" height="114" rx="26" fill="none" stroke="currentColor" stroke-width="5"/>
+  <circle cx="60" cy="60" r="31" stroke="currentColor" stroke-width="6.5" opacity="0.35"/>
+  <path d="M27 62 L49 62 L57 45 L66 85 L73 57 L81 62 L93 62" stroke="currentColor" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="66" cy="85" r="8" fill="currentColor"/>
+</svg>

@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>geniusDebug — brand mark</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;background:#0E0E14;color:#EDEDF2;font-family:Inter,system-ui,-apple-system,sans-serif;padding:48px;max-width:1040px;margin:0 auto}
+  h1{font-size:30px;font-weight:600;letter-spacing:-.5px;margin:0}
+  .sub{color:#9A9AA8;font-size:14px;margin:4px 0 0}
+  .row{display:flex;align-items:flex-end;gap:24px;flex-wrap:wrap;background:#17171F;border:1px solid #2A2A36;border-radius:12px;padding:28px;margin-top:16px}
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-top:16px}
+  .card{background:#17171F;border:1px solid #2A2A36;border-radius:12px;padding:24px;display:flex;flex-direction:column;align-items:center;gap:12px}
+  .light{background:#F7F7FA;border-color:#E3E3EA;color:#6B6B78}
+  .lbl{font-size:12px;color:#9A9AA8}
+  .cap{font-family:ui-monospace,monospace;font-size:11px;color:#6B6B78}
+  .sec{font-size:13px;font-weight:600;margin:40px 0 0}
+  .mono{font-family:ui-monospace,monospace}
+</style>
+</head>
+<body>
+  <div style="display:flex;align-items:center;gap:18px">
+    <svg width="88" height="88" viewBox="0 0 120 120" fill="none" aria-label="geniusDebug">
+      <defs><linearGradient id="h" x1="0" y1="0" x2="120" y2="120" gradientUnits="userSpaceOnUse"><stop stop-color="#6C5FC7"/><stop offset="1" stop-color="#7B2CBF"/></linearGradient></defs>
+      <rect width="120" height="120" rx="28" fill="url(#h)"/>
+      <rect x="1.5" y="1.5" width="117" height="117" rx="26.5" fill="none" stroke="#fff" stroke-opacity=".10" stroke-width="3"/>
+      <circle cx="60" cy="60" r="31" stroke="#fff" stroke-width="6.5" opacity=".30"/>
+      <path d="M27 62 L49 62 L57 45 L66 85 L73 57 L81 62 L93 62" stroke="#fff" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="66" cy="85" r="8" fill="#E5484D"/>
+    </svg>
+    <div><h1>geniusDebug</h1><p class="sub">A monitoring scope watching a live signal, with the caught error marked in red.</p></div>
+  </div>
+
+  <div class="sec">Scales — 128 · 64 · 40 · 32 · 24 · 16</div>
+  <div class="row" id="sizes"></div>
+
+  <div class="sec">Variants</div>
+  <div class="grid">
+    <div class="card"><div id="v-primary"></div><span class="lbl">Primary · on dark</span></div>
+    <div class="card light"><div id="v-light"></div><span class="lbl" style="color:#6B6B78">Primary · on light</span></div>
+    <div class="card"><div id="v-mono" style="color:#EDEDF2"></div><span class="lbl">Monochrome</span></div>
+    <div class="card"><div id="v-glyph"></div><span class="lbl">Glyph only</span></div>
+  </div>
+
+  <div class="sec">Favicon &amp; tab (ring dropped at 16px)</div>
+  <div class="row">
+    <div style="display:flex;align-items:center;gap:10px;background:#0E0E14;border:1px solid #2A2A36;border-radius:8px;padding:8px 12px">
+      <span id="fav"></span><span class="lbl">geniusDebug — Issues</span>
+    </div>
+  </div>
+
+<script>
+const PULSE='M27 62 L49 62 L57 45 L66 85 L73 57 L81 62 L93 62';
+function primary(px,fav){const id='g'+Math.random().toString(36).slice(2);return `<svg width="${px}" height="${px}" viewBox="0 0 120 120" fill="none"><defs><linearGradient id="${id}" x1="0" y1="0" x2="120" y2="120" gradientUnits="userSpaceOnUse"><stop stop-color="#6C5FC7"/><stop offset="1" stop-color="#7B2CBF"/></linearGradient></defs><rect width="120" height="120" rx="28" fill="url(#${id})"/>${fav?'':'<circle cx="60" cy="60" r="31" stroke="#fff" stroke-width="6.5" opacity=".30"/>'}<path d="${PULSE}" stroke="#fff" stroke-width="${fav?9:7.5}" stroke-linecap="round" stroke-linejoin="round"/><circle cx="66" cy="85" r="${fav?9:8}" fill="#E5484D"/></svg>`;}
+function mono(px){return `<svg width="${px}" height="${px}" viewBox="0 0 120 120" fill="none"><rect x="3" y="3" width="114" height="114" rx="26" fill="none" stroke="currentColor" stroke-width="5"/><circle cx="60" cy="60" r="31" stroke="currentColor" stroke-width="6.5" opacity=".35"/><path d="${PULSE}" stroke="currentColor" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="66" cy="85" r="8" fill="currentColor"/></svg>`;}
+function glyph(px){return `<svg width="${px}" height="${px}" viewBox="0 0 120 120" fill="none"><circle cx="60" cy="60" r="31" stroke="#6C5FC7" stroke-width="6.5" opacity=".55"/><path d="${PULSE}" stroke="#EDEDF2" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="66" cy="85" r="8" fill="#E5484D"/></svg>`;}
+document.getElementById('sizes').innerHTML=[128,64,40,32,24,16].map(px=>`<div style="display:flex;flex-direction:column;align-items:center;gap:8px">${primary(px,px<=16)}<span class="cap">${px}px</span></div>`).join('');
+document.getElementById('v-primary').innerHTML=primary(56,false);
+document.getElementById('v-light').innerHTML=primary(56,false);
+document.getElementById('v-mono').innerHTML=mono(56);
+document.getElementById('v-glyph').innerHTML=glyph(56);
+document.getElementById('fav').innerHTML=primary(16,true);
+</script>
+</body>
+</html>

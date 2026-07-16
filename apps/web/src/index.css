@@ -1,0 +1,60 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Design tokens — brief §2. Dark is the default for a monitoring tool. */
+:root {
+  --bg: #ffffff;
+  --surface: #f7f7fa;
+  --surface-2: #efeff4;
+  --border: #e3e3ea;
+  --text: #1a1a22;
+  --text-muted: #6b6b78;
+  --text-faint: #9a9aa8;
+  --accent: #6c5fc7;
+  --accent-strong: #584ab0;
+}
+
+.dark {
+  --bg: #0e0e14;
+  --surface: #17171f;
+  --surface-2: #1e1e28;
+  --border: #2a2a36;
+  --text: #ededf2;
+  --text-muted: #9a9aa8;
+  --text-faint: #6b6b78;
+  --accent: #6c5fc7;
+  --accent-strong: #7b6fd6;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: Inter, system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 20px;
+  -webkit-font-smoothing: antialiased;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+/* thin scrollbars for dense panels */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 6px;
+}
