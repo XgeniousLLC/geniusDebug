@@ -32,6 +32,7 @@ export function Login() {
   const [orgName, setOrgName] = React.useState('');
   const [email, setEmail] = React.useState('');
   const [password, setPassword] = React.useState('');
+  const [remember, setRemember] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(false);
 
@@ -43,7 +44,7 @@ export function Login() {
     setLoading(true);
     try {
       const path = mode === 'register' ? '/auth/register' : '/auth/login';
-      const body = mode === 'register' ? { name, email, password, orgName: orgName || undefined } : { email, password };
+      const body = mode === 'register' ? { name, email, password, orgName: orgName || undefined } : { email, password, rememberMe: remember };
       const res = await api<{ token: string; user: AuthUserDto }>(path, {
         method: 'POST',
         body: JSON.stringify(body),
@@ -126,9 +127,20 @@ export function Login() {
           </Field>
 
           {mode === 'login' && (
-            <Link to="/forgot" className="-mt-1 text-right text-caption text-text-muted hover:text-accent">
-              Forgot password?
-            </Link>
+            <div className="-mt-1 flex items-center justify-between">
+              <label className="flex items-center gap-1.5 text-caption text-text-muted">
+                <input
+                  type="checkbox"
+                  checked={remember}
+                  onChange={(e) => setRemember(e.target.checked)}
+                  className="accent-accent"
+                />
+                Remember me for 14 days
+              </label>
+              <Link to="/forgot" className="text-caption text-text-muted hover:text-accent">
+                Forgot password?
+              </Link>
+            </div>
           )}
 
           <Button type="submit" variant="primary" disabled={loading} className="mt-1">

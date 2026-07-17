@@ -80,7 +80,9 @@ export class AuthService {
       .limit(1);
     const role = (mem[0]?.role ?? 'member') as 'admin' | 'member';
 
-    const token = this.sign({ userId: rows[0].id, orgId: rows[0].orgId, role, email: rows[0].email });
+    // "Remember me" → 14-day token; otherwise a short-lived 1-day session.
+    const expiresIn = input.rememberMe ? '14d' : '1d';
+    const token = this.sign({ userId: rows[0].id, orgId: rows[0].orgId, role, email: rows[0].email }, expiresIn);
     return { token, user: { id: rows[0].id, email: rows[0].email, name: rows[0].name, orgId: rows[0].orgId, role } };
   }
 
@@ -180,7 +182,7 @@ export class AuthService {
     return { ok: true };
   }
 
-  private sign(p: { userId: string; orgId: string; role: 'admin' | 'member'; email: string }): string {
-    return this.jwt.sign(p);
+  private sign(p: { userId: string; orgId: string; role: 'admin' | 'member'; email: string }, expiresIn?: string): string {
+    return expiresIn ? this.jwt.sign(p, { expiresIn }) : this.jwt.sign(p);
   }
 }
