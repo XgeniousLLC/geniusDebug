@@ -135,18 +135,9 @@ export function Login() {
             {loading ? 'Please wait…' : mode === 'register' ? 'Create account' : 'Sign in'}
           </Button>
 
-          {!firstRun && (
-            <button
-              type="button"
-              onClick={() => {
-                setError(null);
-                setMode((m) => (m === 'login' ? 'register' : 'login'));
-              }}
-              className="text-center text-caption text-text-muted hover:text-accent"
-            >
-              {mode === 'login' ? "Don't have an account? Register" : 'Already have an account? Sign in'}
-            </button>
-          )}
+          {/* No public registration — accounts are created by an admin invite.
+              Register mode only appears on a fresh install (firstRun) to bootstrap
+              the first admin. */}
         </form>
       </div>
     </div>

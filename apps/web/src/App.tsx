@@ -6,13 +6,20 @@ import { Login } from './pages/Login';
 import { Forgot } from './pages/Forgot';
 import { Reset } from './pages/Reset';
 import { Onboarding } from './pages/Onboarding';
+import { Dashboard } from './pages/Dashboard';
 import { Issues } from './pages/Issues';
 import { IssueDetail } from './pages/IssueDetail';
 import { Traces } from './pages/Traces';
 import { Replays } from './pages/Replays';
 import { ReplayPlayer } from './pages/ReplayPlayer';
 import { Alerts } from './pages/Alerts';
+import { Projects } from './pages/Projects';
+import { ProjectSetup } from './pages/ProjectSetup';
 import { Settings } from './pages/Settings';
+import { NotFound } from './pages/NotFound';
+import { Forbidden } from './pages/Forbidden';
+import { AccountProfile } from './pages/AccountProfile';
+import { AccountPassword } from './pages/AccountPassword';
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const user = useUi((s) => s.user);
@@ -28,7 +35,8 @@ export function App() {
       <Route path="/forgot" element={<Forgot />} />
       <Route path="/reset" element={<Reset />} />
       <Route path="/onboarding" element={<RequireAuth><Onboarding /></RequireAuth>} />
-      <Route path="/" element={<Navigate to="/issues" replace />} />
+      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+      <Route path="/dashboard" element={<RequireAuth><Dashboard /></RequireAuth>} />
       <Route path="/issues" element={<RequireAuth><Issues /></RequireAuth>} />
       <Route path="/issues/:shortId" element={<RequireAuth><IssueDetail /></RequireAuth>} />
       <Route path="/traces" element={<RequireAuth><Traces /></RequireAuth>} />
@@ -36,8 +44,14 @@ export function App() {
       <Route path="/replays" element={<RequireAuth><Replays /></RequireAuth>} />
       <Route path="/replays/:replayId" element={<RequireAuth><ReplayPlayer /></RequireAuth>} />
       <Route path="/alerts" element={<RequireAuth><Alerts /></RequireAuth>} />
+      <Route path="/projects" element={<RequireAuth><Projects /></RequireAuth>} />
+      <Route path="/projects/:id/setup" element={<RequireAuth><ProjectSetup /></RequireAuth>} />
       <Route path="/settings" element={<RequireAuth><Settings /></RequireAuth>} />
-      <Route path="*" element={<Navigate to="/issues" replace />} />
+      <Route path="/account" element={<Navigate to="/account/profile" replace />} />
+      <Route path="/account/profile" element={<RequireAuth><AccountProfile /></RequireAuth>} />
+      <Route path="/account/password" element={<RequireAuth><AccountPassword /></RequireAuth>} />
+      <Route path="/403" element={<RequireAuth><Forbidden /></RequireAuth>} />
+      <Route path="*" element={<RequireAuth><NotFound /></RequireAuth>} />
     </Routes>
   );
 }

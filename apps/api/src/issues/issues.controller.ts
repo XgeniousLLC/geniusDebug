@@ -13,12 +13,12 @@ export class IssuesController {
   async list(@Req() req: Request & { user?: AuthPrincipal }, @Query() query: Record<string, unknown>) {
     const parsed = issueListQuerySchema.safeParse(query);
     if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
-    return this.issues.list(req.user!.orgId, { ...parsed.data, projectId: query.projectId as string | undefined });
+    return this.issues.list(req.user!, { ...parsed.data, projectId: query.projectId as string | undefined });
   }
 
   @Get(':shortId')
   async detail(@Req() req: Request & { user?: AuthPrincipal }, @Param('shortId') shortId: string) {
-    return this.issues.detail(req.user!.orgId, shortId);
+    return this.issues.detail(req.user!, shortId);
   }
 
   @Post(':shortId/actions')
@@ -29,7 +29,7 @@ export class IssuesController {
   ) {
     const parsed = issueActionSchema.safeParse(body);
     if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
-    return this.issues.act(req.user!.orgId, shortId, req.user!.userId, parsed.data);
+    return this.issues.act(req.user!, shortId, req.user!.userId, parsed.data);
   }
 
   @Post(':shortId/merge')
@@ -39,6 +39,6 @@ export class IssuesController {
     @Body() body: { targetShortId?: string },
   ) {
     if (!body.targetShortId) throw new BadRequestException('targetShortId required');
-    return this.issues.merge(req.user!.orgId, shortId, body.targetShortId, req.user!.userId);
+    return this.issues.merge(req.user!, shortId, body.targetShortId, req.user!.userId);
   }
 }

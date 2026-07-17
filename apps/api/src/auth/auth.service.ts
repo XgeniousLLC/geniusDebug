@@ -137,6 +137,49 @@ export class AuthService {
     return { ok: true };
   }
 
+  /** Edit profile (name / email). Re-issues a token so the JWT email claim stays current. */
+  async updateProfile(userId: string, input: { name?: string; email?: string }): Promise<{ token: string; user: AuthUserDto }> {
+    const rows = await db
+      .select({ id: users.id, email: users.email, name: users.name, orgId: users.orgId })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    const u = rows[0];
+    if (!u) throw new UnauthorizedException('user not found');
+
+    const name = input.name?.trim();
+    const email = input.email?.trim().toLowerCase();
+    if (email && email !== u.email) {
+      const clash = await db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
+      if (clash.length > 0) throw new ConflictException('email already in use');
+    }
+
+    const patch: { name?: string; email?: string } = {};
+    if (name) patch.name = name;
+    if (email) patch.email = email;
+    if (Object.keys(patch).length === 0) throw new ConflictException('nothing to update');
+    await db.update(users).set(patch).where(eq(users.id, userId));
+
+    const mem = await db.select({ role: memberships.role }).from(memberships).where(eq(memberships.userId, userId)).limit(1);
+    const role = (mem[0]?.role ?? 'member') as 'admin' | 'member';
+    const finalEmail = patch.email ?? u.email;
+    const finalName = patch.name ?? u.name;
+    const token = this.sign({ userId: u.id, orgId: u.orgId, role, email: finalEmail });
+    return { token, user: { id: u.id, email: finalEmail, name: finalName, orgId: u.orgId, role } };
+  }
+
+  /** Change password for a logged-in user (verifies the current password first). */
+  async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<{ ok: true }> {
+    if (newPassword.length < 8) throw new ConflictException('password too short');
+    const rows = await db.select({ id: users.id, hash: users.passwordHash }).from(users).where(eq(users.id, userId)).limit(1);
+    const u = rows[0];
+    if (!u) throw new UnauthorizedException('user not found');
+    if (!(await bcrypt.compare(currentPassword, u.hash))) throw new UnauthorizedException('current password is incorrect');
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    await db.update(users).set({ passwordHash }).where(eq(users.id, userId));
+    return { ok: true };
+  }
+
   private sign(p: { userId: string; orgId: string; role: 'admin' | 'member'; email: string }): string {
     return this.jwt.sign(p);
   }

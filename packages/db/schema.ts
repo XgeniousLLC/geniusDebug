@@ -62,6 +62,24 @@ export const memberships = pgTable(
   (t) => ({ orgUserUq: uniqueIndex('memberships_org_user_uq').on(t.orgId, t.userId) }),
 );
 
+/**
+ * Per-project access grants for members (NFR-SEC-6). Admins implicitly have
+ * access to every project in their org; members only see projects they're
+ * granted here. One row per (project, user).
+ */
+export const projectMembers = pgTable(
+  'project_members',
+  {
+    projectId: uuid('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.projectId, t.userId] }),
+    userIdx: index('project_members_user_idx').on(t.userId),
+  }),
+);
+
 /* -------------------------------- projects -------------------------------- */
 export const projects = pgTable(
   'projects',
@@ -74,6 +92,8 @@ export const projects = pgTable(
     // FR-SDK-8 / NFR-PERF-4 remote kill switch + sample overrides (server-controlled).
     ingestEnabled: boolean('ingest_enabled').notNull().default(true),
     config: jsonb('config').$type<Record<string, unknown>>().default({}).notNull(),
+    // Onboarding: marked when the SDK integration is confirmed wired (any org member).
+    setupCompletedAt: timestamp('setup_completed_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => ({ orgSlugUq: uniqueIndex('projects_org_slug_uq').on(t.orgId, t.slug) }),
@@ -353,10 +373,35 @@ export const issueActivity = pgTable('issue_activity', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+/* ------------------------------ integrations ------------------------------ */
+/**
+ * Org-level service integrations (R2 blob store, AWS SES email). Non-secret
+ * settings live in `config`; secret material (access keys) is AES-256-GCM
+ * encrypted at rest in `secretEnc` (NFR-SEC-5), same pattern as github_apps.
+ * Server-side only — never returned to the client. One row per (org, kind).
+ * Env vars still take precedence at runtime (ops override); this is the
+ * UI-driven "connect" path when env is unset.
+ */
+export const integrations = pgTable(
+  'integrations',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    orgId: uuid('org_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
+    kind: varchar('kind', { length: 32 }).notNull(), // 'r2' | 'ses'
+    config: jsonb('config').$type<Record<string, unknown>>().notNull().default({}),
+    secretEnc: text('secret_enc'), // encrypted JSON of secret fields
+    isActive: boolean('is_active').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => ({ orgKindUq: uniqueIndex('integrations_org_kind_uq').on(t.orgId, t.kind) }),
+);
+
 export const schema = {
   organizations,
   users,
   memberships,
+  projectMembers,
   projects,
   dsnKeys,
   orgTokens,
@@ -374,4 +419,5 @@ export const schema = {
   alertRules,
   notifications,
   issueActivity,
+  integrations,
 };

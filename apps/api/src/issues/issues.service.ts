@@ -1,26 +1,21 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { db, issues, events, projects, environments, issueActivity, users, issueCounts } from '@geniusdebug/db';
-import { and, eq, desc, asc, ilike, or, inArray, sql as dsql, gte } from 'drizzle-orm';
+import { db, issues, events, environments, issueActivity, users, issueCounts } from '@geniusdebug/db';
+import { and, eq, desc, asc, ilike, or, inArray } from 'drizzle-orm';
 import type { IssueDto, EventDto, IssueListQuery, IssueActionInput } from '@geniusdebug/shared';
+import type { AuthPrincipal } from '../auth/jwt.guard';
+import { accessibleProjectIds } from '../access';
 
 @Injectable()
 export class IssuesService {
-  /** Resolve the target project within the caller's org (default = first project). */
-  private async resolveProject(orgId: string, projectId?: string): Promise<string | null> {
-    if (projectId) {
-      const rows = await db
-        .select({ id: projects.id })
-        .from(projects)
-        .where(and(eq(projects.id, projectId), eq(projects.orgId, orgId)))
-        .limit(1);
-      return rows[0]?.id ?? null;
-    }
-    const rows = await db.select({ id: projects.id }).from(projects).where(eq(projects.orgId, orgId)).limit(1);
-    return rows[0]?.id ?? null;
+  /** Resolve the target project among those the caller can access (default = first). */
+  private async resolveProject(user: AuthPrincipal, projectId?: string): Promise<string | null> {
+    const ids = await accessibleProjectIds(user);
+    if (projectId) return ids.includes(projectId) ? projectId : null;
+    return ids[0] ?? null;
   }
 
-  async list(orgId: string, q: IssueListQuery & { projectId?: string }): Promise<IssueDto[]> {
-    const projectId = await this.resolveProject(orgId, q.projectId);
+  async list(user: AuthPrincipal, q: IssueListQuery & { projectId?: string }): Promise<IssueDto[]> {
+    const projectId = await this.resolveProject(user, q.projectId);
     if (!projectId) return [];
 
     const conds = [eq(issues.projectId, projectId)];
@@ -66,10 +61,8 @@ export class IssuesService {
     return rows.map(this.toDto);
   }
 
-  async detail(orgId: string, shortId: string) {
-    const projectIds = (
-      await db.select({ id: projects.id }).from(projects).where(eq(projects.orgId, orgId))
-    ).map((r) => r.id);
+  async detail(user: AuthPrincipal, shortId: string) {
+    const projectIds = await accessibleProjectIds(user);
     if (projectIds.length === 0) throw new NotFoundException('issue not found');
 
     const rows = await db
@@ -115,10 +108,8 @@ export class IssuesService {
     };
   }
 
-  async act(orgId: string, shortId: string, userId: string, input: IssueActionInput) {
-    const projectIds = (
-      await db.select({ id: projects.id }).from(projects).where(eq(projects.orgId, orgId))
-    ).map((r) => r.id);
+  async act(user: AuthPrincipal, shortId: string, userId: string, input: IssueActionInput) {
+    const projectIds = await accessibleProjectIds(user);
     const rows = await db
       .select({ id: issues.id })
       .from(issues)
@@ -140,8 +131,8 @@ export class IssuesService {
   }
 
   /** Merge `sourceShortId` into `targetShortId` (FR-GRP-6). */
-  async merge(orgId: string, sourceShortId: string, targetShortId: string, userId: string) {
-    const projectIds = (await db.select({ id: projects.id }).from(projects).where(eq(projects.orgId, orgId))).map((r) => r.id);
+  async merge(user: AuthPrincipal, sourceShortId: string, targetShortId: string, userId: string) {
+    const projectIds = await accessibleProjectIds(user);
     const rows = await db
       .select({ id: issues.id, shortId: issues.shortId, timesSeen: issues.timesSeen, usersAffected: issues.usersAffected })
       .from(issues)
