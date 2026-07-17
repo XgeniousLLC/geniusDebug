@@ -1,10 +1,11 @@
-import { Controller, Get, Param, Req, UseGuards } from '@nestjs/common';
+import { Controller, ForbiddenException, Get, Param, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import IORedis from 'ioredis';
 import { Queue } from 'bullmq';
 import { db, projects, events, replays } from '@geniusdebug/db';
 import { and, eq, gte, sql as dsql } from 'drizzle-orm';
 import { JwtGuard, type AuthPrincipal } from '../auth/jwt.guard';
+import { hasProjectAccess } from '../access';
 
 const conn = new IORedis(process.env.REDIS_URL ?? 'redis://localhost:6379', { maxRetriesPerRequest: null });
 const ingestQueue = new Queue('ingest', { connection: conn });
@@ -16,6 +17,8 @@ const dlq = new Queue('ingest-dead', { connection: conn });
 export class MetricsController {
   @Get('metrics')
   async metrics(@Req() req: Request & { user?: AuthPrincipal }) {
+    // Operational internals (queue depth, latency, drop counters) — admin only.
+    if (req.user!.role !== 'admin') throw new ForbiddenException('admin only');
     const pids = (await db.select({ id: projects.id }).from(projects).where(eq(projects.orgId, req.user!.orgId))).map((r) => r.id);
 
     const [counts, deadCount] = await Promise.all([ingestQueue.getJobCounts(), dlq.getJobCounts()]);
@@ -45,8 +48,7 @@ export class MetricsController {
 
   @Get('projects/:id/usage')
   async usage(@Req() req: Request & { user?: AuthPrincipal }, @Param('id') id: string) {
-    const proj = await db.select({ id: projects.id }).from(projects).where(and(eq(projects.id, id), eq(projects.orgId, req.user!.orgId))).limit(1);
-    if (proj.length === 0) return { perDay: [], replayBytes: 0, totalEvents: 0 };
+    if (!(await hasProjectAccess(req.user!, id))) return { perDay: [], replayBytes: 0, totalEvents: 0 };
 
     const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
     const perDay = await db

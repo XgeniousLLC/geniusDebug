@@ -1,46 +1,91 @@
 /**
  * Cloudflare R2 (S3-compatible) client — server-side only (NFR-SEC-4/5).
- * No-ops gracefully when creds are absent so local dev never breaks; activates
- * for real map fetch (FR-MAP-3) and retention deletes (FR-MAP-9) once configured.
+ * Config resolves from env (ops override) first, else the DB `integrations`
+ * row saved via the dashboard (secret AES-GCM decrypted here). No-ops gracefully
+ * when neither is present so local dev never breaks; activates for real map
+ * fetch (FR-MAP-3) and retention deletes (FR-MAP-9) once configured.
  */
-let clientPromise: Promise<any> | null = null;
+import { getActiveIntegration } from '@geniusdebug/db';
+import { decrypt } from '@geniusdebug/shared';
 
-export function r2Configured(): boolean {
-  return !!(process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY && process.env.R2_ENDPOINT && process.env.R2_BUCKET);
+interface R2Config {
+  endpoint: string;
+  bucket: string;
+  accessKeyId: string;
+  secretAccessKey: string;
 }
 
-async function client() {
-  if (!clientPromise) {
-    clientPromise = (async () => {
+const TTL_MS = 30_000;
+let cache: { cfg: R2Config | null; at: number } | null = null;
+const clients = new Map<string, Promise<any>>();
+
+function fromEnv(): R2Config | null {
+  const { R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_ENDPOINT, R2_BUCKET } = process.env;
+  if (R2_ACCESS_KEY_ID && R2_SECRET_ACCESS_KEY && R2_ENDPOINT && R2_BUCKET) {
+    return { endpoint: R2_ENDPOINT, bucket: R2_BUCKET, accessKeyId: R2_ACCESS_KEY_ID, secretAccessKey: R2_SECRET_ACCESS_KEY };
+  }
+  return null;
+}
+
+async function resolveConfig(): Promise<R2Config | null> {
+  const env = fromEnv();
+  if (env) return env;
+  if (cache && Date.now() - cache.at < TTL_MS) return cache.cfg;
+  let cfg: R2Config | null = null;
+  try {
+    const row = await getActiveIntegration('r2');
+    if (row?.secretEnc) {
+      const sec = JSON.parse(decrypt(row.secretEnc)) as { accessKeyId?: string; secretAccessKey?: string };
+      const c = row.config as { endpoint?: string; bucket?: string };
+      if (c.endpoint && c.bucket && sec.accessKeyId && sec.secretAccessKey) {
+        cfg = { endpoint: c.endpoint, bucket: c.bucket, accessKeyId: sec.accessKeyId, secretAccessKey: sec.secretAccessKey };
+      }
+    }
+  } catch {
+    cfg = null;
+  }
+  cache = { cfg, at: Date.now() };
+  return cfg;
+}
+
+export async function r2Configured(): Promise<boolean> {
+  return (await resolveConfig()) !== null;
+}
+
+async function client(cfg: R2Config) {
+  const fp = `${cfg.endpoint}|${cfg.accessKeyId}`;
+  let p = clients.get(fp);
+  if (!p) {
+    p = (async () => {
       // Dynamic import so @aws-sdk is only loaded when R2 is actually configured.
       const { S3Client } = await import('@aws-sdk/client-s3');
       return new S3Client({
         region: 'auto',
-        endpoint: process.env.R2_ENDPOINT,
-        credentials: {
-          accessKeyId: process.env.R2_ACCESS_KEY_ID!,
-          secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
-        },
+        endpoint: cfg.endpoint,
+        credentials: { accessKeyId: cfg.accessKeyId, secretAccessKey: cfg.secretAccessKey },
       });
     })();
+    clients.set(fp, p);
   }
-  return clientPromise;
+  return p;
 }
 
 export async function getObject(key: string): Promise<Buffer | null> {
-  if (!r2Configured()) return null;
+  const cfg = await resolveConfig();
+  if (!cfg) return null;
   const { GetObjectCommand } = await import('@aws-sdk/client-s3');
-  const c = await client();
-  const res = await c.send(new GetObjectCommand({ Bucket: process.env.R2_BUCKET, Key: key }));
+  const c = await client(cfg);
+  const res = await c.send(new GetObjectCommand({ Bucket: cfg.bucket, Key: key }));
   const chunks: Buffer[] = [];
   for await (const chunk of res.Body as AsyncIterable<Buffer>) chunks.push(chunk);
   return Buffer.concat(chunks);
 }
 
 export async function deleteObjects(keys: string[]): Promise<number> {
-  if (!r2Configured() || keys.length === 0) return 0;
+  const cfg = await resolveConfig();
+  if (!cfg || keys.length === 0) return 0;
   const { DeleteObjectCommand } = await import('@aws-sdk/client-s3');
-  const c = await client();
-  for (const Key of keys) await c.send(new DeleteObjectCommand({ Bucket: process.env.R2_BUCKET, Key }));
+  const c = await client(cfg);
+  for (const Key of keys) await c.send(new DeleteObjectCommand({ Bucket: cfg.bucket, Key }));
   return keys.length;
 }

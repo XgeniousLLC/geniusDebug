@@ -318,3 +318,140 @@ GitHub advanced (GD-043/44/45) code-complete; live needs a GitHub App install.
 ### Sprint Stats
 - Total: 3  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 3  /  BLOCKED: 0
 - Tokens: ~45k total
+
+## Sprint 9 — Multi-project management (create + delete, full UI)
+**Status:** COMPLETE
+**Started:** 2026-07-17
+
+### Tickets
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-060 | Create/delete project API | DONE | HIGH | FR-ADM: admin-gated `POST /projects` (provision dsn+envs+alert rule) + `DELETE /projects/:id` (cascade + manual events/spans, keep ≥1) |
+| GD-061 | Project switcher + management UI | DONE | HIGH | sidebar dropdown switches currentProjectId; Settings "Projects" section: new-project form + delete (admin, confirm) |
+
+### Sprint Stats
+- Total: 2  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 2  /  BLOCKED: 0
+
+### Verification notes (Sprint 9)
+- Both apps typecheck clean (`tsc --noEmit`).
+- DELETE cascade verified against live DB: throwaway project + dsn/env/alert/issue/event/trace/span/replay/notification/repo/release rows → controller's delete sequence removed **all** dependents, no FK error, other projects untouched.
+- Create path mirrors register `provisionDefaultProject` (dsn key + 3 envs + default alert rule).
+- Note: running api/web dev servers must restart to load the new `/projects` POST+DELETE routes.
+
+## Sprint 10 — Dedicated Projects page + Integrations (R2/SES connect in-app)
+**Status:** COMPLETE
+**Started:** 2026-07-17
+
+### Tickets
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-062 | Projects → own page | DONE | MED | move project create/delete out of Settings into `/projects` route + sidebar nav; switcher links updated |
+| GD-063 | `integrations` table + encrypted creds store | DONE | HIGH | NFR-SEC-5: new table (org,kind) AES-GCM `secretEnc`; shared crypto; migration 0004; r2/ses resolve env→DB (cached) |
+| GD-064 | Integrations settings tab (R2 + SES) | DONE | HIGH | tabbed Settings; admin PUT/DELETE/Test per kind; write-only secret inputs; live Test (S3 ListObjects / SES GetSendQuota) |
+
+### Sprint Stats
+- Total: 3  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 3  /  BLOCKED: 0
+
+### Verification notes (Sprint 10)
+- Full monorepo typecheck + build clean; 19 automated tests still green (async `r2Configured()` didn't regress the ingest→pipeline smoke).
+- Migration 0004 applied (additive: `integrations` table + `(org_id,kind)` unique index; partitioning untouched).
+- Crypto/resolver chain verified against live DB: API `encrypt` → `integrations.secretEnc` → worker `getActiveIntegration` + shared `decrypt` round-trips exactly; ciphertext carries no plaintext; env unset so DB path is the live source.
+- Precedence: env vars win (ops override); DB row used when env unset. **Set `APP_ENCRYPTION_KEY` (32-byte hex) in prod** — dev key is a fallback with a warning.
+- Note: api/ingest/workers/web must restart to load the new `/integrations` routes + env→DB config resolution. R2/SES **Test** needs real creds to return ok.
+
+## Sprint 11 — Dashboard, account self-service, empty states, nav cleanup
+**Status:** COMPLETE
+**Started:** 2026-07-17
+
+### Tickets
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-065 | No-project empty states | DONE | MED | reusable `NoProject` (admin CTA / member hint) on Issues, Dashboard, Settings general+github, Projects; switcher shows "No project" |
+| GD-066 | Integrations sub-tabs by provider | DONE | LOW | Integrations tab → vertical rail (Cloudflare R2 / AWS SES / Others) with per-provider connection dot |
+| GD-067 | Remove Traces from sidebar | DONE | LOW | Traces is issue-scoped (reached from issue detail); route kept for deep-links |
+| GD-068 | Account self-service (profile + password) | DONE | MED | sidebar user block → AccountModal; `PATCH /auth/profile` (re-issues token), `POST /auth/change-password` (verifies current) |
+| GD-069 | Dashboard overview page | DONE | HIGH | `GET /dashboard` org aggregate → stat tiles, most-frequent issues, per-project rollup, members, latency p50/p95, hour-of-day activity + peak; new default landing |
+
+### Sprint Stats
+- Total: 5  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 5  /  BLOCKED: 0
+
+### Verification notes (Sprint 11)
+- api + web typecheck clean; web prod bundle + HMR clean.
+- `GET /dashboard` verified live with a signed dev JWT against real data: totals (projects/members/unresolved/events7d/activeUsers7d), top issue (reference incident, timesSeen 7), per-project rollup, latency p50/p95 from redis, 24-bucket hour histogram + peak — all aggregation SQL (extract-hour, count-distinct `user->>'id'`, inArray, joins) runs without error.
+- New routes confirmed registered + auth-gated (401): `/dashboard`, `/auth/profile`, `/auth/change-password`.
+- Profile/password endpoints route-verified but NOT exercised live (would mutate the real account login).
+- Nav: Dashboard added as first item + default landing (`/` and `*` → `/dashboard`); Traces removed from sidebar (route retained).
+- api restarted to load new routes; web HMR picked up the rest.
+
+## Sprint 12 — Per-project SDK setup guide (member-facing) + email to dev
+**Status:** COMPLETE
+**Started:** 2026-07-17
+
+### Tickets
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-070 | project.setupCompletedAt + setup endpoints | DONE | HIGH | migration 0005 (nullable col); `POST /projects/:id/setup` (member) mark complete/incomplete; list returns the flag |
+| GD-071 | Email SDK setup to a developer | DONE | HIGH | `POST /projects/:id/setup/email` (member) → API SES mailer (env→DB), graceful `sent:false` when unset; client mailto fallback |
+| GD-072 | Projects page integration guide (member) | DONE | HIGH | per-project expandable guide: steps + DSN Sentry.init (copy), setup badge + mark-complete, email-to-dev form; all member-accessible |
+
+### Sprint Stats
+- Total: 3  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 3  /  BLOCKED: 0
+
+### Verification notes (Sprint 12)
+- api + web typecheck clean; migration 0005 applied (additive nullable `setup_completed_at`).
+- **Member-role flow cross-checked live** with a role:`member` JWT: lists projects (setup flag present) → `POST /setup {completed:true}` sets timestamp → re-list confirms → `POST /setup/email` returns `{sent:false, reason:"email (SES) not configured"}` (graceful; UI shows mailto fallback) → reset to incomplete. No admin gate on setup/keys endpoints (org-scoped only); create/delete stay admin.
+- Once SES is connected (Integrations tab), the same email endpoint sends for real.
+
+## Sprint 13 — Redirect to setup page after project create
+**Status:** COMPLETE
+**Started:** 2026-07-17
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-073 | Dedicated `/projects/:id/setup` page + post-create redirect | DONE | MED | extract `IntegrationGuide` to shared component; new focused setup page (breadcrumb, guide, Go-to-dashboard); create → `navigate(/projects/:id/setup)` instead of staying in list |
+
+- Verify: web typecheck clean; pure client-route change (HMR, no restart). Guide component reused by both Projects list (inline expand) + the new setup page.
+
+## Sprint 14 — Member-role authorization audit
+**Status:** COMPLETE
+**Started:** 2026-07-17
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-074 | Member access audit + gate GET /integrations & /metrics | DONE | HIGH | NFR-SEC-6: found 2 admin surfaces readable by members (integration config, system metrics) → gated admin; hid those Settings tabs from members |
+
+### Verification notes (Sprint 14)
+- Live matrix with a `role:member` JWT (23 endpoints): **all 17 sensitive/mutating endpoints → 403** (create/delete project, R2/SES read+write+test, /metrics, kill switch, DSN regen/revoke, repo link, upload token, member invite/role/remove, GitHub app create, alert CRUD). **All 7 member-allowed reads → 200/201** (dashboard, projects list, DSN public key, envs, issues, mark-setup, own profile).
+- Secret-leak scan: `/projects/:id/keys` returns only the public write-only DSN (`publicKey/isActive/rateLimit`) — no secret/token/accessKey. `secretEnc` never leaves the server (integration list is admin-only + omits it).
+- Fixes: `GET /integrations` + `GET /metrics` now admin-gated (were JwtGuard-only). Web hides Integrations + System Settings tabs from members (+ blocks landing on them via shared URL).
+- Pre-existing gates confirmed correct: projects create/delete, admin controller (repo/ingest/keys/token/members), alerts, integrations write, github write.
+
+## Sprint 15 — Themed 403 / 404 pages
+**Status:** COMPLETE
+**Started:** 2026-07-17
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-075 | Themed 403 + 404 pages | DONE | LOW | shared `StatusPage` (ghosted code + brand mark + actions, light/dark tokens); NotFound at `*`, Forbidden at `/403`; ProjectSetup reuses them (missing→404, 403→Forbidden) |
+
+- Verify: web typecheck clean (HMR). `*` catch-all now renders themed 404 inside the shell (was a silent redirect); `/403` addressable; ProjectSetup denied/missing states reuse the pages.
+
+## Sprint 16 — Per-project member access + project-access admin UI
+**Status:** COMPLETE
+**Started:** 2026-07-17
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-076 | project_members table + access choke point | DONE | HIGH | NFR-SEC-6: migration 0006 `project_members(project_id,user_id)`; `access.ts` (accessibleProjectIds/hasProjectAccess/assertProjectAccess) — admins all, members granted-only |
+| GD-077 | Enforce access across all project-scoped endpoints | DONE | HIGH | projects list/keys/environments/setup, issues list/detail/act/merge, dashboard, misc traces/replays/alerts, metrics usage all scope to accessible ids |
+| GD-078 | Admin grant/revoke API + Members UI | DONE | HIGH | `GET/POST /members/:id/projects`; Settings→Members per-member "Project access" checkboxes; Members+GitHub tabs now admin-only |
+
+### Verification notes (Sprint 16)
+- All workspaces typecheck clean; 19 tests green (issues.service refactor to principal-scoped didn't regress).
+- Live grant/revoke matrix: member with **0 grants** → `/projects` empty, dashboard projects=0, issues empty, non-granted `/projects/:id/keys` → **403**. Admin `POST /members/:id/projects {[pid]}` → member now sees **1** project, keys→200, dashboard=1. Revoke → back to 0.
+- Admins implicitly access every org project (no grant rows needed); members see only granted projects everywhere (list, switcher, dashboard, issues, traces, replays, alerts).
+- New members start with **zero** project access — admin grants via Settings → Members → Project access (invite auto-opens the access editor).

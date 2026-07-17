@@ -5,10 +5,11 @@ import { GeniusDebugWordmark } from '../brand/GeniusDebugIcon';
 import { useUi } from '../store/ui';
 import { api } from '../lib/api';
 import {
+  DashboardIcon,
   IssuesIcon,
-  TracesIcon,
   ReplaysIcon,
   AlertsIcon,
+  ProjectsIcon,
   SettingsIcon,
   SunIcon,
   MoonIcon,
@@ -16,11 +17,14 @@ import {
   SearchIcon,
 } from './icons';
 
+// Traces intentionally omitted — reached from an issue's detail (it's issue-scoped),
+// not a standalone feed. Route still exists for those deep-links.
 const NAV = [
+  { to: '/dashboard', label: 'Dashboard', Icon: DashboardIcon },
   { to: '/issues', label: 'Issues', Icon: IssuesIcon },
-  { to: '/traces', label: 'Traces', Icon: TracesIcon },
   { to: '/replays', label: 'Replays', Icon: ReplaysIcon },
   { to: '/alerts', label: 'Alerts', Icon: AlertsIcon },
+  { to: '/projects', label: 'Projects', Icon: ProjectsIcon },
   { to: '/settings', label: 'Settings', Icon: SettingsIcon },
 ];
 
@@ -66,15 +70,106 @@ function GlobalSearch() {
   );
 }
 
+interface ProjectSummary {
+  id: string;
+  name: string;
+  slug: string;
+  platform: string;
+  ingestEnabled: boolean;
+}
+
+/** Sidebar project switcher — changes the global currentProjectId (multi-project). */
+function ProjectSwitcher({ projects }: { projects: ProjectSummary[] }) {
+  const navigate = useNavigate();
+  const { currentProjectId, setCurrentProject, user } = useUi();
+  const isAdmin = user?.role === 'admin';
+  const [open, setOpen] = React.useState(false);
+  const ref = React.useRef<HTMLDivElement>(null);
+
+  const current = projects.find((p) => p.id === currentProjectId) ?? projects[0];
+
+  // Keep the store in sync when the persisted id is missing/stale.
+  React.useEffect(() => {
+    if (current && current.id !== currentProjectId) setCurrentProject(current.id);
+  }, [current, currentProjectId, setCurrentProject]);
+
+  React.useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    window.addEventListener('mousedown', onClick);
+    return () => window.removeEventListener('mousedown', onClick);
+  }, []);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-2 rounded-md border border-border bg-bg px-2.5 py-1.5 text-small text-text-muted hover:bg-surface-2"
+      >
+        <span className={`h-2 w-2 rounded-full ${current ? 'bg-accent' : 'bg-status-muted'}`} />
+        <span className={`truncate ${current ? 'text-text' : 'text-text-muted'}`}>{current?.name ?? 'No project'}</span>
+        <span className="ml-auto text-text-faint">▾</span>
+      </button>
+      {open && (
+        <div className="absolute left-0 right-0 z-20 mt-1 overflow-hidden rounded-md border border-border bg-surface shadow-lg">
+          <div className="max-h-64 overflow-y-auto py-1">
+            {projects.length === 0 && (
+              <div className="px-2.5 py-1.5 text-caption text-text-faint">No projects yet</div>
+            )}
+            {projects.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => {
+                  setCurrentProject(p.id);
+                  setOpen(false);
+                }}
+                className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-small text-text-muted hover:bg-surface-2"
+              >
+                <span className="truncate text-text">{p.name}</span>
+                {!p.ingestEnabled && <span className="text-caption text-level-error">paused</span>}
+                {p.id === current?.id && <span className="ml-auto text-accent">✓</span>}
+              </button>
+            ))}
+          </div>
+          <div className="border-t border-border py-1">
+            {isAdmin && (
+              <button
+                onClick={() => {
+                  setOpen(false);
+                  navigate('/projects?new=project');
+                }}
+                className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-small text-accent hover:bg-surface-2"
+              >
+                + New project
+              </button>
+            )}
+            <button
+              onClick={() => {
+                setOpen(false);
+                navigate('/projects');
+              }}
+              className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-small text-text-muted hover:bg-surface-2"
+            >
+              Manage projects
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Shell({ children }: { children: React.ReactNode }) {
-  const { user, signOut, theme, toggleTheme, environment, setEnvironment } = useUi();
+  const { user, signOut, theme, toggleTheme, environment, setEnvironment, currentProjectId } = useUi();
   const navigate = useNavigate();
 
   const projects = useQuery({
     queryKey: ['projects'],
-    queryFn: () => api<{ id: string; name: string }[]>('/projects'),
+    queryFn: () => api<ProjectSummary[]>('/projects'),
   });
-  const projectId = projects.data?.[0]?.id;
+  const list = projects.data ?? [];
+  const projectId = list.find((p) => p.id === currentProjectId)?.id ?? list[0]?.id;
   const envs = useQuery({
     queryKey: ['envs', projectId],
     enabled: !!projectId,
@@ -97,11 +192,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           </a>
         </div>
         <div className="px-3 py-2">
-          <div className="flex items-center gap-2 rounded-md border border-border bg-bg px-2.5 py-1.5 text-small text-text-muted">
-            <span className="h-2 w-2 rounded-full bg-accent" />
-            <span className="truncate text-text">{projects.data?.[0]?.name ?? 'Taskip'}</span>
-            <span className="ml-auto text-text-faint">▾</span>
-          </div>
+          <ProjectSwitcher projects={list} />
         </div>
         <nav className="flex flex-1 flex-col gap-0.5 px-2 py-2">
           {NAV.map((n) => (
@@ -122,13 +213,37 @@ export function Shell({ children }: { children: React.ReactNode }) {
           ))}
         </nav>
         <div className="border-t border-border p-3">
-          <div className="flex items-center gap-2">
-            <div className="flex h-7 w-7 items-center justify-center rounded-full bg-accent text-caption font-semibold text-white">
-              {(user?.name ?? '?').slice(0, 1).toUpperCase()}
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-small text-text">{user?.name}</div>
-              <div className="truncate text-caption text-text-faint">{user?.role}</div>
+          {/* Hover the user block → account menu opens to the right (brief §3). */}
+          <div className="group relative">
+            <button
+              className="flex w-full items-center gap-2 rounded-md px-1 py-1 text-left hover:bg-surface-2 group-hover:bg-surface-2"
+              title="Account"
+            >
+              <div className="flex h-7 w-7 items-center justify-center rounded-full bg-accent text-caption font-semibold text-white">
+                {(user?.name ?? '?').slice(0, 1).toUpperCase()}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-small text-text">{user?.name}</div>
+                <div className="truncate text-caption text-text-faint">{user?.role}</div>
+              </div>
+              <span className="text-text-faint">›</span>
+            </button>
+            {/* Bridge padding (pl-2) keeps hover alive while moving cursor rightward. */}
+            <div className="invisible absolute bottom-0 left-full z-30 pl-2 opacity-0 transition-opacity group-hover:visible group-hover:opacity-100">
+              <div className="w-44 overflow-hidden rounded-md border border-border bg-surface py-1 shadow-lg">
+                <button
+                  onClick={() => navigate('/account/profile')}
+                  className="block w-full px-3 py-1.5 text-left text-small text-text-muted hover:bg-surface-2 hover:text-text"
+                >
+                  Edit profile
+                </button>
+                <button
+                  onClick={() => navigate('/account/password')}
+                  className="block w-full px-3 py-1.5 text-left text-small text-text-muted hover:bg-surface-2 hover:text-text"
+                >
+                  Change password
+                </button>
+              </div>
             </div>
           </div>
           <div className="mt-2 flex gap-1">

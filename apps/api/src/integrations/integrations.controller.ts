@@ -1,0 +1,179 @@
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  Param,
+  Put,
+  Post,
+  Req,
+  UseGuards,
+  BadRequestException,
+  ForbiddenException,
+} from '@nestjs/common';
+import type { Request } from 'express';
+import { db, integrations } from '@geniusdebug/db';
+import { and, eq } from 'drizzle-orm';
+import { JwtGuard, type AuthPrincipal } from '../auth/jwt.guard';
+import { encrypt, decrypt } from '../crypto';
+
+const KINDS = ['r2', 'ses'] as const;
+type Kind = (typeof KINDS)[number];
+
+/** Non-secret config keys we accept per kind (everything else is ignored). */
+const CONFIG_KEYS: Record<Kind, string[]> = {
+  r2: ['endpoint', 'bucket', 'accountId'],
+  ses: ['region', 'from'],
+};
+
+/**
+ * Service integrations (R2 blob store, AWS SES). Admin-only, org-scoped. Secret
+ * material is AES-256-GCM encrypted at rest and NEVER returned to the client —
+ * responses only expose non-secret config + a `connected` flag (NFR-SEC-5).
+ */
+@Controller('integrations')
+@UseGuards(JwtGuard)
+export class IntegrationsController {
+  private assertKind(kind: string): Kind {
+    if (!KINDS.includes(kind as Kind)) throw new BadRequestException(`unknown integration "${kind}"`);
+    return kind as Kind;
+  }
+  private assertAdmin(req: Request & { user?: AuthPrincipal }) {
+    if (req.user!.role !== 'admin') throw new ForbiddenException('admin only');
+  }
+
+  /** Status of every integration kind (no secrets). Admin-only surface. */
+  @Get()
+  async list(@Req() req: Request & { user?: AuthPrincipal }) {
+    this.assertAdmin(req);
+    const orgId = req.user!.orgId;
+    const rows = await db
+      .select({ kind: integrations.kind, config: integrations.config, secretEnc: integrations.secretEnc, isActive: integrations.isActive, updatedAt: integrations.updatedAt })
+      .from(integrations)
+      .where(eq(integrations.orgId, orgId));
+    const byKind = new Map(rows.map((r) => [r.kind, r]));
+    return KINDS.map((kind) => {
+      const r = byKind.get(kind);
+      const envConfigured = kind === 'r2' ? r2EnvSet() : sesEnvSet();
+      return {
+        kind,
+        connected: !!r && r.isActive && !!r.secretEnc,
+        source: envConfigured ? 'env' : r ? 'dashboard' : 'none',
+        config: (r?.config as Record<string, unknown>) ?? {},
+        updatedAt: r?.updatedAt ?? null,
+      };
+    });
+  }
+
+  /** Create/update an integration. Secret fields are optional on update (kept if omitted). */
+  @Put(':kind')
+  async upsert(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Param('kind') kindRaw: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    this.assertAdmin(req);
+    const kind = this.assertKind(kindRaw);
+    const orgId = req.user!.orgId;
+
+    const config: Record<string, unknown> = {};
+    for (const k of CONFIG_KEYS[kind]) {
+      if (body[k] !== undefined && body[k] !== '') config[k] = String(body[k]).trim();
+    }
+
+    // Secret fields arrive in plaintext only when the admin (re)enters them.
+    const accessKeyId = typeof body.accessKeyId === 'string' ? body.accessKeyId.trim() : '';
+    const secretAccessKey = typeof body.secretAccessKey === 'string' ? body.secretAccessKey.trim() : '';
+    const hasNewSecret = !!accessKeyId && !!secretAccessKey;
+    const secretEnc = hasNewSecret ? encrypt(JSON.stringify({ accessKeyId, secretAccessKey })) : undefined;
+
+    // Per-kind required non-secret fields.
+    if (kind === 'r2' && (!config.endpoint || !config.bucket)) {
+      throw new BadRequestException('endpoint and bucket are required');
+    }
+    if (kind === 'ses' && !config.from) {
+      throw new BadRequestException('from address is required');
+    }
+
+    const existing = await db
+      .select({ id: integrations.id, secretEnc: integrations.secretEnc })
+      .from(integrations)
+      .where(and(eq(integrations.orgId, orgId), eq(integrations.kind, kind)))
+      .limit(1);
+
+    if (existing.length === 0) {
+      if (!secretEnc) throw new BadRequestException('accessKeyId and secretAccessKey are required');
+      await db.insert(integrations).values({ orgId, kind, config, secretEnc, isActive: true });
+    } else {
+      const finalSecret = secretEnc ?? existing[0].secretEnc;
+      if (!finalSecret) throw new BadRequestException('accessKeyId and secretAccessKey are required');
+      await db
+        .update(integrations)
+        .set({ config, secretEnc: finalSecret, isActive: true, updatedAt: new Date() })
+        .where(eq(integrations.id, existing[0].id));
+    }
+    return { ok: true };
+  }
+
+  /** Disconnect (delete) an integration. */
+  @Delete(':kind')
+  @HttpCode(204)
+  async remove(@Req() req: Request & { user?: AuthPrincipal }, @Param('kind') kindRaw: string) {
+    this.assertAdmin(req);
+    const kind = this.assertKind(kindRaw);
+    await db.delete(integrations).where(and(eq(integrations.orgId, req.user!.orgId), eq(integrations.kind, kind)));
+  }
+
+  /** Live connection test against the saved credentials. Never leaks the secret. */
+  @Post(':kind/test')
+  async test(@Req() req: Request & { user?: AuthPrincipal }, @Param('kind') kindRaw: string) {
+    this.assertAdmin(req);
+    const kind = this.assertKind(kindRaw);
+    const orgId = req.user!.orgId;
+
+    const rows = await db
+      .select({ config: integrations.config, secretEnc: integrations.secretEnc })
+      .from(integrations)
+      .where(and(eq(integrations.orgId, orgId), eq(integrations.kind, kind)))
+      .limit(1);
+    if (rows.length === 0 || !rows[0].secretEnc) return { ok: false, error: 'not configured — save credentials first' };
+
+    let secret: { accessKeyId: string; secretAccessKey: string };
+    try {
+      secret = JSON.parse(decrypt(rows[0].secretEnc));
+    } catch {
+      return { ok: false, error: 'stored credentials could not be decrypted (encryption key changed?)' };
+    }
+    const config = rows[0].config as Record<string, string>;
+
+    try {
+      if (kind === 'r2') {
+        const { S3Client, ListObjectsV2Command } = await import('@aws-sdk/client-s3');
+        const c = new S3Client({
+          region: 'auto',
+          endpoint: config.endpoint,
+          credentials: { accessKeyId: secret.accessKeyId, secretAccessKey: secret.secretAccessKey },
+        });
+        await c.send(new ListObjectsV2Command({ Bucket: config.bucket, MaxKeys: 1 }));
+        return { ok: true, detail: `bucket "${config.bucket}" reachable` };
+      }
+      const { SESClient, GetSendQuotaCommand } = await import('@aws-sdk/client-ses');
+      const c = new SESClient({
+        region: config.region ?? 'us-east-1',
+        credentials: { accessKeyId: secret.accessKeyId, secretAccessKey: secret.secretAccessKey },
+      });
+      const q = await c.send(new GetSendQuotaCommand({}));
+      return { ok: true, detail: `SES reachable — 24h quota ${q.Max24HourSend ?? '?'}` };
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
+    }
+  }
+}
+
+function r2EnvSet(): boolean {
+  return !!(process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY && process.env.R2_ENDPOINT && process.env.R2_BUCKET);
+}
+function sesEnvSet(): boolean {
+  return !!(process.env.SES_ACCESS_KEY_ID && process.env.SES_SECRET_ACCESS_KEY && process.env.SES_FROM);
+}

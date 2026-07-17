@@ -13,7 +13,7 @@ import {
 import type { Request } from 'express';
 import { randomBytes } from 'node:crypto';
 import bcrypt from 'bcryptjs';
-import { db, repositories, releases, orgTokens, sourceMapArtifacts, projects, users, memberships, dsnKeys } from '@geniusdebug/db';
+import { db, repositories, releases, orgTokens, sourceMapArtifacts, projects, users, memberships, dsnKeys, projectMembers } from '@geniusdebug/db';
 import { and, eq, ne } from 'drizzle-orm';
 import { JwtGuard, type AuthPrincipal } from '../auth/jwt.guard';
 
@@ -192,6 +192,45 @@ export class AdminController {
     await db.delete(memberships).where(and(eq(memberships.orgId, req.user!.orgId), eq(memberships.userId, id)));
     await db.delete(users).where(and(eq(users.id, id), eq(users.orgId, req.user!.orgId), ne(users.id, req.user!.userId)));
     return { ok: true };
+  }
+
+  /** Project-access grants for a member (NFR-SEC-6). Admin-only. */
+  @Get('members/:id/projects')
+  @UseGuards(JwtGuard)
+  async getMemberProjects(@Req() req: Request & { user?: AuthPrincipal }, @Param('id') id: string) {
+    if (req.user!.role !== 'admin') throw new ForbiddenException('admin only');
+    const rows = await db
+      .select({ projectId: projectMembers.projectId })
+      .from(projectMembers)
+      .innerJoin(projects, eq(projects.id, projectMembers.projectId))
+      .where(and(eq(projectMembers.userId, id), eq(projects.orgId, req.user!.orgId)));
+    return { projectIds: rows.map((r) => r.projectId) };
+  }
+
+  @Post('members/:id/projects')
+  @UseGuards(JwtGuard)
+  async setMemberProjects(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Param('id') id: string,
+    @Body() body: { projectIds?: string[] },
+  ) {
+    if (req.user!.role !== 'admin') throw new ForbiddenException('admin only');
+    const orgId = req.user!.orgId;
+    // Target must be a member of this org.
+    const mem = await db.select({ userId: memberships.userId }).from(memberships).where(and(eq(memberships.orgId, orgId), eq(memberships.userId, id))).limit(1);
+    if (mem.length === 0) throw new BadRequestException('not a member of this org');
+
+    // Keep only ids that are real projects in this org.
+    const orgProjectIds = new Set((await db.select({ id: projects.id }).from(projects).where(eq(projects.orgId, orgId))).map((r) => r.id));
+    const wanted = [...new Set(body.projectIds ?? [])].filter((pid) => orgProjectIds.has(pid));
+
+    await db.transaction(async (tx) => {
+      await tx.delete(projectMembers).where(eq(projectMembers.userId, id));
+      if (wanted.length > 0) {
+        await tx.insert(projectMembers).values(wanted.map((projectId) => ({ projectId, userId: id })));
+      }
+    });
+    return { ok: true, projectIds: wanted };
   }
 
   /* --------------- Deploy-pipeline artifact registration (FR-BLD-2) -------- */

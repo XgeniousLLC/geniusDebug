@@ -23,7 +23,7 @@ export interface SplitResult {
  * there are no oversized blobs, so behavior is unchanged in that case.
  */
 export async function splitOversizedBlobs(bytes: Buffer, projectId: string, eventId?: string): Promise<SplitResult> {
-  if (!r2Configured()) return { inline: bytes, blobs: [] };
+  if (!(await r2Configured())) return { inline: bytes, blobs: [] };
 
   const text = bytes.toString('utf8');
   const nl = text.indexOf('\n');

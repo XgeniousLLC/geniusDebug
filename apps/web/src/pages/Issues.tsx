@@ -6,6 +6,7 @@ import { api } from '../lib/api';
 import { useUi } from '../store/ui';
 import { timeAgo, compact } from '../lib/format';
 import { Button, LevelPill, StatusChip, Skeleton, EmptyState, ErrorState } from '../components/ui';
+import { NoProject } from '../components/NoProject';
 import { CheckIcon } from '../components/icons';
 
 type StatusFilter = 'unresolved' | 'resolved' | 'archived' | 'all';
@@ -13,6 +14,7 @@ type Sort = 'lastSeen' | 'firstSeen' | 'events' | 'users';
 
 export function Issues() {
   const environment = useUi((s) => s.environment);
+  const currentProjectId = useUi((s) => s.currentProjectId);
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const [status, setStatus] = React.useState<StatusFilter>('unresolved');
@@ -28,13 +30,14 @@ export function Issues() {
     if (q !== null) setQuery(q);
   }, [params]);
 
-  const key = ['issues', { environment, status, sort, query }];
+  const key = ['issues', { environment, status, sort, query, projectId: currentProjectId }];
   const issues = useQuery({
     queryKey: key,
     queryFn: () => {
       const p = new URLSearchParams({ status, sort });
       if (environment !== 'all') p.set('environment', environment);
       if (query) p.set('query', query);
+      if (currentProjectId) p.set('projectId', currentProjectId);
       return api<IssueDto[]>(`/issues?${p.toString()}`);
     },
     refetchInterval: 5000, // subtle real-time feel (brief §14)
@@ -55,6 +58,10 @@ export function Issues() {
   });
 
   const rows = issues.data ?? [];
+
+  // Org-level empty state: no projects at all (cached — Shell already fetched it).
+  const projects = useQuery({ queryKey: ['projects'], queryFn: () => api<{ id: string }[]>('/projects') });
+  const noProjects = !projects.isLoading && (projects.data?.length ?? 0) === 0;
 
   // Keyboard nav (brief §5): j/k move, e resolve, enter open.
   React.useEffect(() => {
@@ -82,6 +89,15 @@ export function Issues() {
     if (ids.length < 2) return;
     const target = ids[0]; // merge the rest into the first selected
     for (const s of ids.slice(1)) merge.mutate({ source: s, target });
+  }
+
+  if (noProjects) {
+    return (
+      <div className="mx-auto max-w-6xl px-6 py-5">
+        <h1 className="mb-4 text-h1 font-semibold">Issues</h1>
+        <NoProject />
+      </div>
+    );
   }
 
   return (

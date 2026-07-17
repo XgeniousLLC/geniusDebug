@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Req, UseGuards, BadRequestException } from '@nestjs/common';
+import { Body, Controller, Get, Patch, Post, Req, UseGuards, BadRequestException } from '@nestjs/common';
 import type { Request } from 'express';
 import { registerSchema, loginSchema } from '@geniusdebug/shared';
 import { AuthService } from './auth.service';
@@ -44,5 +44,19 @@ export class AuthController {
   @UseGuards(JwtGuard)
   async me(@Req() req: Request & { user?: AuthPrincipal }) {
     return req.user;
+  }
+
+  @Patch('profile')
+  @UseGuards(JwtGuard)
+  async updateProfile(@Req() req: Request & { user?: AuthPrincipal }, @Body() body: { name?: string; email?: string }) {
+    if (!body.name?.trim() && !body.email?.trim()) throw new BadRequestException('name or email required');
+    return this.auth.updateProfile(req.user!.userId, body);
+  }
+
+  @Post('change-password')
+  @UseGuards(JwtGuard)
+  async changePassword(@Req() req: Request & { user?: AuthPrincipal }, @Body() body: { currentPassword?: string; newPassword?: string }) {
+    if (!body.currentPassword || !body.newPassword) throw new BadRequestException('currentPassword and newPassword required');
+    return this.auth.changePassword(req.user!.userId, body.currentPassword, body.newPassword);
   }
 }

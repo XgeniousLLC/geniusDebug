@@ -22,7 +22,7 @@ export async function symbolicate(e: NormalizedEvent, projectId: string): Promis
   // to the raw frames with a warning when no map is found/available (FR-MAP-8).
   let frames: NormalizedFrame[] = e.frames;
   const r2Key = await findMapR2Key(projectId, e.debugIds);
-  if (r2Key && r2Configured()) {
+  if (r2Key && (await r2Configured())) {
     try {
       const bytes = await getObject(r2Key);
       if (bytes) frames = await symbolicateWithMap(frames, bytes.toString('utf8'));
