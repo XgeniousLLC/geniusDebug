@@ -1,0 +1,26 @@
+# deps & builds — rebuilt inside the image
+node_modules
+**/node_modules
+dist
+**/dist
+**/.next
+**/out
+*.tsbuildinfo
+
+# secrets — never bake into an image
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# vcs / editor / os
+.git
+.github
+_to_delete
+**/.DS_Store
+*.log
+coverage
+
+# docs site build artifacts
+site

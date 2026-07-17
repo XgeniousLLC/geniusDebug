@@ -4,8 +4,15 @@ geniusDebug is four Node services (`ingest`, `workers`, `api`, `web`) + PostgreS
 Cloudflare R2 for blobs and AWS SES for email. It runs on **its own infrastructure** — never share
 a database, Redis, or compute with the app you're monitoring (NFR-PERF-5).
 
-No Docker required — every service is a plain Node process. Deploy on **Coolify** (Nixpacks, no
-Dockerfile) or any VPS (pm2 / systemd).
+Two ways to deploy:
+
+- **Docker (recommended)** — `cp .env.example .env` then `docker compose up -d --build` brings up all
+  four services + Postgres + Redis, runs migrations, and serves the dashboard on `:8080`. Full guide:
+  [docs/self-hosting-docker.md](docs/self-hosting-docker.md).
+- **No Docker** — every service is a plain Node process; deploy on **Coolify** (Nixpacks, no
+  Dockerfile) or any VPS (pm2 / systemd). That's the rest of this file.
+
+📖 Full documentation site (published to GitHub Pages): <https://xgeniousllc.github.io/geniusDebug/>
 
 ---
 

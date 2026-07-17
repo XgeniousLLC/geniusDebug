@@ -1,0 +1,118 @@
+# geniusDebug — full self-host stack.
+#   cp .env.example .env   # then set JWT_SECRET / APP_ENCRYPTION_KEY (and R2/SES/GitHub if used)
+#   docker compose up -d --build
+# Dashboard → http://localhost:8080 ·  Ingest (Sentry DSN endpoint) → http://localhost:4001
+#
+# DATABASE_URL / REDIS_URL are set here (compose network hostnames) and OVERRIDE whatever
+# is in .env — everything else (secrets, limits, retention) comes from .env via env_file.
+
+x-backend-env: &backend-env
+  DATABASE_URL: postgres://genius:${POSTGRES_PASSWORD:-genius}@postgres:5432/geniusdebug
+  REDIS_URL: redis://redis:6379
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: genius
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-genius}
+      POSTGRES_DB: geniusdebug
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U genius -d geniusdebug"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # One-shot: apply Drizzle migrations (incl. hand-authored events partitions) then exit.
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/workers/Dockerfile
+    command: ["npm", "run", "db:migrate"]
+    environment:
+      <<: *backend-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  ingest:
+    build:
+      context: .
+      dockerfile: apps/ingest/Dockerfile
+    env_file: [.env]
+    environment:
+      <<: *backend-env
+    ports:
+      - "4001:4001"
+    depends_on:
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    env_file: [.env]
+    environment:
+      <<: *backend-env
+    ports:
+      - "4002:4002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  workers:
+    build:
+      context: .
+      dockerfile: apps/workers/Dockerfile
+    env_file: [.env]
+    environment:
+      <<: *backend-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        VITE_API_URL: /api   # nginx proxies /api → api:4002 (same origin, no CORS)
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
