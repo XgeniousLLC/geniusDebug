@@ -514,3 +514,17 @@ GitHub advanced (GD-043/44/45) code-complete; live needs a GitHub App install.
 - Live smoke (compiled `node dist`): ingest/api/workers each serve HTML home to `Accept: text/html`, JSON to SDK/curl (no Accept) + `application/json`; `/nope` → 404 HTML/JSON; `/health` contract unchanged; api `GET /dashboard` no-token still returns `401 {statusCode,message}` JSON even with browser Accept (4xx passthrough — SPA error handling intact).
 - GD-083 root cause proven by code path: Node global fetch (undici) sends no default UA → GitHub 403. Fix needs an api redeploy on Coolify to take effect; retry create-App flow after.
 - GD-084/GD-085 need api restart on Coolify; invite email only sends once SES is connected (Integrations tab) — until then admin copies the link.
+
+## Sprint 20 — GitHub manifest 404 fix
+**Status:** COMPLETE
+**Started:** 2026-07-19
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-086 | Fix GitHub App manifest conversion 404 | DONE | HIGH | FR-GH-1: `convertManifest` POSTed to singular `/app-manifest/{code}/conversions` → GitHub 404 → callback `?github=error&reason=manifest+conversion+failed%3A+404`. Fixed to plural `/app-manifests/{code}/conversions` (github.service.ts:66) |
+
+### Sprint Stats
+- Total: 1  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 1  /  BLOCKED: 0
+
+### Verification notes (Sprint 20)
+- One-word path fix (singular→plural) matches GitHub REST `POST /app-manifests/{code}/conversions`. api typecheck clean. Needs api redeploy on Coolify, then retry create-App → install flow.

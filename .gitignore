@@ -21,6 +21,9 @@ site/
 # drizzle
 packages/db/migrations/meta/_journal.lock
 
+# internal marketing brief — not for the public repo
+LANDING-PAGE-CONTEXT.md
+
 # logs / os
 *.log
 npm-debug.log*

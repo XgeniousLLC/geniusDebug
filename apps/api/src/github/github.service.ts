@@ -63,7 +63,7 @@ export class GithubService {
     webhook_secret?: string;
     owner: { login: string };
   }> {
-    const res = await fetch(`${GH_API}/app-manifest/${code}/conversions`, {
+    const res = await fetch(`${GH_API}/app-manifests/${code}/conversions`, {
       method: 'POST',
       headers: { accept: 'application/vnd.github+json', 'user-agent': GH_UA },
     });
