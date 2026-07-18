@@ -5,8 +5,9 @@ import { db, projects, events, issues, memberships, users } from '@geniusdebug/d
 import { and, eq, gte, inArray, desc, sql as dsql } from 'drizzle-orm';
 import { JwtGuard, type AuthPrincipal } from '../auth/jwt.guard';
 import { accessibleProjectIds } from '../access';
+import { redisOptions } from '@geniusdebug/shared';
 
-const conn = new IORedis(process.env.REDIS_URL ?? 'redis://localhost:6379', { maxRetriesPerRequest: null });
+const conn = new IORedis(process.env.REDIS_URL ?? 'redis://localhost:6379', redisOptions());
 
 /**
  * Org dashboard aggregate (single round-trip for the overview page): totals,

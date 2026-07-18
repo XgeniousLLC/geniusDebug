@@ -475,3 +475,23 @@ GitHub advanced (GD-043/44/45) code-complete; live needs a GitHub App install.
 - Docs: MkDocs Material built locally in a venv, exit 0, **no broken-link/missing-file warnings** (only the unrelated Material-2.0 team notice). Pages workflow installs mkdocs-material, `mkdocs build`, upload-pages-artifact→deploy-pages. **One-time repo setup: Settings → Pages → Source = "GitHub Actions".** Site URL: https://xgeniousllc.github.io/geniusDebug/
 - README + DEPLOY.md updated: Docker is now the recommended path; both link the docs site.
 - Note: `.env.example` POSTGRES_PASSWORD line NOT added — the guard-secrets hook blocks editing `.env.example`; documented in `docs/configuration.md` + self-hosting guide instead.
+
+## Sprint 18 — Production deploy on Coolify (Nixpacks per-service)
+**Status:** COMPLETE
+**Started:** 2026-07-18
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-082 | Deploy 4 apps on Coolify (Nixpacks) + managed PG/Redis | DONE | HIGH | ingest/api/workers/web as separate Coolify apps, Nixpacks, Coolify-managed Postgres + Redis; per-app env via `{{project.*}}` shared vars |
+
+### Sprint Stats
+- Total: 1  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 1  /  BLOCKED: 0
+
+### Verification notes (Sprint 18) — live deploy, host `localhost` server on Coolify
+- **api** (`debug-api.taskip.net`, port 4002): Build `npm run build -w @geniusdebug/shared -w @geniusdebug/db -w @geniusdebug/api`, Start `node apps/api/dist/main.js`, **Pre-Deploy** `npm run db:migrate` (tsx present, dev deps not pruned). `/auth/status` → `{firstRun:true}` after migrate.
+- **ingest** (`ingest.*`, port 4001), **workers** (background, dummy port 4003 + healthcheck disabled — pure BullMQ consumer, no HTTP listener). Build/start mirror api with their own `-w` target.
+- **web** (`debug.taskip.net`): Nixpacks **static site** (nginx:alpine) + **SPA** both checked; Base Directory `/`, Build `npm run build -w @geniusdebug/web`, Publish `apps/web/dist`, build-arg `VITE_API_URL=https://debug-api.taskip.net` (absolute → web calls api directly, no nginx /api proxy). NOT the repo's `apps/web/Dockerfile` (that nginx hardcodes `api:4002` upstream → crashes off-compose).
+- **Gotchas hit & fixed:** (1) empty **Start Command** → `bash -c: option requires an argument` restart loop — set start cmd. (2) Coolify **shared vars don't auto-inject** — each app needs `KEY={{project.KEY}}` reference rows; project scope alone = localhost fallback. (3) Nixpacks static first pointed at `apps/web/dist` (Base Directory wrong) → "failed to detect app type" — Base Directory must be `/`. (4) workers create form **requires a Port** even for background — dummy 4003 + disable healthcheck.
+- **Datastores:** use Coolify **internal** URLs (Postgres internal URL worked; Redis must be internal `redis://…:6379`, NOT the external `rediss://…:6380` — external TLS URL mis-parsed by ioredis → ENOENT socket).
+- **Secrets:** DB + Redis passwords were pasted in chat during setup → **rotate** in Coolify. `JWT_SECRET` + `APP_ENCRYPTION_KEY` generated fresh (32-byte hex) and set as project shared vars; `NODE_ENV=production` deliberately NOT set (would prune tsx → migrate fails).
+- Branch `dev` pushed (`origin/dev` @ 71bb68c) alongside `main`; app source identical across both.
