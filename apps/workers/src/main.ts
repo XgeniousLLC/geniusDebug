@@ -5,11 +5,12 @@ import { parseEnvelope } from './parse-envelope';
 import { processEnvelope } from './processor';
 import { purge } from './retention';
 import { recordLatency } from './metrics';
+import { redisOptions } from '@geniusdebug/shared';
 
 const SHED_THRESHOLD = Number(process.env.QUEUE_SHED_THRESHOLD ?? 5000);
 
 const REDIS_URL = process.env.REDIS_URL ?? 'redis://localhost:6379';
-const connection = new IORedis(REDIS_URL, { maxRetriesPerRequest: null });
+const connection = new IORedis(REDIS_URL, redisOptions(REDIS_URL));
 
 const INGEST_QUEUE = 'ingest';
 const DLQ = 'ingest-dead';

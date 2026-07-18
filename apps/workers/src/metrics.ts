@@ -1,6 +1,7 @@
 import IORedis from 'ioredis';
+import { redisOptions } from '@geniusdebug/shared';
 
-const conn = new IORedis(process.env.REDIS_URL ?? 'redis://localhost:6379', { maxRetriesPerRequest: null });
+const conn = new IORedis(process.env.REDIS_URL ?? 'redis://localhost:6379', redisOptions());
 
 /** Aggregate counters + latency samples in Redis (NFR-MNT-2, FR-ING-6). */
 export async function countDrop(projectId: string, reason: string, n = 1): Promise<void> {

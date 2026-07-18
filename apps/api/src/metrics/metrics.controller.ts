@@ -6,8 +6,9 @@ import { db, projects, events, replays } from '@geniusdebug/db';
 import { and, eq, gte, sql as dsql } from 'drizzle-orm';
 import { JwtGuard, type AuthPrincipal } from '../auth/jwt.guard';
 import { hasProjectAccess } from '../access';
+import { redisOptions } from '@geniusdebug/shared';
 
-const conn = new IORedis(process.env.REDIS_URL ?? 'redis://localhost:6379', { maxRetriesPerRequest: null });
+const conn = new IORedis(process.env.REDIS_URL ?? 'redis://localhost:6379', redisOptions());
 const ingestQueue = new Queue('ingest', { connection: conn });
 const dlq = new Queue('ingest-dead', { connection: conn });
 
