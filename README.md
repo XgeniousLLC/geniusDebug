@@ -82,6 +82,20 @@ slice of Sentry a small team actually uses day-to-day, self-hosted on your own i
 
 NestJS · PostgreSQL (Drizzle ORM) · Redis (BullMQ) · Cloudflare R2 · AWS SES · React + Zustand + Tailwind · `@sentry/nextjs`.
 
+## Quick start (Docker — whole stack)
+
+Prereqs: Docker + the Compose v2 plugin. Brings up all four services + PostgreSQL + Redis, runs
+migrations, serves the dashboard.
+
+```bash
+cp .env.example .env          # set JWT_SECRET, APP_ENCRYPTION_KEY, POSTGRES_PASSWORD
+docker compose up -d --build
+# dashboard → http://localhost:8080  ·  ingest (DSN endpoint) → http://localhost:4001
+```
+
+Per-service `Dockerfile`s live in `apps/*/Dockerfile` (build context = repo root) for k8s / Coolify.
+Full guide: **[docs/self-hosting-docker.md](docs/self-hosting-docker.md)**.
+
 ## Quick start (local, npm workspaces)
 
 Prereqs: Node ≥ 20, PostgreSQL, Redis.
@@ -115,7 +129,10 @@ docs/                             SRS, design brief, screenshots
 
 ## Docs
 
-- **[DEPLOY.md](DEPLOY.md)** — deploy on Coolify or a plain VPS.
+📖 **Documentation site (GitHub Pages):** <https://xgeniousllc.github.io/geniusDebug/>
+
+- **[docs/self-hosting-docker.md](docs/self-hosting-docker.md)** — one-command Docker stack (recommended).
+- **[DEPLOY.md](DEPLOY.md)** — deploy without Docker (Coolify or a plain VPS).
 - **[INTEGRATION.md](INTEGRATION.md)** — point an existing app (already using Sentry packages) at geniusDebug.
 - **[docs/geniusDebug-SRS.md](docs/geniusDebug-SRS.md)** — full requirements spec (v1.5).
 - **[docs/frontend-design-brief.md](docs/frontend-design-brief.md)** — design system + every page.

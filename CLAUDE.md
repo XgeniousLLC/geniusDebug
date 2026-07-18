@@ -455,3 +455,23 @@ GitHub advanced (GD-043/44/45) code-complete; live needs a GitHub App install.
 - Live grant/revoke matrix: member with **0 grants** → `/projects` empty, dashboard projects=0, issues empty, non-granted `/projects/:id/keys` → **403**. Admin `POST /members/:id/projects {[pid]}` → member now sees **1** project, keys→200, dashboard=1. Revoke → back to 0.
 - Admins implicitly access every org project (no grant rows needed); members see only granted projects everywhere (list, switcher, dashboard, issues, traces, replays, alerts).
 - New members start with **zero** project access — admin grants via Settings → Members → Project access (invite auto-opens the access editor).
+
+## Sprint 17 — Docker packaging + open-source docs site (GitHub Pages)
+**Status:** COMPLETE
+**Started:** 2026-07-17
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-079 | Per-service Dockerfiles | DONE | HIGH | 2-stage Dockerfile per app (ingest/api/workers, build→runtime) + web→nginx (proxies /api); context=repo root, builds only shared+db+self |
+| GD-080 | docker-compose.yml (full stack) | DONE | HIGH | postgres + redis + one-shot migrate + ingest + api + workers + web; healthchecks, service_completed_successfully gating, env_file .env + DB/REDIS host override, named volumes |
+| GD-081 | MkDocs Material docs site + Pages workflow | DONE | HIGH | index/architecture/self-hosting-docker/deploy/configuration/integration + SRS/brief; `.github/workflows/docs.yml` → Pages; built clean locally (no broken links) |
+
+### Sprint Stats
+- Total: 3  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 3  /  BLOCKED: 0
+
+### Verification notes (Sprint 17)
+- `docker compose config` valid. Compose: postgres(16)+redis(7) healthchecks → one-shot `migrate` (workers image, `npm run db:migrate`, tsx kept) → ingest/api/workers/web gated on `service_completed_successfully`. `x-backend-env` anchor overrides DATABASE_URL/REDIS_URL (env_file `.env` still supplies secrets). web build-arg `VITE_API_URL=/api`; nginx proxies `/api/`→`api:4002/` (api sets no global prefix), SPA fallback to index.html. web api client fetches `${BASE}${path}` and all paths are leading-slash → proxy correct.
+- Dockerfiles: build context = repo root (npm workspaces need all package.json + lockfile); each builds only `shared`+`db`+its own app; runtime stage copies whole `/app` (workspace symlinks). Node 20-slim; web → nginx 1.27-alpine.
+- Docs: MkDocs Material built locally in a venv, exit 0, **no broken-link/missing-file warnings** (only the unrelated Material-2.0 team notice). Pages workflow installs mkdocs-material, `mkdocs build`, upload-pages-artifact→deploy-pages. **One-time repo setup: Settings → Pages → Source = "GitHub Actions".** Site URL: https://xgeniousllc.github.io/geniusDebug/
+- README + DEPLOY.md updated: Docker is now the recommended path; both link the docs site.
+- Note: `.env.example` POSTGRES_PASSWORD line NOT added — the guard-secrets hook blocks editing `.env.example`; documented in `docs/configuration.md` + self-hosting guide instead.

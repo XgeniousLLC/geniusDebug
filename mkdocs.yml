@@ -1,0 +1,76 @@
+site_name: geniusDebug
+site_description: A minimal, self-hosted Sentry alternative for frontend error monitoring.
+site_url: https://xgeniousllc.github.io/geniusDebug/
+repo_url: https://github.com/XgeniousLLC/geniusDebug
+repo_name: XgeniousLLC/geniusDebug
+edit_uri: edit/main/docs/
+copyright: Built by Xgenious · reuses @sentry/nextjs (MIT)
+
+docs_dir: docs
+
+theme:
+  name: material
+  language: en
+  icon:
+    repo: fontawesome/brands/github
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - content.code.copy
+    - content.code.annotate
+    - search.suggest
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+
+# Pages under docs/ that are reference material, not part of the reading order.
+not_in_nav: |
+  /dev-prompts.md
+
+validation:
+  nav:
+    omitted_files: info
+  links:
+    unrecognized_links: warn
+
+nav:
+  - Home: index.md
+  - Architecture: architecture.md
+  - Self-host with Docker: self-hosting-docker.md
+  - Deploy without Docker: deploy.md
+  - Configuration: configuration.md
+  - Integrate an app: integration.md
+  - Reference:
+      - Requirements spec (SRS): geniusDebug-SRS.md
+      - Frontend design brief: frontend-design-brief.md
