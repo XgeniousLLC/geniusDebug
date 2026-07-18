@@ -1,11 +1,19 @@
 import 'dotenv/config';
+import { createServer } from 'node:http';
 import { Worker, Queue } from 'bullmq';
 import IORedis from 'ioredis';
 import { parseEnvelope } from './parse-envelope';
 import { processEnvelope } from './processor';
 import { purge } from './retention';
 import { recordLatency } from './metrics';
-import { redisOptions } from '@geniusdebug/shared';
+import {
+  redisOptions,
+  wantsHtml,
+  homePage,
+  homeJson,
+  notFoundPage,
+  notFoundJson,
+} from '@geniusdebug/shared';
 
 const SHED_THRESHOLD = Number(process.env.QUEUE_SHED_THRESHOLD ?? 5000);
 
@@ -86,4 +94,35 @@ new Worker(
 
 // Schedule a daily purge (idempotent repeatable job).
 retentionQueue.add('daily', {}, { repeat: { every: 24 * 60 * 60 * 1000 }, jobId: 'retention-daily' }).catch(() => {});
+
+/* --------------------- Tiny HTTP face (home / health / 404) ---------------- */
+// The workers process is a pure BullMQ consumer, but hosting platforms (Coolify)
+// and humans still hit its URL. Serve a branded home + a real /health probe;
+// browsers get HTML, everything else JSON. No app logic runs here.
+const WORKERS_PORT = Number(process.env.WORKERS_PORT ?? 4003);
+createServer((req, res) => {
+  const html = wantsHtml(req.headers.accept);
+  const url = (req.url ?? '/').split('?')[0];
+  if (url === '/health') {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify({ service: 'workers', status: 'ok' }));
+  }
+  if (url === '/') {
+    if (html) {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      return res.end(homePage('workers'));
+    }
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify(homeJson('workers')));
+  }
+  if (html) {
+    res.writeHead(404, { 'content-type': 'text/html; charset=utf-8' });
+    return res.end(notFoundPage('workers'));
+  }
+  res.writeHead(404, { 'content-type': 'application/json' });
+  return res.end(JSON.stringify(notFoundJson('workers')));
+}).listen(WORKERS_PORT, () => {
+  // eslint-disable-next-line no-console
+  console.log(`[workers] http face on :${WORKERS_PORT}`);
+});
 

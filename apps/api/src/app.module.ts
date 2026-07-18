@@ -14,6 +14,7 @@ import { AlertsController } from './alerts/alerts.controller';
 import { MetricsController } from './metrics/metrics.controller';
 import { IntegrationsController } from './integrations/integrations.controller';
 import { DashboardController } from './dashboard/dashboard.controller';
+import { RootController } from './http-pages';
 
 @Controller()
 class HealthController {
@@ -32,6 +33,7 @@ class HealthController {
   ],
   controllers: [
     HealthController,
+    RootController,
     AuthController,
     IssuesController,
     ProjectsController,

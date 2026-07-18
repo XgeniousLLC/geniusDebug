@@ -57,22 +57,31 @@ export class GithubController {
     } catch {
       return res.status(400).send('bad state');
     }
-    const app = await this.gh.convertManifest(code);
-    // Store encrypted at rest (NFR-SEC-5); one app per org.
-    await db.delete(githubApps).where(eq(githubApps.orgId, orgId));
-    await db.insert(githubApps).values({
-      orgId,
-      name: `geniusDebug-${orgId.slice(0, 8)}`,
-      slug: app.slug,
-      appId: String(app.id),
-      clientId: app.client_id,
-      clientSecretEnc: encrypt(app.client_secret),
-      privateKeyEnc: encrypt(app.pem),
-      webhookSecretEnc: app.webhook_secret ? encrypt(app.webhook_secret) : null,
-      ownerLogin: app.owner?.login,
-    });
-    // Send the admin back to Settings, then straight into the install step.
-    return res.redirect(`${WEB_URL}/settings?github=created&slug=${app.slug}`);
+    try {
+      const app = await this.gh.convertManifest(code);
+      // Store encrypted at rest (NFR-SEC-5); one app per org.
+      await db.delete(githubApps).where(eq(githubApps.orgId, orgId));
+      await db.insert(githubApps).values({
+        orgId,
+        name: `geniusDebug-${orgId.slice(0, 8)}`,
+        slug: app.slug,
+        appId: String(app.id),
+        clientId: app.client_id,
+        clientSecretEnc: encrypt(app.client_secret),
+        privateKeyEnc: encrypt(app.pem),
+        webhookSecretEnc: app.webhook_secret ? encrypt(app.webhook_secret) : null,
+        ownerLogin: app.owner?.login,
+      });
+      // Send the admin back to Settings, then straight into the install step.
+      return res.redirect(`${WEB_URL}/settings?github=created&slug=${app.slug}`);
+    } catch (e) {
+      // Don't leak a raw 500 to the browser — log the real cause and bounce the
+      // admin back to Settings with a readable reason (FR-GH-1).
+      const reason = e instanceof Error ? e.message : 'unknown error';
+      // eslint-disable-next-line no-console
+      console.error('[github] app callback failed:', reason);
+      return res.redirect(`${WEB_URL}/settings?github=error&reason=${encodeURIComponent(reason)}`);
+    }
   }
 
   /** Current App for the caller's org + the install URL (FR-GH-1). */

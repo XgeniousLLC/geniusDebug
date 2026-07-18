@@ -4,6 +4,7 @@ import express from 'express';
 import { NestFactory } from '@nestjs/core';
 import { ExpressAdapter } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
+import { HtmlExceptionFilter } from './http-pages';
 
 const MAX_ENVELOPE_BYTES = Number(process.env.MAX_ENVELOPE_BYTES ?? 209_715_200);
 
@@ -22,6 +23,7 @@ async function bootstrap() {
     bodyParser: false,
   });
   app.enableCors({ origin: true });
+  app.useGlobalFilters(new HtmlExceptionFilter());
 
   const port = Number(process.env.INGEST_PORT ?? 4001);
   await app.listen(port);

@@ -5,6 +5,9 @@ import { eq } from 'drizzle-orm';
 import { decrypt } from '../crypto';
 
 const GH_API = 'https://api.github.com';
+// GitHub REST API rejects requests without a User-Agent (403). Node's global
+// fetch (undici) sends none by default, so set it on every call. (FR-GH-1)
+const GH_UA = 'geniusDebug';
 
 interface AppCreds {
   appId: string;
@@ -43,7 +46,7 @@ export class GithubService {
   /** Repos the installation can access (org or personal) — FR-GH-1. */
   async listInstallationRepos(installToken: string): Promise<{ owner: string; name: string; defaultBranch: string }[]> {
     const res = await fetch(`${GH_API}/installation/repositories?per_page=100`, {
-      headers: { authorization: `Bearer ${installToken}`, accept: 'application/vnd.github+json' },
+      headers: { authorization: `Bearer ${installToken}`, accept: 'application/vnd.github+json', 'user-agent': GH_UA },
     });
     if (!res.ok) throw new Error(`list repos failed: ${res.status}`);
     const body = (await res.json()) as { repositories: { owner: { login: string }; name: string; default_branch: string }[] };
@@ -62,9 +65,12 @@ export class GithubService {
   }> {
     const res = await fetch(`${GH_API}/app-manifest/${code}/conversions`, {
       method: 'POST',
-      headers: { accept: 'application/vnd.github+json' },
+      headers: { accept: 'application/vnd.github+json', 'user-agent': GH_UA },
     });
-    if (!res.ok) throw new Error(`manifest conversion failed: ${res.status}`);
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      throw new Error(`manifest conversion failed: ${res.status} ${detail.slice(0, 300)}`);
+    }
     return res.json() as never;
   }
 
@@ -77,7 +83,7 @@ export class GithubService {
   ): Promise<{ sha: string; message: string; author: string; date: string; url: string }[]> {
     const res = await fetch(
       `${GH_API}/repos/${owner}/${repo}/commits?path=${encodeURIComponent(path)}&per_page=5`,
-      { headers: { authorization: `Bearer ${installToken}`, accept: 'application/vnd.github+json' } },
+      { headers: { authorization: `Bearer ${installToken}`, accept: 'application/vnd.github+json', 'user-agent': GH_UA } },
     );
     if (!res.ok) throw new Error(`commits failed: ${res.status}`);
     const body = (await res.json()) as {
@@ -92,7 +98,7 @@ export class GithubService {
   async createIssue(installToken: string, owner: string, repo: string, title: string, body: string): Promise<string> {
     const res = await fetch(`${GH_API}/repos/${owner}/${repo}/issues`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${installToken}`, accept: 'application/vnd.github+json', 'content-type': 'application/json' },
+      headers: { authorization: `Bearer ${installToken}`, accept: 'application/vnd.github+json', 'content-type': 'application/json', 'user-agent': GH_UA },
       body: JSON.stringify({ title, body }),
     });
     if (!res.ok) throw new Error(`create issue failed: ${res.status}`);
@@ -101,6 +107,6 @@ export class GithubService {
   }
 
   private appHeaders(creds: AppCreds): Record<string, string> {
-    return { authorization: `Bearer ${this.appJwt(creds)}`, accept: 'application/vnd.github+json' };
+    return { authorization: `Bearer ${this.appJwt(creds)}`, accept: 'application/vnd.github+json', 'user-agent': GH_UA };
   }
 }

@@ -16,6 +16,13 @@ import bcrypt from 'bcryptjs';
 import { db, repositories, releases, orgTokens, sourceMapArtifacts, projects, users, memberships, dsnKeys, projectMembers } from '@geniusdebug/db';
 import { and, eq, ne } from 'drizzle-orm';
 import { JwtGuard, type AuthPrincipal } from '../auth/jwt.guard';
+import { sendEmail } from '../mailer';
+
+const WEB_URL = process.env.WEB_URL ?? 'http://localhost:5199';
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
+}
 
 /**
  * Admin + deploy-pipeline endpoints (FR-GH-1, FR-ADM-5, FR-BLD-2 / §4.3).
@@ -158,14 +165,42 @@ export class AdminController {
     if (!body.email || !body.name) throw new BadRequestException('name and email required');
     const existing = await db.select({ id: users.id }).from(users).where(eq(users.email, body.email)).limit(1);
     if (existing.length > 0) throw new BadRequestException('email already a member');
-    // v1 invite: create the user with a random temp password (they reset on first login).
+    // Create the user with an unusable random password; they set their own via the
+    // invite link (same reset-token machinery as forgot-password).
     const tempHash = await bcrypt.hash(`temp_${randomBytes(12).toString('hex')}`, 10);
+    // Invite token → user picks a password on the /reset page. 7-day window.
+    const token = randomBytes(24).toString('hex');
+    const tokenHash = await bcrypt.hash(token, 10);
+    const expires = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
     const u = await db
       .insert(users)
-      .values({ orgId: req.user!.orgId, email: body.email, name: body.name, passwordHash: tempHash })
+      .values({
+        orgId: req.user!.orgId,
+        email: body.email,
+        name: body.name,
+        passwordHash: tempHash,
+        resetTokenHash: tokenHash,
+        resetExpires: expires,
+      })
       .returning({ id: users.id });
     await db.insert(memberships).values({ orgId: req.user!.orgId, userId: u[0].id, role: body.role ?? 'member' });
-    return { ok: true, id: u[0].id };
+
+    const link = `${WEB_URL}/reset?token=${token}&email=${encodeURIComponent(body.email)}`;
+    const html = `
+      <div style="font-family:system-ui,sans-serif;max-width:520px;margin:0 auto">
+        <h2 style="margin:0 0 12px">You've been invited to geniusDebug</h2>
+        <p>${escapeHtml(req.user!.email ?? 'An admin')} added you to their geniusDebug workspace as
+           <strong>${body.role ?? 'member'}</strong>.</p>
+        <p>Set your password to accept the invite and sign in:</p>
+        <p><a href="${link}" style="display:inline-block;background:#6d5efc;color:#fff;
+           padding:10px 18px;border-radius:8px;text-decoration:none">Accept invite &amp; set password</a></p>
+        <p style="color:#666;font-size:13px">Or paste this link (valid 7 days):<br>${link}</p>
+      </div>`;
+    const mail = await sendEmail([body.email], "You've been invited to geniusDebug", html, req.user!.orgId);
+    // eslint-disable-next-line no-console
+    if (!mail.sent) console.log(`[admin] invite link for ${body.email}: ${link}`);
+    // In dev / when SES is unset, hand the link back so the admin can share it manually.
+    return { ok: true, id: u[0].id, emailSent: mail.sent, inviteLink: mail.sent ? undefined : link };
   }
 
   @Post('members/:id/role')
