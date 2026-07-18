@@ -8,9 +8,16 @@ copyright: Built by Xgenious · reuses @sentry/nextjs (MIT)
 
 docs_dir: docs
 
+# Emit flat page.html URLs instead of directory-style page/ URLs. Makes every
+# internal link resolve under a plain static host (incl. GitHub Pages' Jekyll
+# branch-deploy), not only the GitHub Actions deploy.
+use_directory_urls: false
+
 theme:
   name: material
   language: en
+  logo: assets/logo.svg
+  favicon: assets/favicon.svg
   icon:
     repo: fontawesome/brands/github
   features:
@@ -53,6 +60,10 @@ markdown_extensions:
   - pymdownx.highlight:
       anchor_linenums: true
   - pymdownx.inlinehilite
+  # Renders :material-*: / :fontawesome-*: icon shortcodes (used in the Home cards).
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
 
 # Pages under docs/ that are reference material, not part of the reading order.
 not_in_nav: |

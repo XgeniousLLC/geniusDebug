@@ -1,4 +1,4 @@
-# geniusDebug
+<p align="center"><img src="assets/logo-wordmark.svg" alt="geniusDebug" width="380"></p>
 
 **A minimal, self-hosted Sentry alternative for frontend error monitoring.**
 
