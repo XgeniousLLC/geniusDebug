@@ -66,11 +66,16 @@ validation:
 
 nav:
   - Home: index.md
-  - Architecture: architecture.md
-  - Self-host with Docker: self-hosting-docker.md
-  - Deploy without Docker: deploy.md
-  - Configuration: configuration.md
-  - Integrate an app: integration.md
+  - Get started:
+      - End-to-end deployment guide: deployment-guide.md
+      - Self-host with Docker: self-hosting-docker.md
+  - Deploy & configure:
+      - Deploy without Docker: deploy.md
+      - Configuration: configuration.md
+  - Integrate:
+      - Integrate an app: integration.md
+  - Concepts:
+      - Architecture: architecture.md
   - Reference:
       - Requirements spec (SRS): geniusDebug-SRS.md
       - Frontend design brief: frontend-design-brief.md
