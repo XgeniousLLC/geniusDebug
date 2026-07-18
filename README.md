@@ -1,6 +1,6 @@
 <div align="center">
 
-# geniusDebug
+<img src="docs/assets/logo-wordmark.svg" alt="geniusDebug" width="360">
 
 **A minimal, self-hosted Sentry alternative for frontend error monitoring.**
 
