@@ -495,3 +495,22 @@ GitHub advanced (GD-043/44/45) code-complete; live needs a GitHub App install.
 - **Datastores:** use Coolify **internal** URLs (Postgres internal URL worked; Redis must be internal `redis://…:6379`, NOT the external `rediss://…:6380` — external TLS URL mis-parsed by ioredis → ENOENT socket).
 - **Secrets:** DB + Redis passwords were pasted in chat during setup → **rotate** in Coolify. `JWT_SECRET` + `APP_ENCRYPTION_KEY` generated fresh (32-byte hex) and set as project shared vars; `NODE_ENV=production` deliberately NOT set (would prune tsx → migrate fails).
 - Branch `dev` pushed (`origin/dev` @ 71bb68c) alongside `main`; app source identical across both.
+
+## Sprint 19 — GitHub callback fix, invite email, branded service pages
+**Status:** COMPLETE
+**Started:** 2026-07-18
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-083 | Fix GitHub App OAuth callback 500 | DONE | HIGH | FR-GH-1: GitHub REST rejects no-User-Agent (403) → convertManifest threw → raw 500. Added `user-agent` to every github fetch; callback now try/catches → redirects `?github=error&reason=` + logs real cause (incl. GitHub body) |
+| GD-084 | Invite email + accept-invite link | DONE | HIGH | FR-ADM-6: invite() now sets a 7-day reset token, emails the invitee via API SES mailer (env→DB) with an "Accept invite & set password" link; graceful fallback returns `inviteLink` when SES unset — web Members shows a copy-link box |
+| GD-085 | Branded home/404/500 pages (ingest/api/workers) | DONE | MED | shared `webpages.ts` (wantsHtml + themed HTML/JSON builders); Nest `HtmlExceptionFilter` + RootController on ingest+api (browser→HTML, clients→JSON, 4xx keep JSON contract); workers got a tiny http face (home/health/404) on WORKERS_PORT |
+
+### Sprint Stats
+- Total: 3  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 3  /  BLOCKED: 0
+
+### Verification notes (Sprint 19)
+- All workspaces typecheck clean; 19 tests green (6 ingest + 13 workers).
+- Live smoke (compiled `node dist`): ingest/api/workers each serve HTML home to `Accept: text/html`, JSON to SDK/curl (no Accept) + `application/json`; `/nope` → 404 HTML/JSON; `/health` contract unchanged; api `GET /dashboard` no-token still returns `401 {statusCode,message}` JSON even with browser Accept (4xx passthrough — SPA error handling intact).
+- GD-083 root cause proven by code path: Node global fetch (undici) sends no default UA → GitHub 403. Fix needs an api redeploy on Coolify to take effect; retry create-App flow after.
+- GD-084/GD-085 need api restart on Coolify; invite email only sends once SES is connected (Integrations tab) — until then admin copies the link.

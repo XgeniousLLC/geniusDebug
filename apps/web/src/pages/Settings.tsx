@@ -462,13 +462,20 @@ function Members() {
   const [email, setEmail] = React.useState('');
   const [openAccess, setOpenAccess] = React.useState<string | null>(null);
 
+  const [inviteLink, setInviteLink] = React.useState<string | null>(null);
   const invite = useMutation({
-    mutationFn: () => api<{ ok: boolean; id: string }>('/members', { method: 'POST', body: JSON.stringify({ name, email, role: 'member' }) }),
+    mutationFn: () =>
+      api<{ ok: boolean; id: string; emailSent?: boolean; inviteLink?: string }>('/members', {
+        method: 'POST',
+        body: JSON.stringify({ name, email, role: 'member' }),
+      }),
     onSuccess: (r) => {
       setName('');
       setEmail('');
       qc.invalidateQueries({ queryKey: ['members'] });
       setOpenAccess(r.id); // prompt admin to grant project access right away
+      // SES unset → no email went out; surface the link so the admin can share it.
+      setInviteLink(r.emailSent ? null : r.inviteLink ?? null);
     },
   });
   const remove = useMutation({
@@ -532,6 +539,17 @@ function Members() {
           {invite.isPending ? 'Inviting…' : 'Invite'}
         </Button>
       </div>
+      {inviteLink && (
+        <div className="mt-2 rounded-md border border-border bg-surface-2 p-2 text-caption">
+          <span className="text-text-faint">Email not configured — share this invite link (valid 7 days):</span>
+          <div className="mt-1 flex items-center gap-2">
+            <code className="flex-1 truncate font-mono text-text">{inviteLink}</code>
+            <Button size="sm" variant="ghost" onClick={() => navigator.clipboard.writeText(inviteLink)}>
+              Copy
+            </Button>
+          </div>
+        </div>
+      )}
       <p className="mt-2 text-caption text-text-faint">Members see only the projects granted here. Admins have access to every project.</p>
     </div>
   );
