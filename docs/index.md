@@ -15,6 +15,7 @@ Sentry a small team actually uses day-to-day, self-hosted on your own infra.
 
 <div class="grid cards" markdown>
 
+- :material-rocket-launch: **[End-to-end deployment guide](deployment-guide.md)** — VPS → Coolify / AWS / DigitalOcean → project + SDK → post-deploy. Start here.
 - :material-docker: **[Self-host with Docker](self-hosting-docker.md)** — one `docker compose up`, whole stack.
 - :material-server: **[Deploy without Docker](deploy.md)** — Coolify (Nixpacks) or a plain VPS (pm2).
 - :material-cog: **[Configuration](configuration.md)** — every environment variable, explained.

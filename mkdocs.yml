@@ -66,6 +66,7 @@ validation:
 
 nav:
   - Home: index.md
+  - End-to-end deployment guide: deployment-guide.md
   - Architecture: architecture.md
   - Self-host with Docker: self-hosting-docker.md
   - Deploy without Docker: deploy.md
