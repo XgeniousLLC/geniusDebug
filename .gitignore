@@ -16,6 +16,7 @@ build/
 .next/
 out/
 *.tsbuildinfo
+site/
 
 # drizzle
 packages/db/migrations/meta/_journal.lock
