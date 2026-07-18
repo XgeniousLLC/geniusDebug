@@ -145,4 +145,4 @@ pipeline is already platform-agnostic and skips symbolication for non-JS, so v2 
 
 ## License
 
-Internal — Xgenious. Reuses `@sentry/nextjs` (MIT).
+**MIT** © 2026 Xgenious LLC — see [LICENSE](LICENSE). Reuses `@sentry/nextjs` (MIT).
