@@ -59,8 +59,10 @@ export class GithubController {
     }
     try {
       const app = await this.gh.convertManifest(code);
-      // Store encrypted at rest (NFR-SEC-5); one app per org.
-      await db.delete(githubApps).where(eq(githubApps.orgId, orgId));
+      // Store encrypted at rest (NFR-SEC-5). Append — an org may connect several
+      // apps (personal + org accounts). Dedupe by GitHub app id so retrying the
+      // same create flow doesn't leave duplicate rows.
+      await db.delete(githubApps).where(and(eq(githubApps.orgId, orgId), eq(githubApps.appId, String(app.id))));
       await db.insert(githubApps).values({
         orgId,
         name: `geniusDebug-${orgId.slice(0, 8)}`,
@@ -84,22 +86,36 @@ export class GithubController {
     }
   }
 
-  /** Current App for the caller's org + the install URL (FR-GH-1). */
+  /** All Apps connected by the caller's org + their install URLs (FR-GH-1). */
   @Get('app')
   @UseGuards(JwtGuard)
   async currentApp(@Req() req: Request & { user?: AuthPrincipal }) {
     const rows = await db
-      .select({ slug: githubApps.slug, ownerLogin: githubApps.ownerLogin })
+      .select({ id: githubApps.id, slug: githubApps.slug, ownerLogin: githubApps.ownerLogin, createdAt: githubApps.createdAt })
       .from(githubApps)
       .where(eq(githubApps.orgId, req.user!.orgId))
-      .limit(1);
-    if (rows.length === 0) return { installed: false };
-    return {
-      installed: true,
-      slug: rows[0].slug,
-      ownerLogin: rows[0].ownerLogin,
-      installUrl: `https://github.com/apps/${rows[0].slug}/installations/new`,
-    };
+      .orderBy(githubApps.createdAt);
+    const apps = rows.map((r) => ({
+      id: r.id,
+      slug: r.slug,
+      ownerLogin: r.ownerLogin,
+      installUrl: `https://github.com/apps/${r.slug}/installations/new`,
+    }));
+    // `installed`/`slug` kept for backward-compat with older clients.
+    return { installed: apps.length > 0, slug: apps[0]?.slug, apps };
+  }
+
+  /** Disconnect (delete) one connected App — admin only (FR-GH-1). */
+  @Post('app/:id/disconnect')
+  @UseGuards(JwtGuard)
+  async disconnectApp(@Req() req: Request & { user?: AuthPrincipal }, @Param('id') id: string) {
+    if (req.user!.role !== 'admin') throw new ForbiddenException('admin only');
+    const deleted = await db
+      .delete(githubApps)
+      .where(and(eq(githubApps.id, id), eq(githubApps.orgId, req.user!.orgId)))
+      .returning({ id: githubApps.id });
+    if (deleted.length === 0) throw new BadRequestException('app not found');
+    return { ok: true };
   }
 
   /** After install, GitHub sends installation_id here → back to the repo picker. */
@@ -112,9 +128,8 @@ export class GithubController {
   @Get('installations/:installationId/repos')
   @UseGuards(JwtGuard)
   async repos(@Req() req: Request & { user?: AuthPrincipal }, @Param('installationId') installationId: string) {
-    const creds = await this.gh.appForOrg(req.user!.orgId);
-    if (!creds) throw new BadRequestException('no GitHub App for this org');
-    const token = await this.gh.installationToken(creds, installationId);
+    const token = await this.gh.installationTokenForOrg(req.user!.orgId, installationId);
+    if (!token) throw new BadRequestException('no GitHub App for this installation');
     return this.gh.listInstallationRepos(token);
   }
 
@@ -154,9 +169,9 @@ export class GithubController {
   async suspectCommits(@Req() req: Request & { user?: AuthPrincipal }, @Param('shortId') shortId: string) {
     const ctx = await this.issueRepoContext(req.user!.orgId, shortId);
     if (!ctx) return { available: false };
-    const creds = await this.gh.appForOrg(req.user!.orgId);
-    if (!creds || !ctx.installationId) return { available: false, reason: 'no GitHub App installation' };
-    const token = await this.gh.installationToken(creds, ctx.installationId);
+    if (!ctx.installationId) return { available: false, reason: 'no GitHub App installation' };
+    const token = await this.gh.installationTokenForOrg(req.user!.orgId, ctx.installationId);
+    if (!token) return { available: false, reason: 'no GitHub App installation' };
     const path = (ctx.culprit ?? '').replace(/^\.\//, '');
     const commits = await this.gh.commitsForFile(token, ctx.owner, ctx.name, path);
     return { available: true, commits };
@@ -169,9 +184,9 @@ export class GithubController {
     if (req.user!.role !== 'admin') throw new ForbiddenException('admin only');
     const ctx = await this.issueRepoContext(req.user!.orgId, shortId);
     if (!ctx) throw new BadRequestException('issue or repo not found');
-    const creds = await this.gh.appForOrg(req.user!.orgId);
-    if (!creds || !ctx.installationId) throw new BadRequestException('no GitHub App installation');
-    const token = await this.gh.installationToken(creds, ctx.installationId);
+    if (!ctx.installationId) throw new BadRequestException('no GitHub App installation');
+    const token = await this.gh.installationTokenForOrg(req.user!.orgId, ctx.installationId);
+    if (!token) throw new BadRequestException('no GitHub App installation');
     const body = `**Culprit:** \`${ctx.culprit}\`\n**geniusDebug:** ${WEB_URL}/issues/${shortId}\n\nType: ${ctx.type ?? ''}`;
     const url = await this.gh.createIssue(token, ctx.owner, ctx.name, ctx.title, body);
     return { ok: true, url };

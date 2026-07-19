@@ -148,9 +148,10 @@ export const repositories = pgTable('repositories', {
 });
 
 /**
- * GitHub App created via the Coolify-style manifest flow (FR-GH-1). One app per
- * org (v1), created against a personal or org GitHub account. Secrets (PEM,
- * client secret, webhook secret) are stored ENCRYPTED at rest (NFR-SEC-5).
+ * GitHub App created via the Coolify-style manifest flow (FR-GH-1). An org may
+ * connect MANY apps (personal + org accounts), each created against a personal
+ * or org GitHub account. Secrets (PEM, client secret, webhook secret) are
+ * stored ENCRYPTED at rest (NFR-SEC-5).
  */
 export const githubApps = pgTable(
   'github_apps',
@@ -168,7 +169,7 @@ export const githubApps = pgTable(
     ownerLogin: varchar('owner_login', { length: 160 }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
-  (t) => ({ orgUq: uniqueIndex('github_apps_org_uq').on(t.orgId) }),
+  (t) => ({ orgIdx: index('github_apps_org_idx').on(t.orgId) }),
 );
 
 export const releases = pgTable(

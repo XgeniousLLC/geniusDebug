@@ -5,6 +5,7 @@ import { api, ApiError } from '../lib/api';
 import { useUi } from '../store/ui';
 import { Button, Card, IdChip, Skeleton } from '../components/ui';
 import { NoProject } from '../components/NoProject';
+import { GithubConnect } from '../components/GithubConnect';
 
 interface Project {
   id: string;
@@ -155,7 +156,7 @@ export function Settings() {
 
       {tab === 'github' && (
         <Section title="GitHub Integration" hint="Create a GitHub App (personal or org), install it, and link a repo so frames deep-link to source (FR-GH-1/3).">
-          {project ? <GithubApp projectId={project.id} /> : <NoProject hint="Create a project first, then connect its GitHub repo for source deep-links." />}
+          {project ? <GithubConnect projectId={project.id} /> : <NoProject hint="Create a project first, then connect its GitHub repo for source deep-links." />}
         </Section>
       )}
 
@@ -610,212 +611,6 @@ function MemberProjects({ userId, projects }: { userId: string; projects: { id: 
   );
 }
 
-/** Coolify-style GitHub App manifest flow: create → install → pick repo (FR-GH-1). */
-function GithubApp({ projectId }: { projectId: string }) {
-  const qc = useQueryClient();
-  const [params] = useSearchParams();
-  const installationId = params.get('installation_id') ?? undefined;
-
-  const app = useQuery({
-    queryKey: ['gh-app'],
-    queryFn: () => api<{ installed: boolean; slug?: string; ownerLogin?: string; installUrl?: string }>('/github/app'),
-  });
-  const repo = useQuery({
-    queryKey: ['repo', projectId],
-    queryFn: () => api<{ owner: string; name: string; defaultBranch: string } | null>(`/projects/${projectId}/repository`),
-  });
-
-  const [account, setAccount] = React.useState<'personal' | 'org'>('personal');
-  const [org, setOrg] = React.useState('');
-
-  // Step 1 — create the App: fetch a manifest, then POST a form to GitHub.
-  async function createApp() {
-    const { postUrl, manifest, state } = await api<{ postUrl: string; manifest: object; state: string }>(
-      '/github/app/manifest',
-      { method: 'POST', body: JSON.stringify({ account, org: org || undefined }) },
-    );
-    const form = document.createElement('form');
-    form.method = 'POST';
-    form.action = `${postUrl}?state=${encodeURIComponent(state)}`;
-    const input = document.createElement('input');
-    input.type = 'hidden';
-    input.name = 'manifest';
-    input.value = JSON.stringify(manifest);
-    form.appendChild(input);
-    document.body.appendChild(form);
-    form.submit();
-  }
-
-  // Step 3 — pick a repo the installation can access.
-  const repos = useQuery({
-    queryKey: ['gh-repos', installationId],
-    enabled: !!installationId,
-    queryFn: () => api<{ owner: string; name: string; defaultBranch: string }[]>(`/github/installations/${installationId}/repos`),
-  });
-  const link = useMutation({
-    mutationFn: (r: { owner: string; name: string; defaultBranch: string }) =>
-      api(`/github/projects/${projectId}/link`, {
-        method: 'POST',
-        body: JSON.stringify({ installationId, ...r }),
-      }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['repo', projectId] }),
-  });
-
-  if (app.isLoading || repo.isLoading) return <Skeleton className="h-10 w-full" />;
-
-  // Already linked.
-  if (repo.data) {
-    return (
-      <div className="flex items-center justify-between text-small">
-        <span className="font-mono text-text">
-          {repo.data.owner}/{repo.data.name} <span className="text-text-muted">@ {repo.data.defaultBranch}</span>
-        </span>
-        <span className="text-status-resolved">connected · frame deep-links on</span>
-      </div>
-    );
-  }
-
-  const inp = 'h-8 rounded-md border border-border bg-bg px-2 text-small text-text';
-
-  // App exists → install + repo picker.
-  if (app.data?.installed) {
-    return (
-      <div className="flex flex-col gap-3">
-        <div className="flex items-center justify-between text-small">
-          <span className="text-text-muted">
-            App <span className="font-mono text-text">{app.data.slug}</span>
-            {app.data.ownerLogin ? ` · ${app.data.ownerLogin}` : ''}
-          </span>
-          <a href={app.data.installUrl} className="text-accent hover:underline">
-            Install / add repos →
-          </a>
-        </div>
-        {installationId && (
-          <div>
-            <div className="mb-1 text-caption uppercase text-text-faint">Pick a repo (installation {installationId})</div>
-            {repos.isLoading ? (
-              <Skeleton className="h-8 w-full" />
-            ) : (
-              <div className="flex flex-col gap-1">
-                {(repos.data ?? []).map((r) => (
-                  <div key={`${r.owner}/${r.name}`} className="flex items-center justify-between rounded-md border border-border px-3 py-1.5 text-small">
-                    <span className="font-mono text-text">{r.owner}/{r.name}</span>
-                    <Button size="sm" variant="primary" onClick={() => link.mutate(r)}>
-                      Link
-                    </Button>
-                  </div>
-                ))}
-                {(repos.data ?? []).length === 0 && <span className="text-caption text-text-muted">No repos on this installation.</span>}
-              </div>
-            )}
-          </div>
-        )}
-        <ManualLink projectId={projectId} />
-      </div>
-    );
-  }
-
-  // No app yet → create one (personal or org).
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-end gap-2">
-        <label className="flex flex-col gap-1">
-          <span className="text-caption text-text-faint">account</span>
-          <select className={inp} value={account} onChange={(e) => setAccount(e.target.value as 'personal' | 'org')}>
-            <option value="personal">Personal</option>
-            <option value="org">Organization</option>
-          </select>
-        </label>
-        {account === 'org' && (
-          <label className="flex flex-col gap-1">
-            <span className="text-caption text-text-faint">org login</span>
-            <input className={inp} value={org} onChange={(e) => setOrg(e.target.value)} placeholder="XgeniousLLC" />
-          </label>
-        )}
-        <Button variant="primary" size="sm" onClick={createApp} disabled={account === 'org' && !org}>
-          Create GitHub App
-        </Button>
-      </div>
-      <div className="text-caption text-text-muted">
-        Creates a least-privilege App (contents + metadata, read-only) under your {account} account, then install it on repos.
-      </div>
-      <ManualLink projectId={projectId} />
-    </div>
-  );
-}
-
-function ManualLink({ projectId }: { projectId: string }) {
-  const [open, setOpen] = React.useState(false);
-  if (!open)
-    return (
-      <button onClick={() => setOpen(true)} className="text-left text-caption text-text-faint hover:text-accent">
-        or link a repo manually →
-      </button>
-    );
-  return <GithubLink projectId={projectId} />;
-}
-
-function GithubLink({ projectId }: { projectId: string }) {
-  const qc = useQueryClient();
-  const repo = useQuery({
-    queryKey: ['repo', projectId],
-    queryFn: () => api<{ owner: string; name: string; defaultBranch: string } | null>(`/projects/${projectId}/repository`),
-  });
-  const [owner, setOwner] = React.useState('XgeniousLLC');
-  const [name, setName] = React.useState('taskip');
-  const [branch, setBranch] = React.useState('main');
-  const [commitSha, setCommitSha] = React.useState('ab12cd34');
-
-  const link = useMutation({
-    mutationFn: () =>
-      api(`/projects/${projectId}/repository`, {
-        method: 'POST',
-        body: JSON.stringify({ owner, name, defaultBranch: branch, releaseVersion: 'ab12cd34', commitSha }),
-      }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['repo', projectId] }),
-  });
-
-  if (repo.isLoading) return <Skeleton className="h-8 w-full" />;
-
-  if (repo.data) {
-    return (
-      <div className="flex items-center justify-between text-small">
-        <div>
-          <span className="font-mono text-text">
-            {repo.data.owner}/{repo.data.name}
-          </span>
-          <span className="ml-2 text-text-muted">@ {repo.data.defaultBranch}</span>
-        </div>
-        <span className="text-status-resolved">connected · frame deep-links on</span>
-      </div>
-    );
-  }
-
-  const inp = 'h-8 rounded-md border border-border bg-bg px-2 text-small text-text';
-  return (
-    <div className="flex flex-wrap items-end gap-2">
-      <label className="flex flex-col gap-1">
-        <span className="text-caption text-text-faint">owner</span>
-        <input className={inp} value={owner} onChange={(e) => setOwner(e.target.value)} />
-      </label>
-      <label className="flex flex-col gap-1">
-        <span className="text-caption text-text-faint">repo</span>
-        <input className={inp} value={name} onChange={(e) => setName(e.target.value)} />
-      </label>
-      <label className="flex flex-col gap-1">
-        <span className="text-caption text-text-faint">branch</span>
-        <input className={inp} value={branch} onChange={(e) => setBranch(e.target.value)} />
-      </label>
-      <label className="flex flex-col gap-1">
-        <span className="text-caption text-text-faint">commit (release ab12cd34)</span>
-        <input className={inp} value={commitSha} onChange={(e) => setCommitSha(e.target.value)} />
-      </label>
-      <Button variant="primary" size="sm" disabled={link.isPending} onClick={() => link.mutate()}>
-        {link.isPending ? 'Linking…' : 'Connect repository'}
-      </Button>
-    </div>
-  );
-}
 
 function Section({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
   return (
