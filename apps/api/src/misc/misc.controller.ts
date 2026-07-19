@@ -6,6 +6,7 @@ import { JwtGuard, type AuthPrincipal } from '../auth/jwt.guard';
 import { accessibleProjectIds, assertProjectAccess } from '../access';
 import { getObject } from '../r2';
 import { decodeReplayEvents } from './replay-decode';
+import { countDrop } from '../drops';
 
 /** Read endpoints backing the Trace / Replay / Alerts pages (FR-TRC/FR-RPL/FR-ALR). */
 @Controller()
@@ -103,6 +104,8 @@ export class MiscController {
       }
     }
     if (events.length === 0) {
+      // Observability (NFR-MNT-2): a blob existed but nothing decoded → count it.
+      if (segs.some((s) => s.r2Prefix?.startsWith('blobs/'))) await countDrop(row.projectId, 'replay_decode_failed');
       return { events: [], reason: segs.some((s) => s.r2Prefix?.startsWith('blobs/')) ? 'blob unavailable (R2 unconfigured or missing)' : 'no recording blob in R2' };
     }
     return { events, segments: fetched };

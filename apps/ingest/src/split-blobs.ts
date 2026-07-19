@@ -1,6 +1,10 @@
 import { putObject, r2Configured } from './r2';
 
 const STREAM_THRESHOLD = Number(process.env.BLOB_STREAM_THRESHOLD ?? 200 * 1024); // 200 KiB
+// Ops lever (FR-RPL / cost): 'all' (default) streams every replay_recording to R2
+// so playback works; 'oversized' reverts to threshold-only if write volume spikes
+// (e.g. session sampling turned on). Attachments always follow the threshold.
+const REPLAY_R2 = (process.env.REPLAY_R2 ?? 'all').toLowerCase();
 
 export interface BlobPointer {
   type: string; // replay_recording | attachment
@@ -90,7 +94,8 @@ export async function splitOversizedBlobs(
 
     const size = header.length ?? payload.length;
     const toR2 =
-      header.type === 'replay_recording' || (header.type === 'attachment' && size > STREAM_THRESHOLD);
+      (header.type === 'replay_recording' && (REPLAY_R2 !== 'oversized' || size > STREAM_THRESHOLD)) ||
+      (header.type === 'attachment' && size > STREAM_THRESHOLD);
 
     if (toR2) {
       const r2Key = `blobs/${projectId}/${eventId ?? 'e'}/${idx}-${header.type}`;
