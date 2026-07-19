@@ -109,6 +109,26 @@ export class GithubService {
     return body.map((c) => ({ sha: c.sha, message: c.commit.message, author: c.commit.author.name, date: c.commit.author.date, url: c.html_url }));
   }
 
+  /**
+   * Fetch a file's text at a given ref (commit sha or branch) for AI grounding
+   * (FR-AIF P2). Returns null on any error so the caller degrades gracefully.
+   */
+  async getFileContent(installToken: string, owner: string, repo: string, path: string, ref?: string): Promise<string | null> {
+    const q = ref ? `?ref=${encodeURIComponent(ref)}` : '';
+    const res = await fetch(`${GH_API}/repos/${owner}/${repo}/contents/${encodeURIComponent(path).replace(/%2F/g, '/')}${q}`, {
+      headers: { authorization: `Bearer ${installToken}`, accept: 'application/vnd.github+json', 'user-agent': GH_UA },
+    }).catch(() => null);
+    if (!res || !res.ok) return null;
+    const body = (await res.json().catch(() => null)) as { content?: string; encoding?: string; size?: number } | null;
+    if (!body?.content || body.encoding !== 'base64') return null;
+    if ((body.size ?? 0) > 400_000) return null; // skip huge files
+    try {
+      return Buffer.from(body.content, 'base64').toString('utf8');
+    } catch {
+      return null;
+    }
+  }
+
   /** Create a GitHub Issue prefilled from a geniusDebug issue (FR-GH-6). */
   async createIssue(installToken: string, owner: string, repo: string, title: string, body: string): Promise<string> {
     const res = await fetch(`${GH_API}/repos/${owner}/${repo}/issues`, {

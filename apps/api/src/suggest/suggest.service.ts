@@ -1,9 +1,11 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { db, issues, events, fixSuggestions } from '@geniusdebug/db';
+import { db, issues, events, fixSuggestions, repositories, releases } from '@geniusdebug/db';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import type { AuthPrincipal } from '../auth/jwt.guard';
 import { accessibleProjectIds } from '../access';
+import { GithubService } from '../github/github.service';
 import { deepseekJson, deepseekConfigured } from './deepseek';
+import { redact, REDACT_PATH } from './redact';
 
 interface Frame {
   filename?: string;
@@ -36,6 +38,8 @@ const SYSTEM = [
 
 @Injectable()
 export class SuggestService {
+  constructor(private readonly gh: GithubService) {}
+
   private async resolveIssue(user: AuthPrincipal, shortId: string) {
     const pids = await accessibleProjectIds(user);
     if (pids.length === 0) throw new NotFoundException('issue not found');
@@ -78,7 +82,9 @@ export class SuggestService {
       return { suggestion: null, reason: 'DeepSeek not configured — add an API key in Settings → Integrations.' };
     }
 
-    const prompt = this.buildPrompt(issue, latestEvent);
+    // P2: pull real source windows from the linked GitHub repo at the release commit.
+    const sources = await this.fetchSources(issue, latestEvent, user.orgId);
+    const prompt = this.buildPrompt(issue, latestEvent, sources);
     const res = await deepseekJson<RawSuggestion>(SYSTEM, prompt);
     if (!res.ok || !res.data) return { suggestion: null, reason: res.reason ?? 'no suggestion produced' };
 
@@ -102,7 +108,7 @@ export class SuggestService {
           patches,
           testSuggestion: d.testSuggestion ?? null,
           needMoreContext: (d.needMoreContext ?? []).slice(0, 10),
-          meta: { usage: res.usage },
+          meta: { usage: res.usage, baseSha: sources.baseSha, sourceFiles: sources.windows.map((w) => w.path) },
           createdBy: user.userId,
         })
         .returning()
@@ -111,7 +117,60 @@ export class SuggestService {
     return { suggestion: inserted, cached: false };
   }
 
-  private buildPrompt(issue: typeof issues.$inferSelect, ev?: typeof events.$inferSelect): string {
+  /**
+   * Fetch ±40-line source windows for the top in-app frames from the linked repo
+   * at the release commit (else default branch). Redacts secrets. Degrades to no
+   * windows if no repo/token — P1 grounding (stored context) still applies.
+   */
+  private async fetchSources(
+    issue: typeof issues.$inferSelect,
+    ev: typeof events.$inferSelect | undefined,
+    orgId: string,
+  ): Promise<{ baseSha?: string; windows: { path: string; startLine: number; code: string }[] }> {
+    const exc = (ev?.exception as { frames?: Frame[] }) ?? {};
+    const frames = (exc.frames ?? []).filter((f) => f.inApp && f.filename && f.lineno).slice(-3);
+    if (frames.length === 0) return { windows: [] };
+
+    const repo = (await db.select().from(repositories).where(eq(repositories.projectId, issue.projectId)).limit(1))[0];
+    if (!repo || !repo.installationId) return { windows: [] };
+    const token = await this.gh.installationTokenForOrg(orgId, repo.installationId);
+    if (!token) return { windows: [] };
+
+    // Prefer the errored release's commit; else the repo default branch.
+    let baseSha: string | undefined;
+    if (issue.firstReleaseId) {
+      const rel = (await db.select({ sha: releases.commitSha }).from(releases).where(eq(releases.id, issue.firstReleaseId)).limit(1))[0];
+      baseSha = rel?.sha ?? undefined;
+    }
+    const ref = baseSha ?? repo.defaultBranch;
+
+    const windows: { path: string; startLine: number; code: string }[] = [];
+    const seen = new Set<string>();
+    for (const f of frames) {
+      const path = (f.filename ?? '').replace(/^\.\//, '').replace(/^webpack:\/+/, '').replace(/^\/+/, '');
+      if (!path || seen.has(path) || REDACT_PATH.test(path)) continue;
+      seen.add(path);
+      const content = await this.gh.getFileContent(token, repo.owner, repo.name, path, ref);
+      if (!content) continue;
+      const lines = content.split('\n');
+      const line = f.lineno ?? 1;
+      const start = Math.max(1, line - 40);
+      const end = Math.min(lines.length, line + 40);
+      const code = lines
+        .slice(start - 1, end)
+        .map((l, i) => `${start + i === line ? '>' : ' '} ${start + i}| ${redact(l)}`)
+        .join('\n');
+      windows.push({ path, startLine: start, code });
+      if (windows.length >= 3) break;
+    }
+    return { baseSha, windows };
+  }
+
+  private buildPrompt(
+    issue: typeof issues.$inferSelect,
+    ev?: typeof events.$inferSelect,
+    sources?: { baseSha?: string; windows: { path: string; startLine: number; code: string }[] },
+  ): string {
     const exc = (ev?.exception as { type?: string; value?: string; frames?: Frame[] }) ?? {};
     const frames = (exc.frames ?? []).filter((f) => f.inApp).slice(-3);
     const framesText = (frames.length ? frames : (exc.frames ?? []).slice(-2))
@@ -128,6 +187,10 @@ export class SuggestService {
       })
       .join('\n\n');
 
+    const repoSource = (sources?.windows ?? [])
+      .map((w) => `### ${w.path} @ ${sources?.baseSha ? sources.baseSha.slice(0, 8) : 'default branch'}\n${w.code}`)
+      .join('\n\n');
+
     return [
       `## Error`,
       `type: ${exc.type ?? issue.type ?? 'Error'}`,
@@ -137,10 +200,13 @@ export class SuggestService {
       `culprit: ${issue.culprit ?? '(unknown)'}`,
       `transaction: ${ev?.transaction ?? '(none)'}`,
       ``,
-      `## In-app stack frames (source context, closest to the crash last)`,
+      `## In-app stack frames (source context from the event, closest to the crash last)`,
       framesText || '(no stack frames available)',
+      ...(repoSource
+        ? [``, `## Repository source at the errored revision (line-numbered; > marks the crash line)`, repoSource]
+        : []),
       ``,
-      `Diagnose the root cause and propose a minimal fix as described in the system message.`,
+      `Diagnose the root cause and propose a minimal fix. Only touch files/lines present in the provided source above.`,
     ].join('\n');
   }
 }
