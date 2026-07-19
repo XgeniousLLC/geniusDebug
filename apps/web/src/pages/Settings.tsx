@@ -459,11 +459,14 @@ interface Member {
 }
 function Members() {
   const qc = useQueryClient();
+  const { currentProjectId } = useUi();
   const members = useQuery({ queryKey: ['members'], queryFn: () => api<Member[]>('/members') });
   const allProjects = useQuery({ queryKey: ['projects'], queryFn: () => api<{ id: string; name: string }[]>('/projects') });
+  const projectList = allProjects.data ?? [];
+  // Invitations are project-scoped — the invitee auto-gets access to the current project.
+  const inviteProject = projectList.find((p) => p.id === currentProjectId) ?? projectList[0];
   const [name, setName] = React.useState('');
   const [email, setEmail] = React.useState('');
-  const [openAccess, setOpenAccess] = React.useState<string | null>(null);
 
   const [inviteLink, setInviteLink] = React.useState<string | null>(null);
   const [msg, setMsg] = React.useState<{ ok: boolean; text: string } | null>(null);
@@ -471,16 +474,16 @@ function Members() {
     mutationFn: () =>
       api<{ ok: boolean; id: string; emailSent?: boolean; inviteLink?: string; reason?: string }>('/members', {
         method: 'POST',
-        body: JSON.stringify({ name, email, role: 'member' }),
+        body: JSON.stringify({ name, email, role: 'member', projectIds: inviteProject ? [inviteProject.id] : [] }),
       }),
     onSuccess: (r) => {
       setName('');
       setEmail('');
       qc.invalidateQueries({ queryKey: ['members'] });
-      setOpenAccess(r.id); // prompt admin to grant project access right away
       // SES unset → no email went out; surface the link so the admin can share it.
       setInviteLink(r.emailSent ? null : r.inviteLink ?? null);
-      setMsg({ ok: true, text: r.emailSent ? `Invite emailed to ${email}.` : `Invite created — share the link below${r.reason ? ` (${r.reason})` : ''}.` });
+      const scope = inviteProject ? ` with access to ${inviteProject.name}` : '';
+      setMsg({ ok: true, text: r.emailSent ? `Invite emailed to ${email}${scope}.` : `Invite created${scope} — share the link below${r.reason ? ` (${r.reason})` : ''}.` });
     },
     onError: (e) => setMsg({ ok: false, text: e instanceof ApiError ? e.message : 'invite failed' }),
   });
@@ -527,14 +530,6 @@ function Members() {
                     reinvite
                   </button>
                 )}
-                {m.role === 'member' && (
-                  <button
-                    onClick={() => setOpenAccess((o) => (o === m.id ? null : m.id))}
-                    className="text-caption text-accent hover:underline"
-                  >
-                    {openAccess === m.id ? 'Hide access' : 'Project access'}
-                  </button>
-                )}
                 <select
                   value={m.role}
                   onChange={(e) => role.mutate({ id: m.id, role: e.target.value })}
@@ -548,11 +543,13 @@ function Members() {
                 </button>
               </div>
             </div>
-            {m.role === 'member' && openAccess === m.id && (
-              <MemberProjects userId={m.id} projects={allProjects.data ?? []} />
-            )}
           </div>
         ))}
+      </div>
+      <div className="mb-1 text-caption text-text-faint">
+        {inviteProject
+          ? <>Invite grants access to <span className="font-mono text-text-muted">{inviteProject.name}</span> (the current project). Switch projects in the sidebar to invite elsewhere.</>
+          : 'Create a project first to invite members.'}
       </div>
       <div className="flex items-end gap-2">
         <label className="flex flex-col gap-1">
@@ -563,7 +560,7 @@ function Members() {
           <span className="text-caption text-text-faint">email</span>
           <input className={inp} value={email} onChange={(e) => setEmail(e.target.value)} />
         </label>
-        <Button size="sm" variant="primary" disabled={invite.isPending || !name || !email} onClick={() => { setMsg(null); invite.mutate(); }}>
+        <Button size="sm" variant="primary" disabled={invite.isPending || !name || !email || !inviteProject} onClick={() => { setMsg(null); invite.mutate(); }}>
           {invite.isPending ? 'Inviting…' : 'Invite'}
         </Button>
       </div>
@@ -581,66 +578,10 @@ function Members() {
           </div>
         </div>
       )}
-      <p className="mt-2 text-caption text-text-faint">Members see only the projects granted here. Admins have access to every project.</p>
+      <p className="mt-2 text-caption text-text-faint">Members see only the project they were invited to. Admins have access to every project.</p>
     </div>
   );
 }
-
-/** Admin control: which projects a member can access (NFR-SEC-6). */
-function MemberProjects({ userId, projects }: { userId: string; projects: { id: string; name: string }[] }) {
-  const qc = useQueryClient();
-  const granted = useQuery({
-    queryKey: ['member-projects', userId],
-    queryFn: () => api<{ projectIds: string[] }>(`/members/${userId}/projects`),
-  });
-  const [sel, setSel] = React.useState<Set<string> | null>(null);
-  React.useEffect(() => {
-    if (granted.data) setSel(new Set(granted.data.projectIds));
-  }, [granted.data]);
-
-  const save = useMutation({
-    mutationFn: (ids: string[]) => api(`/members/${userId}/projects`, { method: 'POST', body: JSON.stringify({ projectIds: ids }) }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['member-projects', userId] });
-      qc.invalidateQueries({ queryKey: ['projects'] });
-    },
-  });
-
-  if (granted.isLoading || !sel) return <div className="px-3 py-2"><Skeleton className="h-8 w-full" /></div>;
-
-  function toggle(id: string) {
-    setSel((s) => {
-      const n = new Set(s);
-      n.has(id) ? n.delete(id) : n.add(id);
-      return n;
-    });
-  }
-
-  return (
-    <div className="border-t border-border bg-bg/40 px-3 py-3">
-      <div className="mb-2 text-caption uppercase text-text-faint">Project access</div>
-      {projects.length === 0 ? (
-        <div className="text-caption text-text-muted">No projects.</div>
-      ) : (
-        <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-          {projects.map((p) => (
-            <label key={p.id} className="flex items-center gap-1.5 text-small text-text">
-              <input type="checkbox" checked={sel.has(p.id)} onChange={() => toggle(p.id)} className="accent-accent" />
-              {p.name}
-            </label>
-          ))}
-        </div>
-      )}
-      <div className="mt-3 flex items-center gap-2">
-        <Button size="sm" variant="primary" disabled={save.isPending} onClick={() => save.mutate([...sel])}>
-          {save.isPending ? 'Saving…' : 'Save access'}
-        </Button>
-        {save.isSuccess && <span className="text-caption text-status-resolved">Saved.</span>}
-      </div>
-    </div>
-  );
-}
-
 
 function Section({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
   return (
