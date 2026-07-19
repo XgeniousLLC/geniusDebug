@@ -164,6 +164,24 @@ async function processEvent(projectId: string, payload: SentryEventPayload): Pro
     spanId: symbolicated.spanId,
   });
 
+  // Ensure a trace row exists so "Open trace waterfall" (FR-TRC-4) resolves even
+  // when only an error — no `transaction` item — carried the trace context. A real
+  // transaction arriving later still inserts its spans (waterfall reads the spans
+  // table, not this row); onConflictDoNothing keeps whichever row landed first.
+  if (symbolicated.traceId) {
+    await db
+      .insert(traces)
+      .values({
+        traceId: symbolicated.traceId,
+        projectId,
+        rootTransaction: symbolicated.transaction ?? null,
+        startTs: seenAt,
+        endTs: seenAt,
+        platform: symbolicated.platform,
+      })
+      .onConflictDoNothing({ target: [traces.traceId] });
+  }
+
   // Time-series bucket (FR-RET-2).
   const bucket = new Date(seenAt);
   bucket.setMinutes(0, 0, 0);

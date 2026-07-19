@@ -16,52 +16,79 @@ export interface SplitResult {
   blobs: BlobPointer[];
 }
 
+const NL = 0x0a; // '\n'
+
 /**
- * Stream oversized replay_recording/attachment items straight to R2 and enqueue
- * only a pointer (FR-ING-4/FR-RPL-2) — the big blob never sits in the queue.
- * Falls back to leaving items inline when R2 isn't configured (local dev) or when
- * there are no oversized blobs, so behavior is unchanged in that case.
+ * Stream blob items straight to R2 and enqueue only a pointer (FR-ING-4/FR-RPL-2)
+ * — the blob never sits in the queue.
+ *
+ * Policy: **every `replay_recording`** goes to R2 (any size) so replay DOM
+ * playback has the rrweb blob (FR-RPL); `attachment` goes to R2 only when
+ * oversized. Falls back to leaving items inline when R2 isn't configured (local
+ * dev), so behavior is unchanged there.
+ *
+ * Byte-accurate framing: item payloads are length-prefixed binary (compressed
+ * rrweb contains `\n`). We honor the item-header `length` and store the RAW
+ * payload bytes — a `\n` split + utf8 re-encode corrupted the blob and the inline
+ * envelope.
  */
 export async function splitOversizedBlobs(bytes: Buffer, projectId: string, eventId?: string): Promise<SplitResult> {
   if (!(await r2Configured())) return { inline: bytes, blobs: [] };
 
-  const text = bytes.toString('utf8');
-  const nl = text.indexOf('\n');
-  if (nl < 0) return { inline: bytes, blobs: [] };
+  const firstNl = bytes.indexOf(NL);
+  if (firstNl < 0) return { inline: bytes, blobs: [] };
 
-  const headerLine = text.slice(0, nl);
-  const lines = text.slice(nl + 1).split('\n');
-  const kept: string[] = [];
+  const headerLine = bytes.subarray(0, firstNl); // envelope header (raw)
+  const kept: Buffer[] = []; // raw item chunks (header\n + payload\n) kept inline
   const blobs: BlobPointer[] = [];
   let idx = 0;
+  let offset = firstNl + 1;
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (line.trim() === '') continue;
+  while (offset < bytes.length) {
+    if (bytes[offset] === NL) {
+      offset++;
+      continue; // stray framing newline
+    }
+    const hNl = bytes.indexOf(NL, offset);
+    const headerEnd = hNl < 0 ? bytes.length : hNl;
     let header: { type?: string; length?: number; filename?: string };
     try {
-      header = JSON.parse(line);
+      header = JSON.parse(bytes.subarray(offset, headerEnd).toString('utf8'));
     } catch {
-      kept.push(line); // leave anything we can't parse untouched
+      kept.push(bytes.subarray(offset, headerEnd + 1)); // leave unparsable line untouched
+      offset = headerEnd + 1;
       continue;
     }
-    const payload = lines[i + 1] ?? '';
-    i++; // consume payload line
-    const size = header.length ?? Buffer.byteLength(payload, 'utf8');
-    const isBlob = header.type === 'replay_recording' || header.type === 'attachment';
 
-    if (isBlob && size > STREAM_THRESHOLD) {
+    const payloadStart = headerEnd + 1;
+    const payloadEnd =
+      typeof header.length === 'number'
+        ? payloadStart + header.length
+        : (() => {
+            const pNl = bytes.indexOf(NL, payloadStart);
+            return pNl < 0 ? bytes.length : pNl;
+          })();
+    const payload = bytes.subarray(payloadStart, payloadEnd);
+    let next = payloadEnd;
+    if (bytes[next] === NL) next++; // consume trailing framing newline
+
+    const size = header.length ?? payload.length;
+    const toR2 =
+      header.type === 'replay_recording' || (header.type === 'attachment' && size > STREAM_THRESHOLD);
+
+    if (toR2) {
       const r2Key = `blobs/${projectId}/${eventId ?? 'e'}/${idx}-${header.type}`;
-      await putObject(r2Key, Buffer.from(payload, 'utf8'));
+      await putObject(r2Key, payload); // raw bytes — binary-safe
       blobs.push({ type: header.type!, r2Key, size, filename: header.filename });
       idx++;
       // Drop the item from the inline envelope (pointer travels on the job).
     } else {
-      kept.push(line, payload);
+      kept.push(bytes.subarray(offset, next)); // raw header\n + payload\n
     }
+    offset = next;
   }
 
   if (blobs.length === 0) return { inline: bytes, blobs: [] };
-  const inline = Buffer.from(`${headerLine}\n${kept.join('\n')}\n`, 'utf8');
+  const inline = Buffer.concat([headerLine, Buffer.from('\n'), ...kept]);
   return { inline, blobs };
 }

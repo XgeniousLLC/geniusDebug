@@ -61,7 +61,26 @@ function TraceWaterfall({ traceId }: { traceId: string }) {
       </div>
 
       {spans.length === 0 ? (
-        <EmptyState title="No spans recorded" hint="Transactions arrive as `transaction` envelope items (FR-TRC-1)." />
+        (q.data?.errors.length ?? 0) > 0 ? (
+          <Card className="p-4">
+            <h2 className="mb-1 text-h2 font-semibold">Error in this trace</h2>
+            <p className="mb-3 text-small text-text-muted">
+              No performance spans — this trace carried an error but no `transaction` item (FR-TRC-1). Send transactions
+              (set `tracesSampleRate` &gt; 0 in the SDK) to see the full waterfall.
+            </p>
+            <div className="flex flex-col gap-1">
+              {q.data!.errors.map((e) => (
+                <div key={e.id} className="flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-small">
+                  <span className={`h-2 w-2 rounded-full ${e.level === 'error' || e.level === 'fatal' ? 'bg-level-error' : 'bg-level-warning'}`} />
+                  <span className="truncate text-text">{e.message ?? '(no message)'}</span>
+                  <span className="ml-auto font-mono text-caption text-text-faint">{e.id.slice(0, 8)}</span>
+                </div>
+              ))}
+            </div>
+          </Card>
+        ) : (
+          <EmptyState title="No spans recorded" hint="Transactions arrive as `transaction` envelope items (FR-TRC-1)." />
+        )
       ) : (
         <Card className="p-2">
           {spans.map((s) => {

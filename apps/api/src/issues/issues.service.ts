@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { db, issues, events, environments, issueActivity, users, issueCounts } from '@geniusdebug/db';
-import { and, eq, desc, asc, ilike, or, inArray } from 'drizzle-orm';
+import { and, eq, desc, asc, ilike, or, inArray, gte } from 'drizzle-orm';
 import type { IssueDto, EventDto, IssueListQuery, IssueActionInput } from '@geniusdebug/shared';
 import type { AuthPrincipal } from '../auth/jwt.guard';
 import { accessibleProjectIds } from '../access';
@@ -24,6 +24,11 @@ export class IssuesService {
     if (q.query) {
       const like = `%${q.query}%`;
       conds.push(or(ilike(issues.title, like), ilike(issues.culprit, like), ilike(issues.shortId, like))!);
+    }
+    // Time window (FR-UI-2): keep issues seen within the range; 'all'/undefined = no bound.
+    const windowMs: Record<string, number> = { '24h': 864e5, '7d': 6048e5, '14d': 12096e5, '30d': 2592e6 };
+    if (q.range && q.range !== 'all' && windowMs[q.range]) {
+      conds.push(gte(issues.lastSeen, new Date(Date.now() - windowMs[q.range])));
     }
     // Environment filter (FR-UI-2): issues with an event in that environment.
     if (q.environment && q.environment !== 'all') {

@@ -7,13 +7,24 @@ interface UiState {
   user: AuthUserDto | null;
   theme: 'dark' | 'light';
   environment: string; // global env filter (brief §3)
+  range: IssueRange; // global time-range filter (brief §7)
   currentProjectId: string | null; // active project (multi-project switcher)
   setAuth: (token: string, user: AuthUserDto) => void;
   signOut: () => void;
   toggleTheme: () => void;
   setEnvironment: (e: string) => void;
+  setRange: (r: IssueRange) => void;
   setCurrentProject: (id: string | null) => void;
 }
+
+export type IssueRange = '24h' | '7d' | '14d' | '30d' | 'all';
+export const RANGE_LABELS: Record<IssueRange, string> = {
+  '24h': 'Last 24h',
+  '7d': 'Last 7 days',
+  '14d': 'Last 14 days',
+  '30d': 'Last 30 days',
+  all: 'Since First Seen',
+};
 
 export const useUi = create<UiState>()(
   persist(
@@ -21,6 +32,7 @@ export const useUi = create<UiState>()(
       user: null,
       theme: 'dark',
       environment: 'all',
+      range: 'all',
       currentProjectId: null,
       setAuth: (token, user) => {
         setToken(token);
@@ -36,12 +48,13 @@ export const useUi = create<UiState>()(
         set({ theme: next });
       },
       setEnvironment: (environment) => set({ environment }),
+      setRange: (range) => set({ range }),
       // Switching project resets the env filter — envs are per-project.
       setCurrentProject: (currentProjectId) => set({ currentProjectId, environment: 'all' }),
     }),
     {
       name: 'gd_ui',
-      partialize: (s) => ({ user: s.user, theme: s.theme, environment: s.environment, currentProjectId: s.currentProjectId }),
+      partialize: (s) => ({ user: s.user, theme: s.theme, environment: s.environment, range: s.range, currentProjectId: s.currentProjectId }),
       // Reapply the theme once persisted state rehydrates (survives hard reloads).
       onRehydrateStorage: () => (state) => {
         if (state) applyTheme(state.theme);

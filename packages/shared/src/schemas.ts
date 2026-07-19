@@ -28,6 +28,8 @@ export const issueListQuerySchema = z.object({
   status: z.enum(['unresolved', 'resolved', 'archived', 'muted', 'all']).optional(),
   query: z.string().optional(),
   sort: z.enum(['lastSeen', 'firstSeen', 'events', 'users']).optional(),
+  // Time window on last-seen (FR-UI-2): 'all' = Since First Seen (no bound).
+  range: z.enum(['24h', '7d', '14d', '30d', 'all']).optional(),
   limit: z.coerce.number().min(1).max(100).optional(),
 });
 export type IssueListQuery = z.infer<typeof issueListQuerySchema>;
