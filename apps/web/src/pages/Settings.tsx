@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
+import { buildDsn } from '../lib/ingest';
 import { useUi } from '../store/ui';
 import { Button, Card, IdChip, Skeleton } from '../components/ui';
 import { NoProject } from '../components/NoProject';
@@ -61,8 +62,7 @@ export function Settings() {
 
   if (projects.isLoading) return <div className="p-6"><Skeleton className="h-40 w-full" /></div>;
   const dsn = keys.data?.[0];
-  const host = window.location.hostname + ':4001';
-  const dsnUrl = dsn && project ? `https://${dsn.publicKey}@${host}/${project.id}` : '…';
+  const dsnUrl = dsn && project ? buildDsn(dsn.publicKey, project.id) : '…';
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-5">

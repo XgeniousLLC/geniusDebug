@@ -548,6 +548,17 @@ GitHub advanced (GD-043/44/45) code-complete; live needs a GitHub App install.
 - GD-088: extracted the whole GitHub flow (`GithubApp`+`ManualLink`+`GithubLink`) from Settings.tsx into shared `components/GithubConnect.tsx` (export `GithubConnect`); Settings imports it. Added a "Connect a GitHub repo" `Card` to `ProjectSetup` (`/projects/:id/setup`) after the SDK guide — repo linking is now part of the post-create onboarding. Manual link works inline on the setup page; the App-install redirect still lands on `/settings?installation_id=` (repo picker appears there) — acceptable seam, not changed.
 - api+web+db typecheck clean; web prod build clean (116 modules); 19 tests green (6 ingest + 13 workers). Needs api+web redeploy on Coolify.
 
+## Sprint 23 — Fix prod DSN host (ingest unreachable)
+**Status:** COMPLETE
+**Started:** 2026-07-19
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-095 | DSN host from VITE_INGEST_ORIGIN, not web-host:4001 | DONE | HIGH | prod DSN pointed browsers at `debug.taskip.net:4001` (web host + raw container port) → connection refused; Coolify/Traefik only publish ingest on its own domain over 443. New `lib/ingest.ts` (ingestHost/buildDsn) reads `VITE_INGEST_ORIGIN` (dev fallback localhost:4001); rewired IntegrationGuide/Settings/Onboarding. **Coolify: give ingest app domain `ingest.<domain>` (Domains `https://ingest.<domain>:4001`), DNS → server IP, set web build-arg `VITE_INGEST_ORIGIN=https://ingest.<domain>`.** |
+
+### Sprint Stats
+- Total: 1  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 1  /  BLOCKED: 0
+
 ## Sprint 22 — Revert to 1 app/repo per project, project rename, member invite UX, email 500 fix
 **Status:** COMPLETE
 **Started:** 2026-07-19

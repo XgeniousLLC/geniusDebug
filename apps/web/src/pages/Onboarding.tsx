@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { IssueDto } from '@geniusdebug/shared';
 import { api } from '../lib/api';
+import { buildDsn } from '../lib/ingest';
 import { Card, Button, Skeleton } from '../components/ui';
 import { CheckIcon } from '../components/icons';
 
@@ -22,8 +23,7 @@ export function Onboarding() {
   });
 
   const dsn = keys.data?.[0]?.publicKey;
-  const host = `${window.location.hostname}:4001`;
-  const dsnUrl = dsn && projectId ? `https://${dsn}@${host}/${projectId}` : '…';
+  const dsnUrl = dsn && projectId ? buildDsn(dsn, projectId) : '…';
   const gotEvent = (issues.data?.length ?? 0) > 0;
 
   return (
