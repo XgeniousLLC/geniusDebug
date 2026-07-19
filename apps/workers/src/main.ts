@@ -5,7 +5,7 @@ import IORedis from 'ioredis';
 import { parseEnvelope } from './parse-envelope';
 import { processEnvelope } from './processor';
 import { purge } from './retention';
-import { recordLatency } from './metrics';
+import { recordLatency, countDrop } from './metrics';
 import {
   redisOptions,
   wantsHtml,
@@ -47,7 +47,14 @@ const worker = new Worker<IngestJob>(
   async (job) => {
     const started = Date.now();
     const bytes = Buffer.from(job.data.envelopeB64, 'base64');
-    const parsed = parseEnvelope(bytes);
+    let parsed;
+    try {
+      parsed = parseEnvelope(bytes);
+    } catch (err) {
+      // Framing corrupt (e.g. bad header JSON) — count + dead-letter, never loop.
+      await countDrop(job.data.projectId, 'envelope_parse_error').catch(() => {});
+      throw err;
+    }
     // Back-pressure: shed low-value items when the queue is deep (FR-WRK-4).
     const waiting = await ingestQueue.getWaitingCount().catch(() => 0);
     await processEnvelope(job.data.projectId, parsed, { shedLowValue: waiting > SHED_THRESHOLD, blobs: job.data.blobs });

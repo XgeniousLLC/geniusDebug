@@ -64,6 +64,27 @@
       "when": 1784438941962,
       "tag": "0008_lucky_rocket_raccoon",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1784455651294,
+      "tag": "0009_busy_payback",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1784456249986,
+      "tag": "0010_next_joystick",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1784457228152,
+      "tag": "0011_condemned_wither",
+      "breakpoints": true
     }
   ]
 }

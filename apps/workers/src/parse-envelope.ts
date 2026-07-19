@@ -45,7 +45,10 @@ export function parseEnvelope(bytes: Buffer): ParsedEnvelope {
 
     let payload: Buffer;
     if (typeof itemHeader.length === 'number') {
-      // Length-declared payload — read exactly N bytes (binary-safe).
+      // Length-declared payload — read exactly N bytes (binary-safe). A length
+      // that overruns the buffer means a truncated/malformed tail; stop rather
+      // than emit a bogus item.
+      if (itemHeader.length < 0 || offset + itemHeader.length > bytes.length) break;
       payload = bytes.subarray(offset, offset + itemHeader.length);
       offset += itemHeader.length;
       if (bytes[offset] === NL) offset++; // consume the trailing framing newline

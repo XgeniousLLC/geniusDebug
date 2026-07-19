@@ -171,8 +171,10 @@ export function Settings() {
 
 /* ------------------------------ Integrations ------------------------------ */
 
+type IntegrationKind = 'r2' | 'ses' | 'deepseek';
+
 interface IntegrationStatus {
-  kind: 'r2' | 'ses';
+  kind: IntegrationKind;
   connected: boolean;
   source: 'env' | 'dashboard' | 'none';
   config: Record<string, string>;
@@ -182,7 +184,7 @@ interface IntegrationStatus {
 interface Provider {
   id: string; // sub-tab id
   tab: string; // sub-tab label
-  kind?: 'r2' | 'ses'; // undefined = informational-only provider
+  kind?: IntegrationKind; // undefined = informational-only provider
   title: string;
   hint: string;
   fields?: Field[];
@@ -214,6 +216,17 @@ const PROVIDERS: Provider[] = [
       { key: 'from', label: 'From address', placeholder: 'alerts@yourdomain.com', secret: false },
       { key: 'accessKeyId', label: 'Access Key ID', placeholder: '', secret: true },
       { key: 'secretAccessKey', label: 'Secret Access Key', placeholder: '', secret: true },
+    ],
+  },
+  {
+    id: 'deepseek',
+    tab: 'DeepSeek AI',
+    kind: 'deepseek',
+    title: 'DeepSeek (AI fix suggester)',
+    hint: 'Powers the AI "Suggested fix" card on issues (FR-AIF). The API key is encrypted at rest and only used server-side.',
+    fields: [
+      { key: 'model', label: 'Model', placeholder: 'deepseek-chat', secret: false },
+      { key: 'apiKey', label: 'API Key', placeholder: 'sk-…', secret: true },
     ],
   },
   {
@@ -289,7 +302,7 @@ function IntegrationForm({
   status,
   fields,
 }: {
-  kind: 'r2' | 'ses';
+  kind: IntegrationKind;
   isAdmin: boolean;
   status?: IntegrationStatus;
   fields: Field[];

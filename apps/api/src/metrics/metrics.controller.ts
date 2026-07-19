@@ -1,4 +1,4 @@
-import { Controller, ForbiddenException, Get, Param, Req, UseGuards } from '@nestjs/common';
+import { Controller, ForbiddenException, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import IORedis from 'ioredis';
 import { Queue } from 'bullmq';
@@ -45,6 +45,35 @@ export class MetricsController {
       latencyMs: { p50: p(0.5), p95: p(0.95), samples: samples.length },
       dropsToday: drops,
     };
+  }
+
+  /**
+   * Re-drive dead-lettered jobs back onto the ingest queue (ops recovery, e.g.
+   * replays that dead-lettered on the old envelope-parse bug). Admin only.
+   */
+  @Post('metrics/dlq/redrive')
+  async redriveDlq(@Req() req: Request & { user?: AuthPrincipal }, @Query('limit') limit?: string) {
+    if (req.user!.role !== 'admin') throw new ForbiddenException('admin only');
+    const max = Math.min(Math.max(Number(limit) || 500, 1), 5000);
+    const jobs = await dlq.getJobs(['waiting', 'failed', 'completed'], 0, max - 1);
+    let redriven = 0;
+    for (const job of jobs) {
+      if (!job) continue;
+      // Strip the error annotation; re-enqueue the original envelope payload.
+      const { error: _error, ...data } = (job.data ?? {}) as Record<string, unknown> & { error?: string };
+      const eventId = data.eventId as string | undefined;
+      const projectId = data.projectId as string | undefined;
+      await ingestQueue.add('envelope', data, {
+        jobId: eventId && projectId ? `redrive_${projectId}_${eventId}` : undefined,
+        removeOnComplete: 1000,
+        removeOnFail: 5000,
+        attempts: 5,
+        backoff: { type: 'exponential', delay: 1000 },
+      });
+      await job.remove().catch(() => {});
+      redriven++;
+    }
+    return { redriven };
   }
 
   @Get('projects/:id/usage')

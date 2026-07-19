@@ -109,6 +109,105 @@ export class GithubService {
     return body.map((c) => ({ sha: c.sha, message: c.commit.message, author: c.commit.author.name, date: c.commit.author.date, url: c.html_url }));
   }
 
+  /**
+   * Fetch a file's text at a given ref (commit sha or branch) for AI grounding
+   * (FR-AIF P2). Returns null on any error so the caller degrades gracefully.
+   */
+  async getFileContent(installToken: string, owner: string, repo: string, path: string, ref?: string): Promise<string | null> {
+    const q = ref ? `?ref=${encodeURIComponent(ref)}` : '';
+    const res = await fetch(`${GH_API}/repos/${owner}/${repo}/contents/${encodeURIComponent(path).replace(/%2F/g, '/')}${q}`, {
+      headers: { authorization: `Bearer ${installToken}`, accept: 'application/vnd.github+json', 'user-agent': GH_UA },
+    }).catch(() => null);
+    if (!res || !res.ok) return null;
+    const body = (await res.json().catch(() => null)) as { content?: string; encoding?: string; size?: number } | null;
+    if (!body?.content || body.encoding !== 'base64') return null;
+    if ((body.size ?? 0) > 400_000) return null; // skip huge files
+    try {
+      return Buffer.from(body.content, 'base64').toString('utf8');
+    } catch {
+      return null;
+    }
+  }
+
+  /* -------- Draft-PR git flow for the AI suggester (FR-AIF P4) ------------- */
+
+  /** Head commit sha of a branch. */
+  async branchHeadSha(installToken: string, owner: string, repo: string, branch: string): Promise<string | null> {
+    const res = await fetch(`${GH_API}/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(branch)}`, {
+      headers: { authorization: `Bearer ${installToken}`, accept: 'application/vnd.github+json', 'user-agent': GH_UA },
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { object?: { sha?: string } };
+    return body.object?.sha ?? null;
+  }
+
+  /** Create a new branch ref from a sha. Returns false if it already exists (422). */
+  async createBranch(installToken: string, owner: string, repo: string, branch: string, fromSha: string): Promise<boolean> {
+    const res = await fetch(`${GH_API}/repos/${owner}/${repo}/git/refs`, {
+      method: 'POST',
+      headers: this.writeHeaders(installToken),
+      body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: fromSha }),
+    });
+    if (res.status === 422) return false; // already exists
+    if (!res.ok) throw new Error(`create branch failed: ${res.status} ${(await res.text()).slice(0, 200)}`);
+    return true;
+  }
+
+  /** File content + blob sha on a branch (sha needed to update). */
+  async fileMeta(installToken: string, owner: string, repo: string, path: string, ref: string): Promise<{ content: string; sha: string } | null> {
+    const res = await fetch(
+      `${GH_API}/repos/${owner}/${repo}/contents/${encodeURIComponent(path).replace(/%2F/g, '/')}?ref=${encodeURIComponent(ref)}`,
+      { headers: { authorization: `Bearer ${installToken}`, accept: 'application/vnd.github+json', 'user-agent': GH_UA } },
+    );
+    if (!res.ok) return null;
+    const body = (await res.json()) as { content?: string; encoding?: string; sha?: string };
+    if (!body.content || body.encoding !== 'base64' || !body.sha) return null;
+    return { content: Buffer.from(body.content, 'base64').toString('utf8'), sha: body.sha };
+  }
+
+  /** Commit new content to a file on a branch. */
+  async putFile(
+    installToken: string,
+    owner: string,
+    repo: string,
+    path: string,
+    newContent: string,
+    message: string,
+    branch: string,
+    sha: string,
+  ): Promise<void> {
+    const res = await fetch(`${GH_API}/repos/${owner}/${repo}/contents/${encodeURIComponent(path).replace(/%2F/g, '/')}`, {
+      method: 'PUT',
+      headers: this.writeHeaders(installToken),
+      body: JSON.stringify({ message, content: Buffer.from(newContent, 'utf8').toString('base64'), branch, sha }),
+    });
+    if (!res.ok) throw new Error(`commit ${path} failed: ${res.status} ${(await res.text()).slice(0, 200)}`);
+  }
+
+  /** Open a DRAFT pull request. Never ready-for-review, never auto-merge (FR-AIF §3.3). */
+  async createDraftPr(
+    installToken: string,
+    owner: string,
+    repo: string,
+    head: string,
+    base: string,
+    title: string,
+    body: string,
+  ): Promise<string> {
+    const res = await fetch(`${GH_API}/repos/${owner}/${repo}/pulls`, {
+      method: 'POST',
+      headers: this.writeHeaders(installToken),
+      body: JSON.stringify({ title, head, base, body, draft: true }),
+    });
+    if (!res.ok) throw new Error(`create PR failed: ${res.status} ${(await res.text()).slice(0, 200)}`);
+    const created = (await res.json()) as { html_url: string };
+    return created.html_url;
+  }
+
+  private writeHeaders(token: string): Record<string, string> {
+    return { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json', 'content-type': 'application/json', 'user-agent': GH_UA };
+  }
+
   /** Create a GitHub Issue prefilled from a geniusDebug issue (FR-GH-6). */
   async createIssue(installToken: string, owner: string, repo: string, title: string, body: string): Promise<string> {
     const res = await fetch(`${GH_API}/repos/${owner}/${repo}/issues`, {

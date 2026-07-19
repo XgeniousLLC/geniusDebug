@@ -42,9 +42,11 @@ export class GithubController {
       setup_url: `${API_URL}/github/installation/callback`,
       hook_attributes: { url: `${API_URL}/github/webhook`, active: false },
       public: false,
-      // Least-privilege (FR-GH-8): read code for blame/suspect-commits, write
-      // issues so "Create GitHub Issue" (FR-GH-6) works.
-      default_permissions: { contents: 'read', metadata: 'read', issues: 'write' },
+      // Least-privilege (FR-GH-8): metadata read; contents write (read for
+      // blame/suspect-commits + source grounding, write to push AI draft-PR
+      // branches, FR-AIF); issues write (Create GitHub Issue, FR-GH-6); pull
+      // requests write (open draft PRs, FR-AIF §3.3).
+      default_permissions: { contents: 'write', metadata: 'read', issues: 'write', pull_requests: 'write' },
       default_events: [],
     };
     return { postUrl, manifest, state };
@@ -186,11 +188,21 @@ export class GithubController {
     const ctx = await this.issueRepoContext(req.user!, shortId);
     if (!ctx) throw new BadRequestException('issue or repo not found');
     if (!ctx.installationId) throw new BadRequestException('no GitHub App installation');
+    // Dedupe: if a GitHub issue was already created for this issue, return it.
+    const prior = await db
+      .select({ payload: issueActivity.payload })
+      .from(issueActivity)
+      .where(and(eq(issueActivity.issueId, ctx.id), eq(issueActivity.action, 'github_issue')))
+      .limit(1);
+    const priorUrl = (prior[0]?.payload as { url?: string } | undefined)?.url;
+    if (priorUrl) return { ok: true, url: priorUrl, existing: true };
+
     const token = await this.gh.installationTokenForOrg(req.user!.orgId, ctx.installationId);
     if (!token) throw new BadRequestException('no GitHub App installation');
     const body = `**Culprit:** \`${ctx.culprit}\`\n**geniusDebug:** ${WEB_URL}/issues/${shortId}\n\nType: ${ctx.type ?? ''}`;
     try {
       const url = await this.gh.createIssue(token, ctx.owner, ctx.name, ctx.title, body);
+      await db.insert(issueActivity).values({ issueId: ctx.id, userId: req.user!.userId, action: 'github_issue', payload: { url } });
       return { ok: true, url };
     } catch (err) {
       // Surface GitHub's reason (e.g. 403 missing `issues: write`) as a 400 instead of a raw 500.
@@ -235,7 +247,7 @@ export class GithubController {
     const pids = await accessibleProjectIds(user);
     if (pids.length === 0) return null;
     const iss = await db
-      .select({ projectId: issues.projectId, title: issues.title, culprit: issues.culprit, type: issues.type })
+      .select({ id: issues.id, projectId: issues.projectId, title: issues.title, culprit: issues.culprit, type: issues.type })
       .from(issues)
       .where(and(eq(issues.shortId, shortId), inArray(issues.projectId, pids)))
       .limit(1);

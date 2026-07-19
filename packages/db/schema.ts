@@ -142,6 +142,9 @@ export const repositories = pgTable('repositories', {
   name: varchar('name', { length: 160 }).notNull(),
   defaultBranch: varchar('default_branch', { length: 160 }).notNull().default('main'),
   installationId: varchar('installation_id', { length: 120 }),
+  // Opt-in per repo: allow the AI suggester to open DRAFT PRs (FR-AIF §3.3).
+  // Off by default — requires the elevated App perms (contents+PR write).
+  prEnabled: boolean('pr_enabled').notNull().default(false),
   tokenRef: text('token_ref'), // encrypted reference, never plaintext (NFR-SEC-5)
   connectedByUserId: uuid('connected_by_user_id').references(() => users.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
@@ -292,6 +295,9 @@ export const traces = pgTable('traces', {
   environmentId: uuid('environment_id'),
   releaseId: uuid('release_id'),
   platform: varchar('platform', { length: 64 }).notNull().default('javascript'),
+  // Row synthesized from an error that carried a trace context (no `transaction`
+  // item yet). A real transaction overwrites it (FR-TRC-4).
+  synthetic: boolean('synthetic').notNull().default(false),
 });
 
 export const spans = pgTable(
@@ -314,10 +320,14 @@ export const spans = pgTable(
 export const replays = pgTable(
   'replays',
   {
-    id: uuid('id').defaultRandom().primaryKey(), // replay_id
+    id: uuid('id').defaultRandom().primaryKey(),
     projectId: uuid('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
     issueId: uuid('issue_id').references(() => issues.id, { onDelete: 'set null' }),
     eventId: uuid('event_id'),
+    // Sentry replay_id — groups the segments of one session (FR-RPL). One replays
+    // row per (replayId, segmentId); the player assembles all segments in order.
+    replayId: varchar('replay_id', { length: 64 }),
+    segmentId: integer('segment_id').notNull().default(0),
     traceId: varchar('trace_id', { length: 64 }),
     user: jsonb('user').$type<Record<string, unknown>>(),
     startedAt: timestamp('started_at', { withTimezone: true }),
@@ -330,6 +340,54 @@ export const replays = pgTable(
   (t) => ({
     issueIdx: index('replays_issue_idx').on(t.issueId),
     traceIdx: index('replays_trace_idx').on(t.traceId),
+    replayIdx: index('replays_replay_idx').on(t.replayId),
+    // Idempotency: at-least-once delivery must not double-insert a segment (FR-WRK-2).
+    segUq: uniqueIndex('replays_replay_segment_uq').on(t.replayId, t.segmentId),
+  }),
+);
+
+/* ---------------------- AI fix suggestions (FR-AIF) ----------------------- */
+// AI-generated probable-fix suggestions for an issue (DeepSeek). Inert data —
+// no repo mutation happens here (see docs/ai-fix-suggester.md guardrails).
+export const fixSuggestions = pgTable(
+  'fix_suggestions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    issueId: uuid('issue_id').notNull().references(() => issues.id, { onDelete: 'cascade' }),
+    eventId: uuid('event_id'), // the event the suggestion was grounded on
+    model: varchar('model', { length: 80 }).notNull(),
+    rootCause: text('root_cause').notNull(),
+    confidence: varchar('confidence', { length: 12 }).notNull(), // high|medium|low
+    explanation: text('explanation'),
+    evidence: jsonb('evidence').$type<Array<{ path?: string; line?: number; why?: string }>>().default([]),
+    patches: jsonb('patches').$type<Array<{ path: string; unifiedDiff: string }>>().default([]),
+    testSuggestion: text('test_suggestion'),
+    needMoreContext: jsonb('need_more_context').$type<string[]>().default([]),
+    meta: jsonb('meta').$type<Record<string, unknown>>(),
+    createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => ({
+    issueIdx: index('fix_suggestions_issue_idx').on(t.issueId, t.createdAt),
+  }),
+);
+
+// Draft PRs opened from an AI suggestion — the ONLY repo-mutating record
+// (FR-AIF §3). Idempotent per (suggestion, patchHash). Never auto-merged by us.
+export const fixPullRequests = pgTable(
+  'fix_pull_requests',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    suggestionId: uuid('suggestion_id').notNull().references(() => fixSuggestions.id, { onDelete: 'cascade' }),
+    patchHash: varchar('patch_hash', { length: 64 }).notNull(),
+    branch: varchar('branch', { length: 240 }).notNull(),
+    prUrl: text('pr_url').notNull(),
+    status: varchar('status', { length: 16 }).notNull().default('draft'),
+    createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => ({
+    uq: uniqueIndex('fix_prs_suggestion_patch_uq').on(t.suggestionId, t.patchHash),
   }),
 );
 

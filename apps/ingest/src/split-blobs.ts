@@ -1,6 +1,10 @@
 import { putObject, r2Configured } from './r2';
 
 const STREAM_THRESHOLD = Number(process.env.BLOB_STREAM_THRESHOLD ?? 200 * 1024); // 200 KiB
+// Ops lever (FR-RPL / cost): 'all' (default) streams every replay_recording to R2
+// so playback works; 'oversized' reverts to threshold-only if write volume spikes
+// (e.g. session sampling turned on). Attachments always follow the threshold.
+const REPLAY_R2 = (process.env.REPLAY_R2 ?? 'all').toLowerCase();
 
 export interface BlobPointer {
   type: string; // replay_recording | attachment
@@ -32,8 +36,19 @@ const NL = 0x0a; // '\n'
  * payload bytes — a `\n` split + utf8 re-encode corrupted the blob and the inline
  * envelope.
  */
-export async function splitOversizedBlobs(bytes: Buffer, projectId: string, eventId?: string): Promise<SplitResult> {
-  if (!(await r2Configured())) return { inline: bytes, blobs: [] };
+export interface SplitDeps {
+  configured: () => Promise<boolean>;
+  put: (key: string, body: Buffer) => Promise<unknown>;
+}
+const defaultDeps: SplitDeps = { configured: r2Configured, put: putObject };
+
+export async function splitOversizedBlobs(
+  bytes: Buffer,
+  projectId: string,
+  eventId?: string,
+  deps: SplitDeps = defaultDeps,
+): Promise<SplitResult> {
+  if (!(await deps.configured())) return { inline: bytes, blobs: [] };
 
   const firstNl = bytes.indexOf(NL);
   if (firstNl < 0) return { inline: bytes, blobs: [] };
@@ -61,6 +76,11 @@ export async function splitOversizedBlobs(bytes: Buffer, projectId: string, even
     }
 
     const payloadStart = headerEnd + 1;
+    // A declared length that overruns → malformed tail; keep the rest inline verbatim.
+    if (typeof header.length === 'number' && (header.length < 0 || payloadStart + header.length > bytes.length)) {
+      kept.push(bytes.subarray(offset));
+      break;
+    }
     const payloadEnd =
       typeof header.length === 'number'
         ? payloadStart + header.length
@@ -74,11 +94,12 @@ export async function splitOversizedBlobs(bytes: Buffer, projectId: string, even
 
     const size = header.length ?? payload.length;
     const toR2 =
-      header.type === 'replay_recording' || (header.type === 'attachment' && size > STREAM_THRESHOLD);
+      (header.type === 'replay_recording' && (REPLAY_R2 !== 'oversized' || size > STREAM_THRESHOLD)) ||
+      (header.type === 'attachment' && size > STREAM_THRESHOLD);
 
     if (toR2) {
       const r2Key = `blobs/${projectId}/${eventId ?? 'e'}/${idx}-${header.type}`;
-      await putObject(r2Key, payload); // raw bytes — binary-safe
+      await deps.put(r2Key, payload); // raw bytes — binary-safe
       blobs.push({ type: header.type!, r2Key, size, filename: header.filename });
       idx++;
       // Drop the item from the inline envelope (pointer travels on the job).

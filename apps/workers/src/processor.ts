@@ -178,6 +178,7 @@ async function processEvent(projectId: string, payload: SentryEventPayload): Pro
         startTs: seenAt,
         endTs: seenAt,
         platform: symbolicated.platform,
+        synthetic: true,
       })
       .onConflictDoNothing({ target: [traces.traceId] });
   }
@@ -293,6 +294,7 @@ async function processReplay(
   const end = payload.timestamp ? new Date(Number(payload.timestamp) * 1000) : new Date();
   const durationMs = Math.max(0, end.getTime() - start.getTime());
   const segmentId = typeof payload.segment_id === 'number' ? payload.segment_id : 0;
+  const replayId = typeof payload.replay_id === 'string' ? payload.replay_id : undefined;
 
   // Link to the issue that shares this trace, if any.
   let issueId: string | undefined;
@@ -301,17 +303,25 @@ async function processReplay(
     issueId = ev[0]?.issueId;
   }
 
-  await db.insert(replays).values({
-    projectId,
-    issueId,
-    traceId,
-    user: (payload.user as Record<string, unknown>) ?? undefined,
-    startedAt: start,
-    durationMs,
-    segmentCount: segmentId + 1,
-    r2Prefix: recBlob?.r2Key ?? `replays/${projectId}/${payload.replay_id ?? 'unknown'}`,
-    size: recBlob?.size ?? 0,
-  });
+  // One row per (replayId, segmentId); at-least-once delivery must not
+  // double-insert a segment (FR-WRK-2). The player assembles all segments of a
+  // replayId in order (FR-RPL).
+  await db
+    .insert(replays)
+    .values({
+      projectId,
+      issueId,
+      replayId,
+      segmentId,
+      traceId,
+      user: (payload.user as Record<string, unknown>) ?? undefined,
+      startedAt: start,
+      durationMs,
+      segmentCount: segmentId + 1,
+      r2Prefix: recBlob?.r2Key ?? `replays/${projectId}/${replayId ?? 'unknown'}/${segmentId}`,
+      size: recBlob?.size ?? 0,
+    })
+    .onConflictDoNothing({ target: [replays.replayId, replays.segmentId] });
 }
 
 async function processTransaction(projectId: string, payload: SentryTransactionPayload): Promise<void> {
@@ -320,6 +330,8 @@ async function processTransaction(projectId: string, payload: SentryTransactionP
   const start = payload.start_timestamp ? new Date(payload.start_timestamp * 1000) : new Date();
   const end = typeof payload.timestamp === 'number' ? new Date(payload.timestamp * 1000) : new Date();
 
+  // A real transaction is authoritative — overwrite a synthetic row created from
+  // an error that arrived first (FR-TRC-4); leave a real row untouched.
   await db
     .insert(traces)
     .values({
@@ -329,8 +341,13 @@ async function processTransaction(projectId: string, payload: SentryTransactionP
       startTs: start,
       endTs: end,
       platform: payload.platform ?? 'javascript',
+      synthetic: false,
     })
-    .onConflictDoNothing({ target: [traces.traceId] });
+    .onConflictDoUpdate({
+      target: [traces.traceId],
+      set: { rootTransaction: payload.transaction, startTs: start, endTs: end, platform: payload.platform ?? 'javascript', synthetic: false },
+      setWhere: dsql`${traces.synthetic} = true`,
+    });
 
   const spanRows = payload.spans ?? [];
   for (const s of spanRows) {

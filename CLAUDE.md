@@ -587,6 +587,43 @@ GitHub advanced (GD-043/44/45) code-complete; live needs a GitHub App install.
 ### Sprint Stats
 - Total: 1  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 1  /  BLOCKED: 0
 
+## Sprint 27 — AI fix suggester P1 (DeepSeek, diagnose-only)
+**Status:** CODE COMPLETE (needs DeepSeek key + redeploy)
+**Started:** 2026-07-19
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-116 | AI fix suggester — P1 diagnose (DeepSeek only) | DONE | HIGH | FR-AIF (`docs/ai-fix-suggester.md` P1). **Single provider = DeepSeek** (OpenAI-compatible `chat/completions`, `response_format: json_object`). New `fix_suggestions` table (migration 0010); `deepseek.ts` client resolves key from env `DEEPSEEK_API_KEY` or the encrypted `integrations` row (kind `deepseek`, single `apiKey` secret); `SuggestService` grounds the prompt on the issue + latest event's **symbolicated in-app frames** (stored pre/post context — no GitHub fetch in P1), forces structured JSON (rootCause/confidence/evidence/patches/testSuggestion/needMoreContext), validates + persists, caches by (issue,event). `POST/GET /issues/:shortId/suggest` — project-access scoped, **any role**, read-only (inert data, no repo writes — guardrail per doc §3). Web: "Suggested fix" card on Issue Detail (confidence badge, root cause, evidence, red/green diff, Regenerate, "AI · Unverified" tag). Integrations tab gains a DeepSeek provider (apiKey + model, live key Test). |
+
+| GD-117 | AI fix suggester — P2 grounded source fetch | DONE | HIGH | FR-AIF P2: `SuggestService.fetchSources` pulls ±40-line windows for the top in-app frames from the **linked GitHub repo at the errored release commit** (`releases.commitSha`, else repo default branch) via new `GithubService.getFileContent` (contents API, base64). Secrets masked pre-send (`redact.ts` — API-key/PEM/`key=val` patterns; `.env*`/`.pem`/`.key`/`id_rsa` files skipped entirely — 5 unit tests). Windows added to the prompt line-numbered with `>` on the crash line; `baseSha`+`sourceFiles` stored in `meta`. Degrades to P1 (stored context) when no repo/token. |
+
+| GD-118 | AI fix suggester — P3 self-critique + calibrated confidence | DONE | HIGH | FR-AIF P3: after generation, an adversarial critique call (skeptical reviewer prompt) judges the patch — {addresses, compiles, risk, verdict, confidence, note}. `reject`→confidence forced low + reason surfaced in needMoreContext; `risk:high`→low; else adopt critique confidence (never upgrades past a risk flag). Critique stored in `meta`. Skipped when there's no patch to verify. |
+| GD-119 | AI fix suggester — P4 human-approved draft PR (write guardrail) | DONE | HIGH | FR-AIF P4/§3: **the only repo-mutating path, model NOT in it.** New `fix_pull_requests` table + `repositories.pr_enabled` opt-in (migration 0011, default OFF). `POST /issues/:shortId/suggest/pr` (admin) → re-validate (suggestion owns issue, project access, `pr_enabled`, repo+token) → deterministic `applyUnifiedDiff` (throws on context drift → abort, 4 tests) → **new branch `genius-fix/<id>-<hash>` only, DRAFT PR only**, never default/existing branch, never auto-merge; idempotent per (suggestion, patchHash=sha256 of patches). `POST …/pr-enabled` admin toggle. Manifest now requests `contents:write`+`pull_requests:write` (existing App must re-approve). Web: "Open draft PR" button (admin, confirm dialog, "never merged" copy), enable-PRs toggle, View-draft-PR link. |
+
+### Sprint Stats
+- Total: 4  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 4  /  BLOCKED: 0
+- Tests: 36 green (8 ingest + 14 workers + 14 api: 5 decode + 5 redact + 4 apply-diff). Migrations 0010+0011 applied. DeepSeek key verified live. **Full AI fix-suggester complete: P1 diagnose → P2 GitHub-source grounding → P3 self-critique → P4 human-approved draft PR.** Set DeepSeek key + (for PRs) re-approve the GitHub App for the elevated perms, enable draft PRs per repo, then redeploy api+web.
+
+## Sprint 26 — Edge-case hardening (replays/traces/envelope/auth)
+**Status:** CODE COMPLETE (needs migrate + redeploy)
+**Started:** 2026-07-19
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-107 | Multi-segment replay assembly | DONE | HIGH | FR-RPL: session replay arrives as many `replay_recording` segments; each was a separate `replays` row and the player showed only one. Added `replay_id`+`segment_id` cols (migration 0009); `recording` endpoint now gathers ALL segments of a replayId in order, decodes each R2 blob, concatenates; Replays list collapses segments → one card per session (sums size/segments). |
+| GD-108 | Replay ingest idempotency | DONE | HIGH | FR-WRK-2: at-least-once delivery re-inserted replay segments. Unique `(replay_id, segment_id)`; processReplay `onConflictDoNothing`. |
+| GD-109 | Envelope `length` overrun guard | DONE | HIGH | FR-ING-3: all three parsers trusted the item `length`. Now reject overrun — ingest 400 "truncated item payload" (after the 413 size-cap), worker `parseEnvelope` stops at a bad tail, `splitOversizedBlobs` keeps remainder inline. |
+| GD-110 | DLQ re-drive endpoint | DONE | HIGH | ops: `POST /metrics/dlq/redrive?limit=` (admin) re-enqueues dead-lettered jobs onto ingest — recovers replays lost to the old parse bug. |
+| GD-111 | Global 401 handling | DONE | MED | web `api()` on 401 → clear token + redirect `/login?next=` (was toast spam, no re-login). |
+| GD-112 | Scope time-range control to Issues feed | DONE | LOW | range select only rendered on `/issues` (it only filters that feed; was a confusing global no-op elsewhere). |
+| GD-113 | Real transaction overwrites synthetic trace | DONE | MED | FR-TRC-4: `traces.synthetic` flag; error-synth row now overwritten by a later real `transaction` (onConflictDoUpdate setWhere synthetic=true). |
+| GD-114 | GitHub issue create dedupe | DONE | LOW | FR-GH-6: record `github_issue` activity w/ url; repeat create returns existing url (`existing:true`), no duplicate GitHub issues. |
+| GD-115 | split-blobs extraction test + obs counters + cleanup | DONE | LOW | `splitOversizedBlobs` DI'd putter + test (raw-bytes extraction); worker counts `envelope_parse_error` drop; removed dup `jsonwebtoken` dep key. |
+
+### Sprint Stats
+- Total: 9  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 9  /  BLOCKED: 0
+- Tests: 27 green (8 ingest + 14 workers + 5 api). Migration 0009 applied. Needs redeploy: ingest+api+workers+web.
+
 ## Sprint 25 — Fix create-GitHub-issue 500, richer alert email, error-only trace waterfall
 **Status:** CODE COMPLETE (needs api/workers/web redeploy)
 **Started:** 2026-07-19
