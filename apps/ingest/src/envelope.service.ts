@@ -31,37 +31,54 @@ export class EnvelopeService {
       return { ok: false, status: 413, reason: 'envelope too large', bytes };
     }
 
-    // Envelope = header line, then repeating (item-header line, payload line).
-    // We only scan header lines + payload lengths; payloads stay opaque.
-    const text = bytes.toString('utf8');
-    const nl = text.indexOf('\n');
-    if (nl < 0) return { ok: false, status: 400, reason: 'no envelope header', bytes };
+    // Envelope = header line, then repeating (item-header line, payload).
+    // Byte-accurate framing walk: a `replay_recording`/`attachment` payload is
+    // length-prefixed binary and CONTAINS `\n` bytes — splitting on `\n` mis-frames
+    // it and rejects valid replays ("bad item header"). Honor the item-header
+    // `length`; only scan headers + payload sizes, payloads stay opaque (FR-ING-3).
+    const NL = 0x0a;
+    const firstNl = bytes.indexOf(NL);
+    if (firstNl < 0) return { ok: false, status: 400, reason: 'no envelope header', bytes };
 
     let eventId: string | undefined;
     try {
-      const header = JSON.parse(text.slice(0, nl));
+      const header = JSON.parse(bytes.subarray(0, firstNl).toString('utf8'));
       eventId = typeof header.event_id === 'string' ? header.event_id : undefined;
     } catch {
       return { ok: false, status: 400, reason: 'bad envelope header', bytes };
     }
 
-    // Walk item headers to enforce per-event-item caps (framing check only).
-    const lines = text.slice(nl + 1).split('\n');
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      if (line.trim() === '') continue;
+    let offset = firstNl + 1;
+    while (offset < bytes.length) {
+      if (bytes[offset] === NL) {
+        offset++;
+        continue; // stray framing newline
+      }
+      const hNl = bytes.indexOf(NL, offset);
+      const headerEnd = hNl < 0 ? bytes.length : hNl;
       let itemHeader: { type?: string; length?: number };
       try {
-        itemHeader = JSON.parse(line);
+        itemHeader = JSON.parse(bytes.subarray(offset, headerEnd).toString('utf8'));
       } catch {
         return { ok: false, status: 400, reason: 'bad item header', bytes };
       }
-      const payload = lines[i + 1] ?? '';
-      const declared = typeof itemHeader.length === 'number' ? itemHeader.length : Buffer.byteLength(payload, 'utf8');
-      if ((itemHeader.type === 'event' || itemHeader.type === 'transaction') && declared > MAX_EVENT_ITEM_BYTES) {
+      offset = headerEnd + 1;
+
+      let payloadLen: number;
+      if (typeof itemHeader.length === 'number') {
+        payloadLen = itemHeader.length; // length-declared (binary-safe)
+        offset += payloadLen;
+        if (bytes[offset] === NL) offset++; // consume trailing framing newline
+      } else {
+        const pNl = bytes.indexOf(NL, offset); // newline-terminated payload
+        const payloadEnd = pNl < 0 ? bytes.length : pNl;
+        payloadLen = payloadEnd - offset;
+        offset = payloadEnd + 1;
+      }
+
+      if ((itemHeader.type === 'event' || itemHeader.type === 'transaction') && payloadLen > MAX_EVENT_ITEM_BYTES) {
         return { ok: false, status: 413, reason: 'event item too large', bytes };
       }
-      i++; // skip the payload line
     }
 
     return { ok: true, eventId, bytes };

@@ -41,7 +41,9 @@ export class GithubController {
       setup_url: `${API_URL}/github/installation/callback`,
       hook_attributes: { url: `${API_URL}/github/webhook`, active: false },
       public: false,
-      default_permissions: { contents: 'read', metadata: 'read' }, // least-privilege (FR-GH-8)
+      // Least-privilege (FR-GH-8): read code for blame/suspect-commits, write
+      // issues so "Create GitHub Issue" (FR-GH-6) works.
+      default_permissions: { contents: 'read', metadata: 'read', issues: 'write' },
       default_events: [],
     };
     return { postUrl, manifest, state };
@@ -185,8 +187,18 @@ export class GithubController {
     const token = await this.gh.installationTokenForOrg(req.user!.orgId, ctx.installationId);
     if (!token) throw new BadRequestException('no GitHub App installation');
     const body = `**Culprit:** \`${ctx.culprit}\`\n**geniusDebug:** ${WEB_URL}/issues/${shortId}\n\nType: ${ctx.type ?? ''}`;
-    const url = await this.gh.createIssue(token, ctx.owner, ctx.name, ctx.title, body);
-    return { ok: true, url };
+    try {
+      const url = await this.gh.createIssue(token, ctx.owner, ctx.name, ctx.title, body);
+      return { ok: true, url };
+    } catch (err) {
+      // Surface GitHub's reason (e.g. 403 missing `issues: write`) as a 400 instead of a raw 500.
+      const msg = (err as Error).message;
+      throw new BadRequestException(
+        /\b403\b/.test(msg)
+          ? 'GitHub App lacks "issues: write" permission — re-approve the App to grant it, then retry.'
+          : `Could not create GitHub issue: ${msg}`,
+      );
+    }
   }
 
   /* ------- Auto-resolve on commit/PR "fixes <shortId>" (FR-GH-7) ----------- */

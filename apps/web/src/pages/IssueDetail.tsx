@@ -2,7 +2,8 @@ import * as React from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import type { IssueDto, EventDto, NormalizedFrame } from '@geniusdebug/shared';
-import { api } from '../lib/api';
+import { api, errMsg } from '../lib/api';
+import { toast, ACTION_PAST } from '../store/toast';
 import { timeAgo } from '../lib/format';
 import { Button, LevelPill, StatusChip, IdChip, Tag, Card, Skeleton, ErrorState } from '../components/ui';
 import { StackTrace } from '../components/StackTrace';
@@ -48,13 +49,21 @@ export function IssueDetail() {
   const act = useMutation({
     mutationFn: (action: string) =>
       api(`/issues/${shortId}/actions`, { method: 'POST', body: JSON.stringify({ action }) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['issue', shortId] }),
+    onSuccess: (_r, action) => {
+      qc.invalidateQueries({ queryKey: ['issue', shortId] });
+      toast.success(`${shortId} ${ACTION_PAST[action] ?? action}`);
+    },
+    onError: (e: unknown, action) => toast.error(`Couldn't ${action} ${shortId}: ${errMsg(e)}`),
   });
   const members = useQuery({ queryKey: ['members'], queryFn: () => api<{ id: string; name: string }[]>('/members') });
   const assign = useMutation({
     mutationFn: (assigneeUserId: string) =>
       api(`/issues/${shortId}/actions`, { method: 'POST', body: JSON.stringify({ action: 'assign', assigneeUserId: assigneeUserId || undefined }) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['issue', shortId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['issue', shortId] });
+      toast.success('Assignee updated');
+    },
+    onError: (e: unknown) => toast.error(`Couldn't update assignee: ${errMsg(e)}`),
   });
   const suspect = useQuery({
     queryKey: ['suspect', shortId],
@@ -62,7 +71,11 @@ export function IssueDetail() {
   });
   const createIssue = useMutation({
     mutationFn: () => api<{ url: string }>(`/github/issues/${shortId}/create`, { method: 'POST' }),
-    onSuccess: (r) => window.open(r.url, '_blank'),
+    onSuccess: (r) => {
+      window.open(r.url, '_blank');
+      toast.success('GitHub issue created');
+    },
+    onError: (e: unknown) => toast.error(`Couldn't create GitHub issue: ${errMsg(e)}`),
   });
 
   if (q.isLoading) return <div className="p-6"><Skeleton className="h-40 w-full" /></div>;

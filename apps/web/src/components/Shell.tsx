@@ -2,7 +2,8 @@ import * as React from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { GeniusDebugWordmark } from '../brand/GeniusDebugIcon';
-import { useUi } from '../store/ui';
+import { useUi, RANGE_LABELS, type IssueRange } from '../store/ui';
+import { Toaster } from './Toaster';
 import { api } from '../lib/api';
 import {
   DashboardIcon,
@@ -161,7 +162,7 @@ function ProjectSwitcher({ projects }: { projects: ProjectSummary[] }) {
 }
 
 export function Shell({ children }: { children: React.ReactNode }) {
-  const { user, signOut, theme, toggleTheme, environment, setEnvironment, currentProjectId } = useUi();
+  const { user, signOut, theme, toggleTheme, environment, setEnvironment, range, setRange, currentProjectId } = useUi();
   const navigate = useNavigate();
 
   const projects = useQuery({
@@ -285,12 +286,22 @@ export function Shell({ children }: { children: React.ReactNode }) {
           </select>
           <GlobalSearch />
           <div className="flex-1" />
-          <span className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-small text-text-muted">
-            Since First Seen ▾
-          </span>
+          <select
+            value={range}
+            onChange={(e) => setRange(e.target.value as IssueRange)}
+            className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-small text-text"
+            title="Time range — filters the issues feed by last-seen"
+          >
+            {(Object.keys(RANGE_LABELS) as IssueRange[]).map((r) => (
+              <option key={r} value={r}>
+                {RANGE_LABELS[r]}
+              </option>
+            ))}
+          </select>
         </header>
         <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
       </div>
+      <Toaster />
     </div>
   );
 }

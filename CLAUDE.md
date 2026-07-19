@@ -587,6 +587,28 @@ GitHub advanced (GD-043/44/45) code-complete; live needs a GitHub App install.
 ### Sprint Stats
 - Total: 1  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 1  /  BLOCKED: 0
 
+## Sprint 25 — Fix create-GitHub-issue 500, richer alert email, error-only trace waterfall
+**Status:** CODE COMPLETE (needs api/workers/web redeploy)
+**Started:** 2026-07-19
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-097 | Fix "Create GitHub Issue" 500 | DONE | HIGH | FR-GH-6: App manifest only requested `contents:read`+`metadata:read` → POST /issues 403 → `createIssue` threw raw → Nest 500. Added `issues:write` to manifest; `createIssue` now includes GitHub body in error; controller try/catches → 400 with reason ("re-approve the App to grant issues:write"). **Existing installed App must re-approve permissions to gain issues:write.** |
+| GD-098 | Alert email: link + culprit + count | DONE | MED | FR-ALR-6: email was just `<h2>title</h2><p>Trigger: new</p>`. Now branded HTML: trigger label, shortId/level/times-seen, culprit, and an "Open issue in geniusDebug →" button to `${WEB_URL}/issues/:shortId`. alerts.ts resolves the issue row; needs `WEB_URL` env in workers. |
+| GD-099 | Error-only trace waterfall resolves | DONE | HIGH | FR-TRC-4: errors carry a `trace_id` but no `transaction` item → no `traces` row → `/traces/:id` returned all-null → dead "Open trace waterfall". Worker now synthesizes a `traces` row from the error (onConflictDoNothing; real transaction spans still win). Web Trace page renders an "Error in this trace" card (+ hint to set `tracesSampleRate>0`) when spans empty but errors exist. |
+| GD-100 | Global time-range filter (was dead placeholder) | DONE | MED | FR-UI-2: header "Since First Seen ▾" was a static `<span>` doing nothing (unbuilt half of GD-041). Now a real `<select>` (Last 24h/7d/14d/30d / Since First Seen) bound to persisted `useUi.range`; Issues feed passes `range` → `issueListQuerySchema` → service filters `issues.lastSeen >= now-window`. |
+| GD-101 | Fix replay drop — byte-accurate envelope parse | DONE | HIGH | FR-RPL-2/FR-WRK-1: `parseEnvelope` split the whole envelope on `\n` assuming header+one payload line per item. `replay_recording` payloads are length-prefixed binary (compressed rrweb, contains `\n`) → naive split corrupted them → `JSON.parse` threw on a mid-payload line → whole job failed → 5× retry → dead-lettered → **every replay silently dropped** despite R2+SDK working. Rewrote parser to honor the Sentry item-header `length` (read exactly N bytes, binary-safe), else read to next `\n`. Regression test added. |
+| GD-102 | Toast feedback on issue actions | DONE | MED | FR-UI-4: resolve/archive/mute/assign/merge + create-GitHub-issue were silent on success AND failure. New Zustand `toast` store + `<Toaster>` (mounted in Shell, auto-dismiss, error lingers 6s). Wired `onSuccess`/`onError` (surfaces server `ApiError.message`) on all mutations in Issues feed + Issue Detail. Dashboard is read-only (no actions to wire). |
+| GD-103 | Fix ingest 400 "bad item header" on replay envelope | DONE | HIGH | FR-ING-3/FR-RPL-2: ingest `shallowValidate` also split framing on `\n` (2 lines/item) → length-prefixed binary `replay_recording` payload (contains `\n`) mis-framed → next line parsed as header → 400 before enqueue → replays rejected at the door (companion to GD-101 on the worker side). Rewrote the framing walk byte-accurate honoring item `length` (header scan + size caps only, payloads opaque, hot-path cheap). Regression test added (7 ingest tests green). |
+| GD-104 | Doc: AI fix-suggester agent (NEXT STAGE) | DONE | LOW | Wrote `docs/ai-fix-suggester.md` — design for an agent that analyzes the symbolicated error + source pulled from the linked GitHub repo and suggests a probable fix (root cause + unified-diff patch), surfaced on Issue Detail. PLANNED/parked; phased P1 diagnose → P2 grounded patches → P3 draft PR. Not built — build after core stabilizes. |
+
+### Sprint Stats
+- Total: 8  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 7  /  PLANNED: 1 (GD-104 doc-only)
+
+### Notes
+- **Replays root cause was a backend bug** (GD-101), not client config: the length-prefixed `replay_recording` item crashed the envelope parser. Fixed. `replay_event` metadata now inserts and replays appear once redeployed.
+- ingest+api+workers+web typecheck clean; 14 worker tests green (+1 replay-framing regression); web prod build clean. Needs redeploy on Coolify (ingest+api+workers+web).
+
 ### Verification notes (Sprint 22)
 - api+web+db typecheck clean; web prod build clean; 19 tests green.
 - Migration 0008 applied (dedupe dup github_apps per org → restore `github_apps_org_uq` unique). Supersedes GD-087's multi-app (Sprint 21) per user correction.

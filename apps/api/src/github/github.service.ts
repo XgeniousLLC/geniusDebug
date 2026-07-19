@@ -116,7 +116,11 @@ export class GithubService {
       headers: { authorization: `Bearer ${installToken}`, accept: 'application/vnd.github+json', 'content-type': 'application/json', 'user-agent': GH_UA },
       body: JSON.stringify({ title, body }),
     });
-    if (!res.ok) throw new Error(`create issue failed: ${res.status}`);
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      // 403 usually = App lacks `issues: write` (re-approve permissions); 410 = issues disabled on repo.
+      throw new Error(`create issue failed: ${res.status} ${detail.slice(0, 300)}`);
+    }
     const created = (await res.json()) as { html_url: string };
     return created.html_url;
   }

@@ -2,8 +2,9 @@ import * as React from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import type { IssueDto } from '@geniusdebug/shared';
-import { api } from '../lib/api';
+import { api, errMsg } from '../lib/api';
 import { useUi } from '../store/ui';
+import { toast, ACTION_PAST } from '../store/toast';
 import { timeAgo, compact } from '../lib/format';
 import { Button, LevelPill, StatusChip, Skeleton, EmptyState, ErrorState } from '../components/ui';
 import { NoProject } from '../components/NoProject';
@@ -14,6 +15,7 @@ type Sort = 'lastSeen' | 'firstSeen' | 'events' | 'users';
 
 export function Issues() {
   const environment = useUi((s) => s.environment);
+  const range = useUi((s) => s.range);
   const currentProjectId = useUi((s) => s.currentProjectId);
   const navigate = useNavigate();
   const [params] = useSearchParams();
@@ -30,12 +32,13 @@ export function Issues() {
     if (q !== null) setQuery(q);
   }, [params]);
 
-  const key = ['issues', { environment, status, sort, query, projectId: currentProjectId }];
+  const key = ['issues', { environment, range, status, sort, query, projectId: currentProjectId }];
   const issues = useQuery({
     queryKey: key,
     queryFn: () => {
       const p = new URLSearchParams({ status, sort });
       if (environment !== 'all') p.set('environment', environment);
+      if (range !== 'all') p.set('range', range);
       if (query) p.set('query', query);
       if (currentProjectId) p.set('projectId', currentProjectId);
       return api<IssueDto[]>(`/issues?${p.toString()}`);
@@ -46,15 +49,21 @@ export function Issues() {
   const act = useMutation({
     mutationFn: (v: { shortId: string; action: string }) =>
       api(`/issues/${v.shortId}/actions`, { method: 'POST', body: JSON.stringify({ action: v.action }) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['issues'] }),
+    onSuccess: (_r, v) => {
+      qc.invalidateQueries({ queryKey: ['issues'] });
+      toast.success(`${v.shortId} ${ACTION_PAST[v.action] ?? v.action}`);
+    },
+    onError: (e: unknown, v) => toast.error(`Couldn't ${v.action} ${v.shortId}: ${errMsg(e)}`),
   });
   const merge = useMutation({
     mutationFn: (v: { source: string; target: string }) =>
       api(`/issues/${v.source}/merge`, { method: 'POST', body: JSON.stringify({ targetShortId: v.target }) }),
-    onSuccess: () => {
+    onSuccess: (_r, v) => {
       setSelected(new Set());
       qc.invalidateQueries({ queryKey: ['issues'] });
+      toast.success(`Merged ${v.source} into ${v.target}`);
     },
+    onError: (e: unknown, v) => toast.error(`Couldn't merge ${v.source}: ${errMsg(e)}`),
   });
 
   const rows = issues.data ?? [];

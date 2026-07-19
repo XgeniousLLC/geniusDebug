@@ -16,6 +16,12 @@ export class ApiError extends Error {
   }
 }
 
+/** Human-readable message from a thrown ApiError/Error (for toasts). */
+export function errMsg(e: unknown): string {
+  if (e instanceof Error && e.message) return e.message;
+  return 'request failed';
+}
+
 export async function api<T = unknown>(path: string, opts: RequestInit = {}): Promise<T> {
   const token = getToken();
   const res = await fetch(`${BASE}${path}`, {
