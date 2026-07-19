@@ -14,7 +14,7 @@ import type { Request } from 'express';
 import { randomBytes } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { db, repositories, releases, orgTokens, sourceMapArtifacts, projects, users, memberships, dsnKeys, projectMembers } from '@geniusdebug/db';
-import { and, eq, ne } from 'drizzle-orm';
+import { and, eq, ne, inArray } from 'drizzle-orm';
 import { JwtGuard, type AuthPrincipal } from '../auth/jwt.guard';
 import { sendEmail } from '../mailer';
 
@@ -198,7 +198,7 @@ export class AdminController {
   @UseGuards(JwtGuard)
   async invite(
     @Req() req: Request & { user?: AuthPrincipal },
-    @Body() body: { name?: string; email?: string; role?: 'admin' | 'member' },
+    @Body() body: { name?: string; email?: string; role?: 'admin' | 'member'; projectIds?: string[] },
   ) {
     if (req.user!.role !== 'admin') throw new ForbiddenException('admin only');
     if (!body.email || !body.name) throw new BadRequestException('name and email required');
@@ -223,6 +223,19 @@ export class AdminController {
       })
       .returning({ id: users.id });
     await db.insert(memberships).values({ orgId: req.user!.orgId, userId: u[0].id, role: body.role ?? 'member' });
+
+    // Invitations are project-scoped: auto-grant access to the project(s) the
+    // invite was issued from (NFR-SEC-6). Only projects in the admin's org.
+    const wanted = (body.projectIds ?? []).filter((x): x is string => typeof x === 'string');
+    if (wanted.length > 0) {
+      const owned = await db
+        .select({ id: projects.id })
+        .from(projects)
+        .where(and(eq(projects.orgId, req.user!.orgId), inArray(projects.id, wanted)));
+      if (owned.length > 0) {
+        await db.insert(projectMembers).values(owned.map((p) => ({ projectId: p.id, userId: u[0].id }))).onConflictDoNothing();
+      }
+    }
 
     const html = buildInviteEmail(req.user!.email, body.role ?? 'member', body.email, token);
     const link = inviteLink(body.email, token);

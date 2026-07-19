@@ -560,8 +560,10 @@ GitHub advanced (GD-043/44/45) code-complete; live needs a GitHub App install.
 | GD-092 | Fix setup-email 500 | DONE | HIGH | `mailer.sendEmail` now try/catches SES send + aws-sdk import → returns `{sent:false, reason}` (was throwing → 500 on the setup/email + invite paths); UI shows reason + mailto/copy fallback |
 | GD-093 | Member invite UX: surface errors, pending badge, reinvite | DONE | MED | FR-ADM-6: invite/remove/role mutations get `onError` → inline message (was silent on "email already a member" 400); `GET /members` returns `pending` (live reset token) + `invitedAt`; "invite pending" badge + `reinvite` btn; new `POST /members/:id/reinvite` (fresh 7-day token, resend/return link) |
 
+| GD-094 | Project-scoped invitations (auto-grant, drop access editor) | DONE | MED | user: invite is scoped to a project → invitee auto-gets access to the current project; `POST /members` accepts `projectIds` and inserts `project_members` (org-checked, onConflictDoNothing); web Members invite auto-passes the current project + shows "grants access to <project>"; removed per-member Project-access checkbox editor + auto-open (MemberProjects component deleted; grant/get endpoints kept) |
+
 ### Sprint Stats
-- Total: 5  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 5  /  BLOCKED: 0
+- Total: 6  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 6  /  BLOCKED: 0
 
 ### Verification notes (Sprint 22)
 - api+web+db typecheck clean; web prod build clean; 19 tests green.
