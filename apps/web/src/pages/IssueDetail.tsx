@@ -188,9 +188,21 @@ export function IssueDetail() {
               <option key={m.id} value={m.id}>{m.name}</option>
             ))}
           </select>
-          <Button variant="primary" onClick={() => act.mutate('resolve')}><CheckIcon size={15} /> Resolve</Button>
-          <Button onClick={() => act.mutate('archive')}><ArchiveIcon size={15} /> Archive</Button>
-          <Button onClick={() => act.mutate('mute')}><BellOffIcon size={15} /> Mute</Button>
+          {issue.status === 'resolved' ? (
+            <Button onClick={() => act.mutate('unresolve')}><CheckIcon size={15} /> Unresolve</Button>
+          ) : issue.status === 'archived' ? (
+            <Button onClick={() => act.mutate('unarchive')}><ArchiveIcon size={15} /> Unarchive</Button>
+          ) : issue.status === 'muted' ? (
+            <Button onClick={() => act.mutate('unmute')}><BellOffIcon size={15} /> Unmute</Button>
+          ) : (
+            <Button variant="primary" onClick={() => act.mutate('resolve')}><CheckIcon size={15} /> Resolve</Button>
+          )}
+          {issue.status !== 'archived' && (
+            <Button onClick={() => act.mutate('archive')}><ArchiveIcon size={15} /> Archive</Button>
+          )}
+          {issue.status !== 'muted' && (
+            <Button onClick={() => act.mutate('mute')}><BellOffIcon size={15} /> Mute</Button>
+          )}
         </div>
       </div>
 

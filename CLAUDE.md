@@ -656,3 +656,18 @@ GitHub advanced (GD-043/44/45) code-complete; live needs a GitHub App install.
 - Email 500 root cause: SES now configured (Integrations) but `SendEmailCommand` threw (unverified sender/sandbox/creds) and mailer didn't catch → Nest 500. Now graceful `{sent:false, reason}`; both `/projects/:id/setup/email` and invite/reinvite return the reason so UI offers copy/mailto.
 - Members: `pending` = user still holds a live (unexpired, unconsumed) reset token; cleared when they set a password via the invite link. Reinvite mints a new token + resends.
 - Needs api+web redeploy on Coolify. To actually deliver mail, verify the SES sender identity / move out of sandbox (the reason string will say which).
+
+## Sprint 28 — Ingest error handling + UI action button states
+**Status:** IN PROGRESS
+**Started:** 2026-07-19
+
+### Tickets
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-120 | Ingest 500: try/catch + meaningful error responses | DONE | HIGH | ingest controller has zero try/catch — any thrown exception (R2 split, queue add, DB) becomes generic 500. Wrap critical path, log real error, return meaningful status (400/503). |
+| GD-121 | Issue action buttons: state-aware labels | DONE | HIGH | Issues feed + Issue detail always show Resolve/Archive/Mute regardless of current status. Read issue.status, show context-appropriate buttons (resolve↔unresolve, archive↔unarchive, mute↔unmute). Backend already supports all reverse actions. |
+| GD-122 | GitHub disconnect cascade + unlink + link feedback | DONE | HIGH | disconnectApp now cascade-deletes linked repos; new POST /projects/:id/unlink endpoint; link/unlink/disconnect mutations all show toast feedback; disconnect invalidates repo queries too; link button shows loading state. |
+
+### Sprint Stats
+- Total: 3  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 3  /  BLOCKED: 0

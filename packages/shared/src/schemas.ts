@@ -18,7 +18,7 @@ export const loginSchema = z.object({
 export type LoginInput = z.infer<typeof loginSchema>;
 
 export const issueActionSchema = z.object({
-  action: z.enum(['resolve', 'unresolve', 'archive', 'mute', 'assign']),
+  action: z.enum(['resolve', 'unresolve', 'archive', 'unarchive', 'mute', 'unmute', 'assign']),
   assigneeUserId: z.string().uuid().optional(),
 });
 export type IssueActionInput = z.infer<typeof issueActionSchema>;

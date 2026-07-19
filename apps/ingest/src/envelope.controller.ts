@@ -4,7 +4,7 @@ import { DsnService } from './dsn.service';
 import { RateLimitService } from './ratelimit.service';
 import { EnvelopeService } from './envelope.service';
 import { ingestQueue, connection, type IngestJob } from './queue';
-import { splitOversizedBlobs } from './split-blobs';
+import { splitOversizedBlobs, type BlobPointer } from './split-blobs';
 
 /** Aggregate dropped-event counters (FR-ING-6) — cheap Redis INCR, daily bucket. */
 async function countDrop(projectId: string, reason: string): Promise<void> {
@@ -76,10 +76,22 @@ export class EnvelopeController {
     @Req() req: Request,
     @Res() res: Response,
   ) {
-    const publicKey = this.extractKey(query, sentryAuth);
+    let publicKey: string | undefined;
+    try {
+      publicKey = this.extractKey(query, sentryAuth);
+    } catch (e) {
+      console.error('[ingest] extractKey failed:', e);
+      return res.status(400).json({ error: 'bad sentry_key' });
+    }
     if (!publicKey) return res.status(403).json({ error: 'missing sentry_key' });
 
-    const key = await this.dsn.resolve(publicKey, projectId);
+    let key;
+    try {
+      key = await this.dsn.resolve(publicKey, projectId);
+    } catch (e) {
+      console.error('[ingest] dsn.resolve failed:', e);
+      return res.status(503).json({ error: 'service unavailable' });
+    }
     if (!key) return res.status(403).json({ error: 'invalid or disabled key' });
 
     // Auth resolves the *real* project id from the (unique) public key. The URL
@@ -93,7 +105,14 @@ export class EnvelopeController {
       return res.status(202).json({ status: 'disabled' });
     }
 
-    const gate = await this.rl.check(realProjectId, key.rateLimit);
+    let gate;
+    try {
+      gate = await this.rl.check(realProjectId, key.rateLimit);
+    } catch (e) {
+      console.error('[ingest] rate limit check failed:', e);
+      // Fail open — allow through rather than blocking on infra error
+      gate = { limited: false };
+    }
     if (gate.limited) {
       await countDrop(realProjectId, 'rate_limited');
       res.setHeader('Retry-After', String(gate.retryAfter));
@@ -101,31 +120,51 @@ export class EnvelopeController {
     }
 
     const raw: Buffer = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body ?? '');
-    const result = this.env.shallowValidate(raw, contentEncoding);
+    let result;
+    try {
+      result = this.env.shallowValidate(raw, contentEncoding);
+    } catch (e) {
+      console.error('[ingest] shallowValidate threw:', e);
+      return res.status(400).json({ error: 'malformed envelope' });
+    }
     if (!result.ok) {
       await countDrop(realProjectId, result.status === 413 ? 'too_large' : 'invalid');
       return res.status(result.status ?? 400).json({ error: result.reason });
     }
 
-    // Stream oversized replay/attachment blobs to R2; enqueue only a pointer so the
-    // big blob never sits in the queue (FR-ING-4/FR-RPL-2). No-op without R2.
-    const { inline, blobs } = await splitOversizedBlobs(result.bytes, realProjectId, result.eventId);
+    let inline: Buffer;
+    let blobs: BlobPointer[];
+    try {
+      const split = await splitOversizedBlobs(result.bytes, realProjectId, result.eventId);
+      inline = split.inline;
+      blobs = split.blobs;
+    } catch (e) {
+      console.error('[ingest] splitOversizedBlobs failed:', e);
+      // R2 failure is non-fatal — enqueue the whole envelope inline
+      inline = result.bytes;
+      blobs = [];
+    }
 
     const job: IngestJob = {
       projectId: realProjectId,
       envelopeB64: inline.toString('base64'),
       eventId: result.eventId,
       receivedAt: new Date().toISOString(),
-      blobs: blobs.length ? blobs : undefined,
+      blobs: blobs!.length ? blobs : undefined,
     };
-    // Idempotency key on event_id (FR-WRK-2 dedupe starts here).
-    await ingestQueue.add('envelope', job, {
-      jobId: result.eventId ? `${realProjectId}_${result.eventId}` : undefined,
-      removeOnComplete: 1000,
-      removeOnFail: 5000,
-      attempts: 5,
-      backoff: { type: 'exponential', delay: 1000 },
-    });
+    try {
+      // Idempotency key on event_id (FR-WRK-2 dedupe starts here).
+      await ingestQueue.add('envelope', job, {
+        jobId: result.eventId ? `${realProjectId}_${result.eventId}` : undefined,
+        removeOnComplete: 1000,
+        removeOnFail: 5000,
+        attempts: 5,
+        backoff: { type: 'exponential', delay: 1000 },
+      });
+    } catch (e) {
+      console.error('[ingest] queue add failed:', e);
+      return res.status(503).json({ error: 'queue unavailable' });
+    }
 
     return res.status(202).json({ status: 'accepted', id: result.eventId });
   }

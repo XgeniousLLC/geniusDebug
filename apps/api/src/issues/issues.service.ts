@@ -127,7 +127,9 @@ export class IssuesService {
     if (input.action === 'resolve') Object.assign(patch, { status: 'resolved', isRegressed: false });
     else if (input.action === 'unresolve') Object.assign(patch, { status: 'unresolved' });
     else if (input.action === 'archive') Object.assign(patch, { status: 'archived' });
+    else if (input.action === 'unarchive') Object.assign(patch, { status: 'unresolved' });
     else if (input.action === 'mute') Object.assign(patch, { status: 'muted' });
+    else if (input.action === 'unmute') Object.assign(patch, { status: 'unresolved' });
     else if (input.action === 'assign') Object.assign(patch, { assigneeUserId: input.assigneeUserId ?? null });
 
     await db.update(issues).set(patch).where(eq(issues.id, issueId));

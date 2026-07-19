@@ -79,7 +79,7 @@ export function Issues() {
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
       if (e.key === 'j') setCursor((c) => Math.min(rows.length - 1, c + 1));
       else if (e.key === 'k') setCursor((c) => Math.max(0, c - 1));
-      else if (e.key === 'e' && rows[cursor]) act.mutate({ shortId: rows[cursor].shortId, action: 'resolve' });
+      else if (e.key === 'e' && rows[cursor]) act.mutate({ shortId: rows[cursor].shortId, action: rows[cursor].status === 'resolved' ? 'unresolve' : 'resolve' });
       else if (e.key === 'Enter' && rows[cursor]) navigate(`/issues/${rows[cursor].shortId}`);
       else if (e.key === 'x' && rows[cursor]) {
         setSelected((s) => {
@@ -214,15 +214,33 @@ export function Issues() {
                   <span className="text-text-faint">{it.shortId}</span>
                 </div>
                 <div className="mt-1 hidden gap-1 group-hover:flex">
-                  <Button size="sm" variant="ghost" onClick={() => act.mutate({ shortId: it.shortId, action: 'resolve' })}>
-                    Resolve
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={() => act.mutate({ shortId: it.shortId, action: 'archive' })}>
-                    Archive
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={() => act.mutate({ shortId: it.shortId, action: 'mute' })}>
-                    Mute
-                  </Button>
+                  {it.status === 'resolved' ? (
+                    <Button size="sm" variant="ghost" onClick={() => act.mutate({ shortId: it.shortId, action: 'unresolve' })}>
+                      Unresolve
+                    </Button>
+                  ) : (
+                    <Button size="sm" variant="ghost" onClick={() => act.mutate({ shortId: it.shortId, action: 'resolve' })}>
+                      Resolve
+                    </Button>
+                  )}
+                  {it.status === 'archived' ? (
+                    <Button size="sm" variant="ghost" onClick={() => act.mutate({ shortId: it.shortId, action: 'unarchive' })}>
+                      Unarchive
+                    </Button>
+                  ) : (
+                    <Button size="sm" variant="ghost" onClick={() => act.mutate({ shortId: it.shortId, action: 'archive' })}>
+                      Archive
+                    </Button>
+                  )}
+                  {it.status === 'muted' ? (
+                    <Button size="sm" variant="ghost" onClick={() => act.mutate({ shortId: it.shortId, action: 'unmute' })}>
+                      Unmute
+                    </Button>
+                  ) : (
+                    <Button size="sm" variant="ghost" onClick={() => act.mutate({ shortId: it.shortId, action: 'mute' })}>
+                      Mute
+                    </Button>
+                  )}
                 </div>
               </div>
               <span className="w-16 text-right font-mono text-small text-text">{compact(it.timesSeen)}</span>

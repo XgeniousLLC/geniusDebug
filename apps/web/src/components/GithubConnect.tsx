@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '../lib/api';
+import { api, errMsg } from '../lib/api';
+import { toast } from '../store/toast';
 import { Button, Skeleton } from './ui';
 
 /**
@@ -57,13 +58,31 @@ export function GithubConnect({ projectId }: { projectId: string }) {
         method: 'POST',
         body: JSON.stringify({ installationId, ...r }),
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['repo', projectId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['repo', projectId] });
+      toast.success('Repository linked');
+    },
+    onError: (e: unknown) => toast.error(`Link failed: ${errMsg(e)}`),
   });
 
-  // Disconnect a connected App (admin) — removes stored creds for that App.
+  const unlink = useMutation({
+    mutationFn: () => api(`/github/projects/${projectId}/unlink`, { method: 'POST' }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['repo', projectId] });
+      toast.success('Repository unlinked');
+    },
+    onError: (e: unknown) => toast.error(`Unlink failed: ${errMsg(e)}`),
+  });
+
+  // Disconnect a connected App (admin) — removes stored creds + cascades linked repos.
   const disconnect = useMutation({
     mutationFn: (id: string) => api(`/github/app/${id}/disconnect`, { method: 'POST' }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['gh-app'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['gh-app'] });
+      qc.invalidateQueries({ queryKey: ['repo', projectId] });
+      toast.success('GitHub App disconnected');
+    },
+    onError: (e: unknown) => toast.error(`Disconnect failed: ${errMsg(e)}`),
   });
 
   if (app.isLoading || repo.isLoading) return <Skeleton className="h-10 w-full" />;
@@ -133,8 +152,8 @@ export function GithubConnect({ projectId }: { projectId: string }) {
               {(repos.data ?? []).map((r) => (
                 <div key={`${r.owner}/${r.name}`} className="flex items-center justify-between rounded-md border border-border px-3 py-1.5 text-small">
                   <span className="font-mono text-text">{r.owner}/{r.name}</span>
-                  <Button size="sm" variant="primary" onClick={() => link.mutate(r)}>
-                    Link
+                  <Button size="sm" variant="primary" disabled={link.isPending} onClick={() => link.mutate(r)}>
+                    {link.isPending ? 'Linking…' : 'Link'}
                   </Button>
                 </div>
               ))}
@@ -146,11 +165,16 @@ export function GithubConnect({ projectId }: { projectId: string }) {
 
       {/* This project's linked repo status. */}
       {repo.data && (
-        <div className="flex items-center justify-between text-small">
+        <div className="flex items-center justify-between rounded-md border border-border bg-bg px-3 py-1.5 text-small">
           <span className="font-mono text-text">
             {repo.data.owner}/{repo.data.name} <span className="text-text-muted">@ {repo.data.defaultBranch}</span>
           </span>
-          <span className="text-status-resolved">connected · frame deep-links on</span>
+          <span className="flex items-center gap-3">
+            <span className="text-status-resolved">connected · frame deep-links on</span>
+            <Button size="sm" variant="danger" disabled={unlink.isPending} onClick={() => unlink.mutate()}>
+              Unlink
+            </Button>
+          </span>
         </div>
       )}
 
