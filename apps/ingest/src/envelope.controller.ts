@@ -82,15 +82,20 @@ export class EnvelopeController {
     const key = await this.dsn.resolve(publicKey, projectId);
     if (!key) return res.status(403).json({ error: 'invalid or disabled key' });
 
+    // Auth resolves the *real* project id from the (unique) public key. The URL
+    // :projectId is unreliable — the Sentry SDK truncates our UUID project ids to
+    // leading digits — so everything downstream keys off the resolved id.
+    const realProjectId = key.projectId;
+
     // Remote kill switch (FR-SDK-8): drop cheaply if ingest disabled for project.
     if (!key.ingestEnabled) {
-      await countDrop(projectId, 'disabled');
+      await countDrop(realProjectId, 'disabled');
       return res.status(202).json({ status: 'disabled' });
     }
 
-    const gate = await this.rl.check(projectId, key.rateLimit);
+    const gate = await this.rl.check(realProjectId, key.rateLimit);
     if (gate.limited) {
-      await countDrop(projectId, 'rate_limited');
+      await countDrop(realProjectId, 'rate_limited');
       res.setHeader('Retry-After', String(gate.retryAfter));
       return res.status(429).json({ error: 'rate limited' });
     }
@@ -98,16 +103,16 @@ export class EnvelopeController {
     const raw: Buffer = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body ?? '');
     const result = this.env.shallowValidate(raw, contentEncoding);
     if (!result.ok) {
-      await countDrop(projectId, result.status === 413 ? 'too_large' : 'invalid');
+      await countDrop(realProjectId, result.status === 413 ? 'too_large' : 'invalid');
       return res.status(result.status ?? 400).json({ error: result.reason });
     }
 
     // Stream oversized replay/attachment blobs to R2; enqueue only a pointer so the
     // big blob never sits in the queue (FR-ING-4/FR-RPL-2). No-op without R2.
-    const { inline, blobs } = await splitOversizedBlobs(result.bytes, projectId, result.eventId);
+    const { inline, blobs } = await splitOversizedBlobs(result.bytes, realProjectId, result.eventId);
 
     const job: IngestJob = {
-      projectId,
+      projectId: realProjectId,
       envelopeB64: inline.toString('base64'),
       eventId: result.eventId,
       receivedAt: new Date().toISOString(),
@@ -115,7 +120,7 @@ export class EnvelopeController {
     };
     // Idempotency key on event_id (FR-WRK-2 dedupe starts here).
     await ingestQueue.add('envelope', job, {
-      jobId: result.eventId ? `${projectId}_${result.eventId}` : undefined,
+      jobId: result.eventId ? `${realProjectId}_${result.eventId}` : undefined,
       removeOnComplete: 1000,
       removeOnFail: 5000,
       attempts: 5,

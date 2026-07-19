@@ -576,6 +576,17 @@ GitHub advanced (GD-043/44/45) code-complete; live needs a GitHub App install.
 ### Sprint Stats
 - Total: 6  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 6  /  BLOCKED: 0
 
+## Sprint 24 — Fix prod 403 "invalid or disabled key" (UUID project id truncation)
+**Status:** COMPLETE
+**Started:** 2026-07-19
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-096 | Ingest: auth by public key, stop requiring URL projectId match | DONE | HIGH | FR-ING-1: Sentry SDK `dsnFromString` strips a non-numeric DSN project id to leading digits (`/^\d+/`), so our UUID `034b5b59-…` was POSTed as `/api/034/envelope/`; `DsnService.resolve` required `entry.projectId === projectId` → always null → 403. Public key is globally unique + write-only → authenticate on it alone (Sentry's model). Controller now keys countDrop/rate-limit/blobs/job off the resolved `key.projectId`, not the mangled URL id. |
+
+### Sprint Stats
+- Total: 1  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 1  /  BLOCKED: 0
+
 ### Verification notes (Sprint 22)
 - api+web+db typecheck clean; web prod build clean; 19 tests green.
 - Migration 0008 applied (dedupe dup github_apps per org → restore `github_apps_org_uq` unique). Supersedes GD-087's multi-app (Sprint 21) per user correction.

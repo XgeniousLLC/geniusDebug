@@ -19,11 +19,16 @@ export class DsnService {
   private cache = new Map<string, CachedKey>();
   private readonly ttlMs = 5000;
 
-  async resolve(publicKey: string, projectId: string): Promise<CachedKey | null> {
+  // The public key is globally unique (dsn_keys_public_key_uq) and write-only, so
+  // it alone authenticates and identifies the project — same as Sentry's model.
+  // We deliberately do NOT require the URL :projectId to equal the stored id: the
+  // Sentry SDK mangles a non-numeric DSN project id (our ids are UUIDs) by keeping
+  // only leading digits (`dsnFromString` runs `projectId.match(/^\d+/)`), so a
+  // UUID like `034b5b59-…` is posted as `/api/034/envelope/` and could never
+  // match. `projectId` is kept only for cache-key symmetry / callers.
+  async resolve(publicKey: string, _projectId: string): Promise<CachedKey | null> {
     const hit = this.cache.get(publicKey);
-    if (hit && hit.expires > Date.now()) {
-      return hit.projectId === projectId ? hit : null;
-    }
+    if (hit && hit.expires > Date.now()) return hit;
     const rows = await db
       .select({
         projectId: dsnKeys.projectId,
@@ -37,6 +42,6 @@ export class DsnService {
     if (rows.length === 0) return null;
     const entry: CachedKey = { ...rows[0], expires: Date.now() + this.ttlMs };
     this.cache.set(publicKey, entry);
-    return entry.projectId === projectId ? entry : null;
+    return entry;
   }
 }
