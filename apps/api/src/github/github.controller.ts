@@ -5,6 +5,7 @@ import { and, eq, inArray } from 'drizzle-orm';
 import { JwtGuard, type AuthPrincipal } from '../auth/jwt.guard';
 import { GithubService } from './github.service';
 import { encrypt } from '../crypto';
+import { accessibleProjectIds } from '../access';
 
 const API_URL = process.env.API_PUBLIC_URL ?? `http://localhost:${process.env.API_PORT ?? 4002}`;
 const WEB_URL = process.env.WEB_URL ?? 'http://localhost:5199';
@@ -166,7 +167,7 @@ export class GithubController {
   @Get('issues/:shortId/suspect-commits')
   @UseGuards(JwtGuard)
   async suspectCommits(@Req() req: Request & { user?: AuthPrincipal }, @Param('shortId') shortId: string) {
-    const ctx = await this.issueRepoContext(req.user!.orgId, shortId);
+    const ctx = await this.issueRepoContext(req.user!, shortId);
     if (!ctx) return { available: false };
     if (!ctx.installationId) return { available: false, reason: 'no GitHub App installation' };
     const token = await this.gh.installationTokenForOrg(req.user!.orgId, ctx.installationId);
@@ -180,8 +181,9 @@ export class GithubController {
   @Post('issues/:shortId/create')
   @UseGuards(JwtGuard)
   async createGithubIssue(@Req() req: Request & { user?: AuthPrincipal }, @Param('shortId') shortId: string) {
-    if (req.user!.role !== 'admin') throw new ForbiddenException('admin only');
-    const ctx = await this.issueRepoContext(req.user!.orgId, shortId);
+    // Any role with access to the issue's project may open a GitHub issue (FR-GH-6);
+    // project access is enforced via issueRepoContext (accessible-project scoped).
+    const ctx = await this.issueRepoContext(req.user!, shortId);
     if (!ctx) throw new BadRequestException('issue or repo not found');
     if (!ctx.installationId) throw new BadRequestException('no GitHub App installation');
     const token = await this.gh.installationTokenForOrg(req.user!.orgId, ctx.installationId);
@@ -229,8 +231,8 @@ export class GithubController {
     return { ok: true, resolved };
   }
 
-  private async issueRepoContext(orgId: string, shortId: string) {
-    const pids = (await db.select({ id: projects.id }).from(projects).where(eq(projects.orgId, orgId))).map((r) => r.id);
+  private async issueRepoContext(user: AuthPrincipal, shortId: string) {
+    const pids = await accessibleProjectIds(user);
     if (pids.length === 0) return null;
     const iss = await db
       .select({ projectId: issues.projectId, title: issues.title, culprit: issues.culprit, type: issues.type })

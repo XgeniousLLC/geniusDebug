@@ -603,8 +603,10 @@ GitHub advanced (GD-043/44/45) code-complete; live needs a GitHub App install.
 | GD-104 | Doc: AI fix-suggester agent (NEXT STAGE) | DONE | LOW | Wrote `docs/ai-fix-suggester.md` — design for an agent that analyzes the symbolicated error + source pulled from the linked GitHub repo and suggests a probable fix (root cause + unified-diff patch), surfaced on Issue Detail. PLANNED/parked; phased P1 diagnose → P2 grounded patches → P3 draft PR. Not built — build after core stabilizes. |
 | GD-105 | Real rrweb replay playback (closes GD-053) | DONE | MED | FR-RPL-5/6: (1) ingest now streams **every** `replay_recording` to R2, not just oversized — and byte-accurate (honors item `length`, stores RAW bytes; the old `\n`-split + utf8 re-encode corrupted the blob AND left small recordings with no R2 blob → no playback). (2) new api R2 read client + `GET /replays/:id/recording` → fetch blob, strip `{segment_id}\n`, zlib/gzip/raw decode → rrweb events (5 unit tests, incl. Sentry's zlib-deflate default). (3) web ReplayPlayer mounts real `rrweb-player` (lazy 129KB chunk) when events present; masked placeholder + reason when no blob. |
 
+| GD-106 | Any role can create a GitHub issue | DONE | MED | FR-GH-6/NFR-SEC-6: `createGithubIssue` was `admin only` (403 "admin only" for members). Dropped the admin gate; `issueRepoContext` now scopes by `accessibleProjectIds(user)` so any role with access to the issue's project can open a GitHub issue (and suspect-commits read is access-scoped too, was org-wide). Web already showed the button to all roles. |
+
 ### Sprint Stats
-- Total: 9  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 8  /  PLANNED: 1 (GD-104 doc-only)
+- Total: 10  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 9  /  PLANNED: 1 (GD-104 doc-only)
 - Tests: 26 green (7 ingest + 14 workers + 5 api). Needs redeploy: ingest+api+workers+web.
 
 ### Notes
