@@ -3,6 +3,7 @@ import { useQuery, useMutation } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
 import { Button, Skeleton } from './ui';
 import { GithubConnect } from './GithubConnect';
+import { buildDsn } from '../lib/ingest';
 
 export interface GuideProject {
   id: string;
@@ -17,8 +18,7 @@ export function IntegrationGuide({ project, onChanged }: { project: GuideProject
     queryFn: () => api<{ publicKey: string; isActive: boolean }[]>(`/projects/${project.id}/keys`),
   });
   const dsnKey = keys.data?.find((k) => k.isActive) ?? keys.data?.[0];
-  const host = `${window.location.hostname}:4001`;
-  const dsn = dsnKey ? `https://${dsnKey.publicKey}@${host}/${project.id}` : '…';
+  const dsn = dsnKey ? buildDsn(dsnKey.publicKey, project.id) : '…';
 
   const snippet = `// sentry.client.config.ts
 import * as Sentry from "@sentry/nextjs";
