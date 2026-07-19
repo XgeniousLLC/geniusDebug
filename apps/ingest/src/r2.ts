@@ -43,7 +43,9 @@ async function resolveConfig(): Promise<R2Config | null> {
         cfg = { endpoint: c.endpoint, bucket: c.bucket, accessKeyId: sec.accessKeyId, secretAccessKey: sec.secretAccessKey };
       }
     }
-  } catch {
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('[ingest] R2 config resolution failed — if R2 is set in Integrations, ensure APP_ENCRYPTION_KEY matches across all services, or set R2 env vars (R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_ENDPOINT, R2_BUCKET) on ingest.', e instanceof Error ? e.message : e);
     cfg = null;
   }
   cache = { cfg, at: Date.now() };

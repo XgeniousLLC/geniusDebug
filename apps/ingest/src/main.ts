@@ -5,6 +5,7 @@ import { NestFactory } from '@nestjs/core';
 import { ExpressAdapter } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { HtmlExceptionFilter } from './http-pages';
+import { r2Configured } from './r2';
 
 const MAX_ENVELOPE_BYTES = Number(process.env.MAX_ENVELOPE_BYTES ?? 209_715_200);
 
@@ -29,6 +30,13 @@ async function bootstrap() {
   await app.listen(port);
   // eslint-disable-next-line no-console
   console.log(`[ingest] listening on :${port}`);
+
+  // Warn if R2 isn't reachable — replays will have no DOM playback without it.
+  const r2 = await r2Configured().catch(() => false);
+  if (!r2) {
+    // eslint-disable-next-line no-console
+    console.warn('[ingest] ⚠ R2 not configured — replay recording blobs will NOT be stored. Set R2 env vars or connect R2 in Integrations. Also ensure APP_ENCRYPTION_KEY is the same across all services.');
+  }
 }
 
 bootstrap();
