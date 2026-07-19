@@ -10,7 +10,21 @@ export interface BlobPointer {
   type: string; // replay_recording | attachment
   r2Key: string;
   size: number;
+  segmentId?: number; // replay_recording: rrweb segment index (multi-segment)
   filename?: string;
+}
+
+/** Read the plaintext `{"segment_id":N}\n` prefix of an rrweb recording payload. */
+function replaySegmentId(payload: Buffer): number | null {
+  if (payload[0] !== 0x7b /* { */) return null;
+  const nl = payload.indexOf(NL);
+  if (nl < 0 || nl > 64) return null;
+  try {
+    const h = JSON.parse(payload.subarray(0, nl).toString('utf8')) as { segment_id?: unknown };
+    return typeof h.segment_id === 'number' ? h.segment_id : null;
+  } catch {
+    return null;
+  }
 }
 
 export interface SplitResult {
@@ -98,9 +112,18 @@ export async function splitOversizedBlobs(
       (header.type === 'attachment' && size > STREAM_THRESHOLD);
 
     if (toR2) {
-      const r2Key = `blobs/${projectId}/${eventId ?? 'e'}/${idx}-${header.type}`;
+      // Multi-segment replays: every segment arrives in its OWN envelope but all
+      // share the same envelope event_id (= replayId). Keying by item index (idx,
+      // always 0 for a 1-recording envelope) made every segment overwrite the same
+      // R2 object — only the last segment survived, so the FullSnapshot (segment 0)
+      // was clobbered and playback broke. Key by the real segment_id so segments
+      // coexist (FR-RPL, GD-124). rrweb payload is prefixed with a plaintext
+      // `{"segment_id":N}\n` header, readable without decompressing.
+      const seg = header.type === 'replay_recording' ? replaySegmentId(payload) : null;
+      const slot = seg ?? idx;
+      const r2Key = `blobs/${projectId}/${eventId ?? 'e'}/${slot}-${header.type}`;
       await deps.put(r2Key, payload); // raw bytes — binary-safe
-      blobs.push({ type: header.type!, r2Key, size, filename: header.filename });
+      blobs.push({ type: header.type!, r2Key, size, segmentId: seg ?? undefined, filename: header.filename });
       idx++;
       // Drop the item from the inline envelope (pointer travels on the job).
     } else {

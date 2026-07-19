@@ -1,7 +1,8 @@
-import { Controller, Get, Param, Query, Req, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Query, Req, UseGuards } from '@nestjs/common';
+import { deepseekJson, deepseekConfigured } from '../suggest/deepseek';
 import type { Request } from 'express';
-import { db, traces, spans, events, issues, replays, alertRules, notifications } from '@geniusdebug/db';
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { db, traces, spans, events, issues, replays, alertRules, notifications, releases, projects } from '@geniusdebug/db';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { JwtGuard, type AuthPrincipal } from '../auth/jwt.guard';
 import { accessibleProjectIds, assertProjectAccess } from '../access';
 import { getObject } from '../r2';
@@ -120,6 +121,92 @@ export class MiscController {
       return { events: [], reason: hasPrefix ? 'blob unavailable (R2 unconfigured, wrong encryption key, or decode failed)' : 'no recording blob in R2' };
     }
     return { events, segments: fetched };
+  }
+
+  /** AI session summary for a replay (GD-145) — narrative + steps via DeepSeek. */
+  @Post('replays/summary')
+  async replaySummary(@Body() body: { lines?: string[] }) {
+    const lines = (body.lines ?? []).slice(0, 120);
+    if (lines.length === 0) return { summary: null, steps: [], reason: 'no activity' };
+    if (!(await deepseekConfigured())) return { summary: null, steps: [], reason: 'DeepSeek not configured' };
+    const system =
+      'You summarize a web session replay for a developer. Given a timestamped activity log ' +
+      '(navigation, clicks, console, network, web-vitals, errors), produce a concise narrative and key steps. ' +
+      'Return JSON: {"summary": string (1-2 sentences), "steps": [{"time": string, "text": string}] (3-6 items)}.';
+    const res = await deepseekJson<{ summary: string; steps: { time: string; text: string }[] }>(
+      system,
+      `Activity log:\n${lines.join('\n')}`,
+    );
+    if (!res.ok || !res.data) return { summary: null, steps: [], reason: res.reason ?? 'AI failed' };
+    return { summary: res.data.summary, steps: res.data.steps ?? [] };
+  }
+
+  /** Performance explorer (GD-136): worst spans + per-op p75, scoped to access. */
+  @Get('performance')
+  async performance(@Req() req: Request & { user?: AuthPrincipal }) {
+    const pids = await accessibleProjectIds(req.user!);
+    if (pids.length === 0) return { samples: [], byOp: [] };
+
+    // Slowest individual spans (samples table), joined to their trace/transaction.
+    const samples = await db
+      .select({
+        spanId: spans.id,
+        op: spans.op,
+        description: spans.description,
+        durationMs: spans.durationMs,
+        status: spans.status,
+        traceId: spans.traceId,
+        transaction: traces.rootTransaction,
+        startTs: spans.startTs,
+      })
+      .from(spans)
+      .innerJoin(traces, eq(traces.traceId, spans.traceId))
+      .where(inArray(traces.projectId, pids))
+      .orderBy(desc(spans.durationMs))
+      .limit(50);
+
+    // Per-op aggregates: count + avg + p75 duration.
+    const byOp = await db
+      .select({
+        op: spans.op,
+        count: sql<number>`count(*)::int`,
+        avgMs: sql<number>`round(avg(${spans.durationMs}))::int`,
+        p75Ms: sql<number>`round(percentile_cont(0.75) within group (order by ${spans.durationMs}))::int`,
+        maxMs: sql<number>`max(${spans.durationMs})::int`,
+      })
+      .from(spans)
+      .innerJoin(traces, eq(traces.traceId, spans.traceId))
+      .where(inArray(traces.projectId, pids))
+      .groupBy(spans.op)
+      .orderBy(sql`percentile_cont(0.75) within group (order by ${spans.durationMs}) desc nulls last`)
+      .limit(30);
+
+    return { samples, byOp };
+  }
+
+  /** Releases across accessible projects with new-issue counts (GD-135). */
+  @Get('releases')
+  async releasesList(@Req() req: Request & { user?: AuthPrincipal }) {
+    const pids = await accessibleProjectIds(req.user!);
+    if (pids.length === 0) return [];
+    const rows = await db
+      .select({
+        id: releases.id,
+        version: releases.version,
+        commitSha: releases.commitSha,
+        createdAt: releases.createdAt,
+        projectId: releases.projectId,
+        projectName: projects.name,
+        newIssues: sql<number>`count(distinct ${issues.id})::int`,
+      })
+      .from(releases)
+      .leftJoin(projects, eq(projects.id, releases.projectId))
+      .leftJoin(issues, eq(issues.firstReleaseId, releases.id))
+      .where(inArray(releases.projectId, pids))
+      .groupBy(releases.id, projects.name)
+      .orderBy(desc(releases.createdAt))
+      .limit(50);
+    return rows;
   }
 
   @Get('alerts')

@@ -62,6 +62,7 @@ export interface IssueDto {
   culprit: string | null;
   type: string | null;
   level: IssueLevel;
+  category: string;
   status: IssueStatus;
   isRegressed: boolean;
   assigneeUserId: string | null;

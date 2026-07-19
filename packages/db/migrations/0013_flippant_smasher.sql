@@ -1,0 +1,1 @@
+ALTER TABLE "issues" ADD COLUMN "category" varchar(24) DEFAULT 'error' NOT NULL;

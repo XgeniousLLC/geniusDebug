@@ -20,6 +20,7 @@ export function Issues() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const [status, setStatus] = React.useState<StatusFilter>('unresolved');
+  const [category, setCategory] = React.useState(params.get('category') ?? 'all');
   const [sort, setSort] = React.useState<Sort>('lastSeen');
   const [query, setQuery] = React.useState(params.get('query') ?? '');
   const [cursor, setCursor] = React.useState(0); // keyboard nav selection
@@ -32,11 +33,12 @@ export function Issues() {
     if (q !== null) setQuery(q);
   }, [params]);
 
-  const key = ['issues', { environment, range, status, sort, query, projectId: currentProjectId }];
+  const key = ['issues', { environment, range, status, category, sort, query, projectId: currentProjectId }];
   const issues = useQuery({
     queryKey: key,
     queryFn: () => {
       const p = new URLSearchParams({ status, sort });
+      if (category !== 'all') p.set('category', category);
       if (environment !== 'all') p.set('environment', environment);
       if (range !== 'all') p.set('range', range);
       if (query) p.set('query', query);
@@ -102,7 +104,7 @@ export function Issues() {
 
   if (noProjects) {
     return (
-      <div className="mx-auto max-w-6xl px-6 py-5">
+      <div className="mx-auto max-w-6xl px-4 py-5 sm:px-6">
         <h1 className="mb-4 text-h1 font-semibold">Issues</h1>
         <NoProject />
       </div>
@@ -110,7 +112,7 @@ export function Issues() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl px-6 py-5">
+    <div className="mx-auto max-w-6xl px-4 py-5 sm:px-6">
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-h1 font-semibold">Issues</h1>
       </div>
@@ -127,11 +129,26 @@ export function Issues() {
             ['all', 'All'],
           ]}
         />
+        <select
+          value={category}
+          onChange={(e) => setCategory(e.target.value)}
+          className="h-8 rounded-md border border-border bg-surface px-2 text-small text-text"
+          title="Category"
+        >
+          <option value="all">All categories</option>
+          <option value="error">Errors</option>
+          <option value="warning">Warnings</option>
+          <option value="performance">Performance</option>
+          <option value="network">Network</option>
+          <option value="ui">UI</option>
+          <option value="security">Security</option>
+          <option value="other">Other</option>
+        </select>
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Filter events…"
-          className="h-8 min-w-[200px] flex-1 rounded-md border border-border bg-surface px-3 text-small text-text placeholder:text-text-faint"
+          className="h-8 min-w-0 flex-1 rounded-md border border-border bg-surface px-3 text-small text-text placeholder:text-text-faint sm:min-w-[200px]"
         />
         <select
           value={sort}
@@ -174,17 +191,17 @@ export function Issues() {
         />
       ) : (
         <div className="overflow-hidden rounded-md border border-border">
-          <div className="grid grid-cols-[auto_1fr_auto_auto_auto] items-center gap-4 border-b border-border bg-surface px-4 py-2 text-caption uppercase tracking-wide text-text-faint">
+          <div className="grid grid-cols-[auto_1fr_auto_auto_auto] items-center gap-2 border-b border-border bg-surface px-3 py-2 text-caption uppercase tracking-wide text-text-faint sm:gap-4 sm:px-4">
             <span className="w-4" />
             <span>Issue</span>
-            <span className="w-16 text-right">Events</span>
-            <span className="w-16 text-right">Users</span>
-            <span className="w-16 text-right">Age</span>
+            <span className="w-10 text-right sm:w-16">Events</span>
+            <span className="hidden w-16 text-right sm:block">Users</span>
+            <span className="w-10 text-right sm:w-16">Age</span>
           </div>
           {rows.map((it, idx) => (
             <div
               key={it.id}
-              className={`group grid grid-cols-[auto_1fr_auto_auto_auto] items-center gap-4 border-b border-border px-4 py-3 last:border-0 hover:bg-surface-2 ${
+              className={`group grid grid-cols-[auto_1fr_auto_auto_auto] items-center gap-2 border-b border-border px-3 py-3 last:border-0 hover:bg-surface-2 sm:gap-4 sm:px-4 ${
                 idx === cursor ? 'bg-surface-2 ring-1 ring-inset ring-accent/40' : 'bg-bg'
               }`}
             >
@@ -204,6 +221,36 @@ export function Issues() {
                 <div className="mb-1 flex items-center gap-2">
                   <LevelPill level={it.level} />
                   <StatusChip status={it.status} regressed={it.isRegressed} />
+                  {/* Triage actions — always visible, top-right of the row (GD-124). */}
+                  <div className="ml-auto flex shrink-0 items-center gap-1">
+                    {it.status === 'resolved' ? (
+                      <Button size="sm" variant="ghost" onClick={() => act.mutate({ shortId: it.shortId, action: 'unresolve' })}>
+                        Unresolve
+                      </Button>
+                    ) : (
+                      <Button size="sm" variant="ghost" onClick={() => act.mutate({ shortId: it.shortId, action: 'resolve' })}>
+                        Resolve
+                      </Button>
+                    )}
+                    {it.status === 'archived' ? (
+                      <Button size="sm" variant="ghost" onClick={() => act.mutate({ shortId: it.shortId, action: 'unarchive' })}>
+                        Unarchive
+                      </Button>
+                    ) : (
+                      <Button size="sm" variant="ghost" onClick={() => act.mutate({ shortId: it.shortId, action: 'archive' })}>
+                        Archive
+                      </Button>
+                    )}
+                    {it.status === 'muted' ? (
+                      <Button size="sm" variant="ghost" onClick={() => act.mutate({ shortId: it.shortId, action: 'unmute' })}>
+                        Unmute
+                      </Button>
+                    ) : (
+                      <Button size="sm" variant="ghost" onClick={() => act.mutate({ shortId: it.shortId, action: 'mute' })}>
+                        Mute
+                      </Button>
+                    )}
+                  </div>
                 </div>
                 <Link to={`/issues/${it.shortId}`} className="block truncate text-body font-semibold text-text hover:text-accent">
                   {it.title}
@@ -213,39 +260,10 @@ export function Issues() {
                   <span className="text-text-faint">·</span>
                   <span className="text-text-faint">{it.shortId}</span>
                 </div>
-                <div className="mt-1 hidden gap-1 group-hover:flex">
-                  {it.status === 'resolved' ? (
-                    <Button size="sm" variant="ghost" onClick={() => act.mutate({ shortId: it.shortId, action: 'unresolve' })}>
-                      Unresolve
-                    </Button>
-                  ) : (
-                    <Button size="sm" variant="ghost" onClick={() => act.mutate({ shortId: it.shortId, action: 'resolve' })}>
-                      Resolve
-                    </Button>
-                  )}
-                  {it.status === 'archived' ? (
-                    <Button size="sm" variant="ghost" onClick={() => act.mutate({ shortId: it.shortId, action: 'unarchive' })}>
-                      Unarchive
-                    </Button>
-                  ) : (
-                    <Button size="sm" variant="ghost" onClick={() => act.mutate({ shortId: it.shortId, action: 'archive' })}>
-                      Archive
-                    </Button>
-                  )}
-                  {it.status === 'muted' ? (
-                    <Button size="sm" variant="ghost" onClick={() => act.mutate({ shortId: it.shortId, action: 'unmute' })}>
-                      Unmute
-                    </Button>
-                  ) : (
-                    <Button size="sm" variant="ghost" onClick={() => act.mutate({ shortId: it.shortId, action: 'mute' })}>
-                      Mute
-                    </Button>
-                  )}
-                </div>
               </div>
-              <span className="w-16 text-right font-mono text-small text-text">{compact(it.timesSeen)}</span>
-              <span className="w-16 text-right font-mono text-small text-text-muted">{compact(it.usersAffected)}</span>
-              <span className="w-16 text-right font-mono text-small text-text-muted">{timeAgo(it.lastSeen)}</span>
+              <span className="w-10 text-right font-mono text-small text-text sm:w-16">{compact(it.timesSeen)}</span>
+              <span className="hidden w-16 text-right font-mono text-small text-text-muted sm:block">{compact(it.usersAffected)}</span>
+              <span className="w-10 text-right font-mono text-small text-text-muted sm:w-16">{timeAgo(it.lastSeen)}</span>
             </div>
           ))}
         </div>

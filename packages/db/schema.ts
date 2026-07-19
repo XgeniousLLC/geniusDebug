@@ -218,6 +218,9 @@ export const issues = pgTable(
     culprit: text('culprit'),
     type: varchar('type', { length: 160 }),
     level: issueLevel('level').notNull().default('error'),
+    // Coarse category for filtering / the Warnings view (GD-134): error | warning |
+    // performance | security | network | ui | other. Classified by the worker.
+    category: varchar('category', { length: 24 }).notNull().default('error'),
     status: issueStatus('status').notNull().default('unresolved'),
     isRegressed: boolean('is_regressed').notNull().default(false),
     assigneeUserId: uuid('assignee_user_id').references(() => users.id, { onDelete: 'set null' }),
@@ -226,6 +229,9 @@ export const issues = pgTable(
     timesSeen: integer('times_seen').notNull().default(0),
     usersAffected: integer('users_affected').notNull().default(0),
     firstReleaseId: uuid('first_release_id').references(() => releases.id, { onDelete: 'set null' }),
+    // Public share token (GD-133): when set, the issue is readable unauthenticated
+    // at /public/issues/:shareToken. Null = private (default).
+    shareToken: varchar('share_token', { length: 64 }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => ({
@@ -234,6 +240,7 @@ export const issues = pgTable(
     fingerprintUq: uniqueIndex('issues_project_fingerprint_uq').on(t.projectId, t.fingerprint),
     firstSeenIdx: index('issues_first_seen_idx').on(t.projectId, t.firstSeen),
     shortIdUq: uniqueIndex('issues_project_short_id_uq').on(t.projectId, t.shortId),
+    shareTokenIdx: uniqueIndex('issues_share_token_uq').on(t.shareToken),
   }),
 );
 
@@ -298,6 +305,9 @@ export const traces = pgTable('traces', {
   // Row synthesized from an error that carried a trace context (no `transaction`
   // item yet). A real transaction overwrites it (FR-TRC-4).
   synthetic: boolean('synthetic').notNull().default(false),
+  // Web vitals + other measurements from the transaction envelope (GD-136/143):
+  // { lcp: {value, unit}, fcp: {...}, ttfb, cls, inp, fid, ... }.
+  measurements: jsonb('measurements').$type<Record<string, { value: number; unit?: string }>>(),
 });
 
 export const spans = pgTable(

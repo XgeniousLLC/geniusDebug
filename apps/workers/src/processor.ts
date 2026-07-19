@@ -5,6 +5,7 @@ import { normalizeEvent } from './normalize';
 import { computeFingerprint } from './fingerprint';
 import { symbolicate } from './symbolicate';
 import { buildShortId } from './short-id';
+import { classifyCategory } from './category';
 import { evaluateAlerts } from './alerts';
 import { countDrop } from './metrics';
 
@@ -17,6 +18,7 @@ interface BlobPointer {
   type: string;
   r2Key: string;
   size: number;
+  segmentId?: number;
   filename?: string;
 }
 
@@ -112,8 +114,13 @@ async function processEvent(projectId: string, payload: SentryEventPayload): Pro
   const symbolicated = await symbolicate(norm, projectId);
   const fingerprint = computeFingerprint(symbolicated);
 
-  const proj = await db.select({ platform: projects.platform }).from(projects).where(eq(projects.id, projectId)).limit(1);
+  const proj = await db
+    .select({ platform: projects.platform, slug: projects.slug })
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1);
   const projectPlatform = proj[0]?.platform ?? 'javascript-nextjs';
+  const projectSlug = proj[0]?.slug ?? projectPlatform;
 
   const envId = await ensureEnvironment(projectId, symbolicated.environment);
   const releaseId = await ensureRelease(projectId, symbolicated.release);
@@ -129,6 +136,7 @@ async function processEvent(projectId: string, payload: SentryEventPayload): Pro
     type: symbolicated.exceptionType ?? null,
     level: symbolicated.level,
     projectPlatform,
+    projectSlug,
     eventPlatform: symbolicated.platform,
     seenAt,
     releaseId,
@@ -210,6 +218,7 @@ interface UpsertArgs {
   type: string | null;
   level: 'fatal' | 'error' | 'warning' | 'info' | 'debug';
   projectPlatform: string;
+  projectSlug: string;
   eventPlatform: string;
   seenAt: Date;
   releaseId: string | null;
@@ -238,33 +247,41 @@ async function upsertIssue(a: UpsertArgs): Promise<{ issueId: string; regressed:
     return { issueId: found[0].id, regressed };
   }
 
-  // New issue — assign a short ID from a per-project sequence.
-  const countRows = await db
-    .select({ c: dsql<number>`count(*)::int` })
-    .from(issues)
-    .where(eq(issues.projectId, a.projectId));
-  const seq = (countRows[0]?.c ?? 0) + 1;
-  const shortId = buildShortId(a.projectPlatform, a.eventPlatform, seq);
-
-  const inserted = await db
-    .insert(issues)
-    .values({
-      projectId: a.projectId,
-      shortId,
-      fingerprint: a.fingerprint,
-      title: a.title,
-      culprit: a.culprit,
-      type: a.type,
-      level: a.level,
-      status: 'unresolved',
-      firstSeen: a.seenAt,
-      lastSeen: a.seenAt,
-      timesSeen: 1,
-      usersAffected: a.isNewUser ? 1 : 0,
-      firstReleaseId: a.releaseId ?? undefined,
-    })
-    .onConflictDoNothing({ target: [issues.projectId, issues.fingerprint] })
-    .returning({ id: issues.id });
+  // New issue — project-prefix + random short ID (GD-137). Retry on the rare
+  // short_id collision (the fingerprint race is handled by onConflictDoNothing).
+  let inserted: { id: string }[] = [];
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const shortId = buildShortId(a.projectSlug, a.projectPlatform);
+    try {
+      inserted = await db
+        .insert(issues)
+        .values({
+          projectId: a.projectId,
+          shortId,
+          fingerprint: a.fingerprint,
+          title: a.title,
+          culprit: a.culprit,
+          type: a.type,
+          level: a.level,
+          category: classifyCategory({ level: a.level, type: a.type, title: a.title, culprit: a.culprit }),
+          status: 'unresolved',
+          firstSeen: a.seenAt,
+          lastSeen: a.seenAt,
+          timesSeen: 1,
+          usersAffected: a.isNewUser ? 1 : 0,
+          firstReleaseId: a.releaseId ?? undefined,
+        })
+        .onConflictDoNothing({ target: [issues.projectId, issues.fingerprint] })
+        .returning({ id: issues.id });
+      break;
+    } catch (e: unknown) {
+      const err = e as { code?: string; constraint?: string; detail?: string };
+      const isShortIdCollision =
+        err?.code === '23505' && /short_id/.test(String(err.constraint ?? err.detail ?? ''));
+      if (isShortIdCollision && attempt < 4) continue; // regenerate + retry
+      throw e;
+    }
+  }
 
   if (inserted[0]) {
     await evaluateAlerts({ projectId: a.projectId, issueId: inserted[0].id, title: a.title, isNew: true, regressed: false });
@@ -283,7 +300,7 @@ async function upsertIssue(a: UpsertArgs): Promise<{ issueId: string; regressed:
 async function processReplay(
   projectId: string,
   payload: Record<string, unknown>,
-  recBlob?: { r2Key: string; size: number },
+  recBlob?: { r2Key: string; size: number; segmentId?: number },
 ): Promise<void> {
   // Assemble replay metadata (FR-RPL-3/5); the recording blob lives in R2 (pointer).
   const traceIds = (payload.trace_ids as string[] | undefined) ?? [];
@@ -293,7 +310,11 @@ async function processReplay(
     : new Date();
   const end = payload.timestamp ? new Date(Number(payload.timestamp) * 1000) : new Date();
   const durationMs = Math.max(0, end.getTime() - start.getTime());
-  const segmentId = typeof payload.segment_id === 'number' ? payload.segment_id : 0;
+  // Real segment index comes from the recording blob's `{"segment_id":N}` prefix
+  // (via the ingest pointer); the replay_event metadata often lacks it. Falling
+  // back to 0 for every segment collapsed them into one row (GD-124).
+  const segmentId =
+    recBlob?.segmentId ?? (typeof payload.segment_id === 'number' ? payload.segment_id : 0);
   const replayId = typeof payload.replay_id === 'string' ? payload.replay_id : undefined;
 
   // Link to the issue that shares this trace, if any.
@@ -342,10 +363,11 @@ async function processTransaction(projectId: string, payload: SentryTransactionP
       endTs: end,
       platform: payload.platform ?? 'javascript',
       synthetic: false,
+      measurements: payload.measurements ?? null,
     })
     .onConflictDoUpdate({
       target: [traces.traceId],
-      set: { rootTransaction: payload.transaction, startTs: start, endTs: end, platform: payload.platform ?? 'javascript', synthetic: false },
+      set: { rootTransaction: payload.transaction, startTs: start, endTs: end, platform: payload.platform ?? 'javascript', synthetic: false, measurements: payload.measurements ?? null },
       setWhere: dsql`${traces.synthetic} = true`,
     });
 

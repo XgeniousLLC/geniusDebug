@@ -27,7 +27,7 @@ export function Alerts() {
   const del = useMutation({ mutationFn: (id: string) => api(`/alerts/${id}`, { method: 'DELETE' }), onSuccess: inval });
 
   return (
-    <div className="mx-auto max-w-4xl px-6 py-5">
+    <div className="mx-auto max-w-4xl px-4 py-5 sm:px-6">
       <h1 className="mb-4 text-h1 font-semibold">Alerts</h1>
 
       <div className="mb-4 flex items-center justify-between">
@@ -124,7 +124,7 @@ function RuleEditor({ onCreated }: { onCreated: () => void }) {
           </label>
           <label className="flex flex-col gap-1">
             <span className="text-caption text-text-faint">recipients (comma-sep)</span>
-            <input className={`${inp} min-w-[220px]`} value={recipients} onChange={(e) => setRecipients(e.target.value)} placeholder="dev@x.com, oncall@x.com" />
+            <input className={`${inp} w-full sm:w-auto sm:min-w-[220px]`} value={recipients} onChange={(e) => setRecipients(e.target.value)} placeholder="dev@x.com, oncall@x.com" />
           </label>
         </div>
         <div className="flex flex-wrap items-center gap-4 text-small">

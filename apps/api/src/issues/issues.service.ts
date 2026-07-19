@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { db, issues, events, environments, issueActivity, users, issueCounts } from '@geniusdebug/db';
-import { and, eq, desc, asc, ilike, or, inArray, gte } from 'drizzle-orm';
+import { randomBytes } from 'node:crypto';
+import { db, issues, events, environments, issueActivity, users, issueCounts, replays } from '@geniusdebug/db';
+import { and, eq, ne, desc, asc, ilike, or, inArray, gte } from 'drizzle-orm';
 import type { IssueDto, EventDto, IssueListQuery, IssueActionInput } from '@geniusdebug/shared';
 import type { AuthPrincipal } from '../auth/jwt.guard';
 import { accessibleProjectIds } from '../access';
@@ -21,6 +22,7 @@ export class IssuesService {
     const conds = [eq(issues.projectId, projectId)];
     const status = q.status ?? 'unresolved';
     if (status !== 'all') conds.push(eq(issues.status, status));
+    if (q.category && q.category !== 'all') conds.push(eq(issues.category, q.category));
     if (q.query) {
       const like = `%${q.query}%`;
       conds.push(or(ilike(issues.title, like), ilike(issues.culprit, like), ilike(issues.shortId, like))!);
@@ -110,7 +112,126 @@ export class IssuesService {
       events: evRows.map((e) => this.toEventDto(e)),
       activity,
       counts,
+      shareToken: issue.shareToken ?? null,
     };
+  }
+
+  /** Replays tied to this issue, collapsed to one row per session (FR-RPL / GD-132). */
+  async replaysForIssue(user: AuthPrincipal, shortId: string) {
+    const projectIds = await accessibleProjectIds(user);
+    if (projectIds.length === 0) return [];
+    const issueRows = await db
+      .select({ id: issues.id })
+      .from(issues)
+      .where(and(eq(issues.shortId, shortId), inArray(issues.projectId, projectIds)))
+      .limit(1);
+    if (issueRows.length === 0) throw new NotFoundException('issue not found');
+
+    const rows = await db
+      .select()
+      .from(replays)
+      .where(eq(replays.issueId, issueRows[0].id))
+      .orderBy(desc(replays.createdAt));
+
+    // Collapse many segment rows → one card per replay session.
+    const byId = new Map<
+      string,
+      { id: string; replayId: string | null; durationMs: number | null; segments: number; user: Record<string, unknown> | null; traceId: string | null; createdAt: Date }
+    >();
+    for (const r of rows) {
+      const key = r.replayId ?? r.id;
+      const ex = byId.get(key);
+      if (ex) {
+        ex.segments += 1;
+        if ((r.durationMs ?? 0) > (ex.durationMs ?? 0)) ex.durationMs = r.durationMs;
+      } else {
+        byId.set(key, {
+          id: r.id,
+          replayId: r.replayId,
+          durationMs: r.durationMs,
+          segments: 1,
+          user: r.user ?? null,
+          traceId: r.traceId,
+          createdAt: r.createdAt,
+        });
+      }
+    }
+    return [...byId.values()];
+  }
+
+  /** Toggle a public share link for an issue (GD-133). Returns the token (or null). */
+  async setShare(user: AuthPrincipal, shortId: string, enabled: boolean): Promise<{ shareToken: string | null }> {
+    const projectIds = await accessibleProjectIds(user);
+    if (projectIds.length === 0) throw new NotFoundException('issue not found');
+    const rows = await db
+      .select({ id: issues.id, shareToken: issues.shareToken })
+      .from(issues)
+      .where(and(eq(issues.shortId, shortId), inArray(issues.projectId, projectIds)))
+      .limit(1);
+    if (rows.length === 0) throw new NotFoundException('issue not found');
+    const token = enabled ? (rows[0].shareToken ?? randomBytes(18).toString('base64url')) : null;
+    await db.update(issues).set({ shareToken: token }).where(eq(issues.id, rows[0].id));
+    return { shareToken: token };
+  }
+
+  /** Unauthenticated read-only view of a publicly-shared issue (GD-133). */
+  async publicIssue(token: string) {
+    if (!token) throw new NotFoundException('not found');
+    const rows = await db.select().from(issues).where(eq(issues.shareToken, token)).limit(1);
+    if (rows.length === 0) throw new NotFoundException('not found');
+    const issue = rows[0];
+    const ev = await db
+      .select()
+      .from(events)
+      .where(eq(events.issueId, issue.id))
+      .orderBy(desc(events.timestamp))
+      .limit(1);
+    return { issue: this.toDto(issue), latestEvent: ev[0] ? this.toEventDto(ev[0]) : null };
+  }
+
+  /** Issues with a similar signature (culprit / type / title overlap) — FR-GRP (GD-132). */
+  async similarIssues(user: AuthPrincipal, shortId: string) {
+    const projectIds = await accessibleProjectIds(user);
+    if (projectIds.length === 0) return [];
+    const selfRows = await db
+      .select()
+      .from(issues)
+      .where(and(eq(issues.shortId, shortId), inArray(issues.projectId, projectIds)))
+      .limit(1);
+    if (selfRows.length === 0) throw new NotFoundException('issue not found');
+    const self = selfRows[0];
+
+    const cands = await db
+      .select()
+      .from(issues)
+      .where(and(eq(issues.projectId, self.projectId), ne(issues.id, self.id)))
+      .orderBy(desc(issues.lastSeen))
+      .limit(200);
+
+    const tokens = (s?: string | null) =>
+      new Set((s ?? '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter((w) => w.length > 2));
+    const selfTitle = tokens(self.title);
+    const jaccard = (a: Set<string>, b: Set<string>) => {
+      if (a.size === 0 || b.size === 0) return 0;
+      let inter = 0;
+      for (const t of a) if (b.has(t)) inter++;
+      return inter / (a.size + b.size - inter);
+    };
+
+    const scored = cands
+      .map((c) => {
+        let score = 0;
+        if (self.culprit && c.culprit && self.culprit === c.culprit) score += 0.45;
+        if (self.type && c.type && self.type === c.type) score += 0.3;
+        score += jaccard(selfTitle, tokens(c.title)) * 0.4;
+        if (self.level === c.level) score += 0.05;
+        return { issue: this.toDto(c), score: Math.min(1, score) };
+      })
+      .filter((x) => x.score >= 0.15)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 8);
+
+    return scored;
   }
 
   async act(user: AuthPrincipal, shortId: string, userId: string, input: IssueActionInput) {
@@ -170,6 +291,7 @@ export class IssuesService {
     culprit: r.culprit,
     type: r.type,
     level: r.level,
+    category: r.category,
     status: r.status,
     isRegressed: r.isRegressed,
     assigneeUserId: r.assigneeUserId,

@@ -22,7 +22,7 @@ export function ProjectSetup() {
 
   if (projects.isLoading) {
     return (
-      <div className="mx-auto max-w-3xl px-6 py-6">
+      <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6">
         <Skeleton className="h-64 w-full" />
       </div>
     );
@@ -31,7 +31,7 @@ export function ProjectSetup() {
   if (!project) return <NotFound />;
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-6">
+    <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6">
       <div className="mb-1 text-caption text-text-faint">
         <Link to="/projects" className="hover:text-accent">Projects</Link> / Setup
       </div>

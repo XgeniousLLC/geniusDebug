@@ -84,7 +84,7 @@ export function Projects() {
   const inp = 'h-9 rounded-md border border-border bg-bg px-2.5 text-small text-text';
 
   return (
-    <div className="mx-auto max-w-4xl px-6 py-5">
+    <div className="mx-auto max-w-4xl px-4 py-5 sm:px-6">
       <div className="mb-4 flex items-center justify-between">
         <div>
           <h1 className="text-h1 font-semibold">Projects</h1>

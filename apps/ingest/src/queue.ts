@@ -16,6 +16,7 @@ export interface BlobPointer {
   type: string;
   r2Key: string;
   size: number;
+  segmentId?: number;
   filename?: string;
 }
 

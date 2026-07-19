@@ -14,7 +14,7 @@ interface Replay {
 export function Replays() {
   const q = useQuery({ queryKey: ['replays'], queryFn: () => api<Replay[]>('/replays') });
   return (
-    <div className="mx-auto max-w-6xl px-6 py-5">
+    <div className="mx-auto max-w-6xl px-4 py-5 sm:px-6">
       <h1 className="mb-4 text-h1 font-semibold">Replays</h1>
       {q.isLoading ? (
         <Skeleton className="h-32 w-full" />

@@ -26,6 +26,7 @@ export type IssueActionInput = z.infer<typeof issueActionSchema>;
 export const issueListQuerySchema = z.object({
   environment: z.string().optional(),
   status: z.enum(['unresolved', 'resolved', 'archived', 'muted', 'all']).optional(),
+  category: z.enum(['error', 'warning', 'performance', 'security', 'network', 'ui', 'other', 'all']).optional(),
   query: z.string().optional(),
   sort: z.enum(['lastSeen', 'firstSeen', 'events', 'users']).optional(),
   // Time window on last-seen (FR-UI-2): 'all' = Since First Seen (no bound).
