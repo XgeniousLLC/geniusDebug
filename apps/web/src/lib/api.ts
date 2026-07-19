@@ -40,6 +40,13 @@ export async function api<T = unknown>(path: string, opts: RequestInit = {}): Pr
     } catch {
       /* ignore */
     }
+    // Session expired/invalid → clear token and bounce to login (once).
+    if (res.status === 401 && getToken()) {
+      setToken(null);
+      if (!location.pathname.startsWith('/login')) {
+        location.assign(`/login?next=${encodeURIComponent(location.pathname)}`);
+      }
+    }
     throw new ApiError(res.status, typeof msg === 'string' ? msg : 'request failed');
   }
   if (res.status === 204) return undefined as T;

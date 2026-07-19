@@ -292,6 +292,9 @@ export const traces = pgTable('traces', {
   environmentId: uuid('environment_id'),
   releaseId: uuid('release_id'),
   platform: varchar('platform', { length: 64 }).notNull().default('javascript'),
+  // Row synthesized from an error that carried a trace context (no `transaction`
+  // item yet). A real transaction overwrites it (FR-TRC-4).
+  synthetic: boolean('synthetic').notNull().default(false),
 });
 
 export const spans = pgTable(
@@ -314,10 +317,14 @@ export const spans = pgTable(
 export const replays = pgTable(
   'replays',
   {
-    id: uuid('id').defaultRandom().primaryKey(), // replay_id
+    id: uuid('id').defaultRandom().primaryKey(),
     projectId: uuid('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
     issueId: uuid('issue_id').references(() => issues.id, { onDelete: 'set null' }),
     eventId: uuid('event_id'),
+    // Sentry replay_id — groups the segments of one session (FR-RPL). One replays
+    // row per (replayId, segmentId); the player assembles all segments in order.
+    replayId: varchar('replay_id', { length: 64 }),
+    segmentId: integer('segment_id').notNull().default(0),
     traceId: varchar('trace_id', { length: 64 }),
     user: jsonb('user').$type<Record<string, unknown>>(),
     startedAt: timestamp('started_at', { withTimezone: true }),
@@ -330,6 +337,9 @@ export const replays = pgTable(
   (t) => ({
     issueIdx: index('replays_issue_idx').on(t.issueId),
     traceIdx: index('replays_trace_idx').on(t.traceId),
+    replayIdx: index('replays_replay_idx').on(t.replayId),
+    // Idempotency: at-least-once delivery must not double-insert a segment (FR-WRK-2).
+    segUq: uniqueIndex('replays_replay_segment_uq').on(t.replayId, t.segmentId),
   }),
 );
 

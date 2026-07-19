@@ -34,7 +34,32 @@ export class MiscController {
   async replaysList(@Req() req: Request & { user?: AuthPrincipal }) {
     const pids = await accessibleProjectIds(req.user!);
     if (pids.length === 0) return [];
-    return db.select().from(replays).where(inArray(replays.projectId, pids)).orderBy(desc(replays.createdAt)).limit(50);
+    const rows = await db
+      .select()
+      .from(replays)
+      .where(inArray(replays.projectId, pids))
+      .orderBy(desc(replays.createdAt))
+      .limit(200);
+    // One card per session: collapse segments of a replayId to their earliest row
+    // (segment 0) and sum sizes/segments. Legacy rows (no replayId) pass through.
+    const seen = new Set<string>();
+    const out: (typeof rows)[number][] = [];
+    for (const r of rows) {
+      if (!r.replayId) {
+        out.push(r);
+        continue;
+      }
+      if (seen.has(r.replayId)) continue;
+      seen.add(r.replayId);
+      const segs = rows.filter((x) => x.replayId === r.replayId);
+      const first = segs.reduce((a, b) => (a.segmentId <= b.segmentId ? a : b));
+      out.push({
+        ...first,
+        segmentCount: segs.length,
+        size: segs.reduce((s, x) => s + (x.size ?? 0), 0),
+      });
+    }
+    return out.slice(0, 50);
   }
 
   @Get('replays/:id')
@@ -45,18 +70,42 @@ export class MiscController {
     return rows[0];
   }
 
-  /** rrweb events for DOM playback (FR-RPL-5/6) — fetch + decode the R2 blob. */
+  /**
+   * rrweb events for DOM playback (FR-RPL-5/6). Assembles ALL segments of the
+   * session (same replayId) in segment order, decoding each R2 blob and
+   * concatenating — a replay is split across many `replay_recording` items.
+   */
   @Get('replays/:id/recording')
   async recording(@Req() req: Request & { user?: AuthPrincipal }, @Param('id') id: string) {
-    const rows = await db.select().from(replays).where(eq(replays.id, id)).limit(1);
-    if (!rows[0]) return { events: [], reason: 'not found' };
-    await assertProjectAccess(req.user!, rows[0].projectId);
-    const key = rows[0].r2Prefix;
-    // Only R2-backed blobs are retrievable; inline-fallback replays have no key.
-    if (!key || !key.startsWith('blobs/')) return { events: [], reason: 'no recording blob in R2' };
-    const blob = await getObject(key);
-    if (!blob) return { events: [], reason: 'blob unavailable (R2 unconfigured or missing)' };
-    return { events: decodeReplayEvents(blob) };
+    const row = (await db.select().from(replays).where(eq(replays.id, id)).limit(1))[0];
+    if (!row) return { events: [], reason: 'not found' };
+    await assertProjectAccess(req.user!, row.projectId);
+
+    // Gather every segment of this session (or just this row if no replayId).
+    const segs = row.replayId
+      ? await db
+          .select()
+          .from(replays)
+          .where(and(eq(replays.replayId, row.replayId), eq(replays.projectId, row.projectId)))
+          .orderBy(replays.segmentId)
+      : [row];
+
+    const events: unknown[] = [];
+    let fetched = 0;
+    for (const s of segs) {
+      if (!s.r2Prefix || !s.r2Prefix.startsWith('blobs/')) continue;
+      const blob = await getObject(s.r2Prefix);
+      if (!blob) continue;
+      const decoded = decodeReplayEvents(blob);
+      if (decoded.length) {
+        events.push(...decoded);
+        fetched++;
+      }
+    }
+    if (events.length === 0) {
+      return { events: [], reason: segs.some((s) => s.r2Prefix?.startsWith('blobs/')) ? 'blob unavailable (R2 unconfigured or missing)' : 'no recording blob in R2' };
+    }
+    return { events, segments: fetched };
   }
 
   @Get('alerts')

@@ -587,6 +587,26 @@ GitHub advanced (GD-043/44/45) code-complete; live needs a GitHub App install.
 ### Sprint Stats
 - Total: 1  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 1  /  BLOCKED: 0
 
+## Sprint 26 — Edge-case hardening (replays/traces/envelope/auth)
+**Status:** CODE COMPLETE (needs migrate + redeploy)
+**Started:** 2026-07-19
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-107 | Multi-segment replay assembly | DONE | HIGH | FR-RPL: session replay arrives as many `replay_recording` segments; each was a separate `replays` row and the player showed only one. Added `replay_id`+`segment_id` cols (migration 0009); `recording` endpoint now gathers ALL segments of a replayId in order, decodes each R2 blob, concatenates; Replays list collapses segments → one card per session (sums size/segments). |
+| GD-108 | Replay ingest idempotency | DONE | HIGH | FR-WRK-2: at-least-once delivery re-inserted replay segments. Unique `(replay_id, segment_id)`; processReplay `onConflictDoNothing`. |
+| GD-109 | Envelope `length` overrun guard | DONE | HIGH | FR-ING-3: all three parsers trusted the item `length`. Now reject overrun — ingest 400 "truncated item payload" (after the 413 size-cap), worker `parseEnvelope` stops at a bad tail, `splitOversizedBlobs` keeps remainder inline. |
+| GD-110 | DLQ re-drive endpoint | DONE | HIGH | ops: `POST /metrics/dlq/redrive?limit=` (admin) re-enqueues dead-lettered jobs onto ingest — recovers replays lost to the old parse bug. |
+| GD-111 | Global 401 handling | DONE | MED | web `api()` on 401 → clear token + redirect `/login?next=` (was toast spam, no re-login). |
+| GD-112 | Scope time-range control to Issues feed | DONE | LOW | range select only rendered on `/issues` (it only filters that feed; was a confusing global no-op elsewhere). |
+| GD-113 | Real transaction overwrites synthetic trace | DONE | MED | FR-TRC-4: `traces.synthetic` flag; error-synth row now overwritten by a later real `transaction` (onConflictDoUpdate setWhere synthetic=true). |
+| GD-114 | GitHub issue create dedupe | DONE | LOW | FR-GH-6: record `github_issue` activity w/ url; repeat create returns existing url (`existing:true`), no duplicate GitHub issues. |
+| GD-115 | split-blobs extraction test + obs counters + cleanup | DONE | LOW | `splitOversizedBlobs` DI'd putter + test (raw-bytes extraction); worker counts `envelope_parse_error` drop; removed dup `jsonwebtoken` dep key. |
+
+### Sprint Stats
+- Total: 9  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 9  /  BLOCKED: 0
+- Tests: 27 green (8 ingest + 14 workers + 5 api). Migration 0009 applied. Needs redeploy: ingest+api+workers+web.
+
 ## Sprint 25 — Fix create-GitHub-issue 500, richer alert email, error-only trace waterfall
 **Status:** CODE COMPLETE (needs api/workers/web redeploy)
 **Started:** 2026-07-19

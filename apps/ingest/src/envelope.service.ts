@@ -67,17 +67,26 @@ export class EnvelopeService {
       let payloadLen: number;
       if (typeof itemHeader.length === 'number') {
         payloadLen = itemHeader.length; // length-declared (binary-safe)
-        offset += payloadLen;
-        if (bytes[offset] === NL) offset++; // consume trailing framing newline
       } else {
         const pNl = bytes.indexOf(NL, offset); // newline-terminated payload
         const payloadEnd = pNl < 0 ? bytes.length : pNl;
         payloadLen = payloadEnd - offset;
-        offset = payloadEnd + 1;
       }
 
+      // Size cap on the declared length (413) takes precedence over truncation.
       if ((itemHeader.type === 'event' || itemHeader.type === 'transaction') && payloadLen > MAX_EVENT_ITEM_BYTES) {
         return { ok: false, status: 413, reason: 'event item too large', bytes };
+      }
+
+      if (typeof itemHeader.length === 'number') {
+        // A length that overruns the buffer is a malformed/truncated envelope.
+        if (payloadLen < 0 || offset + payloadLen > bytes.length) {
+          return { ok: false, status: 400, reason: 'truncated item payload', bytes };
+        }
+        offset += payloadLen;
+        if (bytes[offset] === NL) offset++; // consume trailing framing newline
+      } else {
+        offset += payloadLen + 1; // skip payload + its newline
       }
     }
 
