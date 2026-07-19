@@ -528,3 +528,22 @@ GitHub advanced (GD-043/44/45) code-complete; live needs a GitHub App install.
 
 ### Verification notes (Sprint 20)
 - One-word path fix (singular→plural) matches GitHub REST `POST /app-manifests/{code}/conversions`. api typecheck clean. Needs api redeploy on Coolify, then retry create-App → install flow.
+
+## Sprint 21 — Multiple GitHub Apps + disconnect
+**Status:** COMPLETE
+**Started:** 2026-07-19
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-087 | Allow multiple GitHub Apps per org + disconnect | DONE | MED | FR-GH-1: schema/API allow >1 github app row per org; Settings→GitHub lists all connected apps with Disconnect; create appends (dedupe by app id) |
+| GD-088 | GitHub repo connect in project setup flow | DONE | MED | UX: extract shared `GithubConnect` component; add "Connect a GitHub repo" card to `/projects/:id/setup` (post-create) so repo linking is part of onboarding, not just Settings |
+
+### Sprint Stats
+- Total: 2  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 2  /  BLOCKED: 0
+
+### Verification notes (Sprint 21)
+- Schema: `github_apps_org_uq` (uniqueIndex on org_id) → `github_apps_org_idx` (plain index). Migration `0007_milky_abomination.sql` (DROP INDEX + CREATE INDEX, no partition impact) generated + applied; live pg_indexes confirms swap (only remaining unique is `github_apps_pkey`).
+- API: `appCallback` no longer wipes existing apps — appends, deduping by `(orgId, appId)`. `GET /github/app` returns `{installed, slug, apps:[{id,slug,ownerLogin,installUrl}]}`. New `POST /github/app/:id/disconnect` (admin-gated, org-scoped) deletes one app. Repo/suspect-commit/create-issue flows now resolve the right app via `installationTokenForOrg` (tries each org app's creds until one mints a token, since the install callback only carries installation_id). Dead `appForOrg` removed.
+- Web Settings→GitHub: "Connected apps" list, each row = slug · owner + Install/add-repos link + Disconnect (danger btn, admin). Create form appends ("Create another App"). Repo picker + manual link unchanged.
+- GD-088: extracted the whole GitHub flow (`GithubApp`+`ManualLink`+`GithubLink`) from Settings.tsx into shared `components/GithubConnect.tsx` (export `GithubConnect`); Settings imports it. Added a "Connect a GitHub repo" `Card` to `ProjectSetup` (`/projects/:id/setup`) after the SDK guide — repo linking is now part of the post-create onboarding. Manual link works inline on the setup page; the App-install redirect still lands on `/settings?installation_id=` (repo picker appears there) — acceptable seam, not changed.
+- api+web+db typecheck clean; web prod build clean (116 modules); 19 tests green (6 ingest + 13 workers). Needs api+web redeploy on Coolify.

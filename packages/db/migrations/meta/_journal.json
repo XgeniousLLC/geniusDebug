@@ -50,6 +50,13 @@
       "when": 1784278648727,
       "tag": "0006_short_mole_man",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1784406699400,
+      "tag": "0007_milky_abomination",
+      "breakpoints": true
     }
   ]
 }

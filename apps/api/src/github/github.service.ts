@@ -19,11 +19,26 @@ interface AppCreds {
 /** GitHub App auth + REST helpers for the manifest flow (FR-GH-1/3, FR-GH-8). */
 @Injectable()
 export class GithubService {
-  async appForOrg(orgId: string): Promise<AppCreds | null> {
-    const rows = await db.select().from(githubApps).where(eq(githubApps.orgId, orgId)).limit(1);
-    if (rows.length === 0) return null;
-    const a = rows[0];
-    return { appId: a.appId, slug: a.slug, clientId: a.clientId, privateKey: decrypt(a.privateKeyEnc) };
+  /** All GitHub Apps connected by an org (an org may connect several) — FR-GH-1. */
+  async appsForOrg(orgId: string): Promise<AppCreds[]> {
+    const rows = await db.select().from(githubApps).where(eq(githubApps.orgId, orgId));
+    return rows.map((a) => ({ appId: a.appId, slug: a.slug, clientId: a.clientId, privateKey: decrypt(a.privateKeyEnc) }));
+  }
+
+  /**
+   * An installation belongs to exactly one of the org's apps, but the callback
+   * only gives us the installation id — so try each app's creds until one mints
+   * a token (FR-GH-1).
+   */
+  async installationTokenForOrg(orgId: string, installationId: string): Promise<string | null> {
+    for (const creds of await this.appsForOrg(orgId)) {
+      try {
+        return await this.installationToken(creds, installationId);
+      } catch {
+        // wrong app for this installation — try the next one
+      }
+    }
+    return null;
   }
 
   /** Short-lived App JWT (RS256, iss = app id) — authenticates as the App itself. */

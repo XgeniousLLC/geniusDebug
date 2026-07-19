@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
 import { Button, Card, Skeleton } from '../components/ui';
 import { IntegrationGuide, type GuideProject } from '../components/IntegrationGuide';
+import { GithubConnect } from '../components/GithubConnect';
 import { NotFound } from './NotFound';
 import { Forbidden } from './Forbidden';
 
@@ -46,6 +47,16 @@ export function ProjectSetup() {
 
       <Card className="p-5">
         <IntegrationGuide project={project} onChanged={() => qc.invalidateQueries({ queryKey: ['projects'] })} />
+      </Card>
+
+      <Card className="mt-5 p-5">
+        <div className="mb-2">
+          <h2 className="text-h2 font-semibold">Connect a GitHub repo</h2>
+          <div className="text-caption text-text-muted">
+            Optional — link this project's repo so stack frames deep-link to the exact source line (FR-GH-1/3).
+          </div>
+        </div>
+        <GithubConnect projectId={project.id} />
       </Card>
 
       <div className="mt-5 flex gap-2">
