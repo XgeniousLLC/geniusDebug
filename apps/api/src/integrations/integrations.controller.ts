@@ -165,14 +165,27 @@ export class IntegrationsController {
         return { ok: true, detail: 'DeepSeek API key valid' };
       }
       if (kind === 'r2') {
-        const { S3Client, ListObjectsV2Command } = await import('@aws-sdk/client-s3');
+        const { S3Client, ListObjectsV2Command, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } = await import('@aws-sdk/client-s3');
         const c = new S3Client({
           region: 'auto',
           endpoint: config.endpoint,
           credentials: { accessKeyId: secret.accessKeyId ?? '', secretAccessKey: secret.secretAccessKey ?? '' },
         });
+        // Read test — verify bucket is reachable.
         await c.send(new ListObjectsV2Command({ Bucket: config.bucket, MaxKeys: 1 }));
-        return { ok: true, detail: `bucket "${config.bucket}" reachable` };
+        // Write test — upload a small file, read it back, delete it.
+        const testKey = `__gd_test_${Date.now()}.txt`;
+        const testBody = Buffer.from('geniusDebug R2 write test');
+        await c.send(new PutObjectCommand({ Bucket: config.bucket, Key: testKey, Body: testBody, ContentType: 'text/plain' }));
+        const obj = await c.send(new GetObjectCommand({ Bucket: config.bucket, Key: testKey }));
+        const chunks: Buffer[] = [];
+        for await (const chunk of obj.Body as AsyncIterable<Buffer>) chunks.push(chunk);
+        const readBack = Buffer.concat(chunks).toString('utf8');
+        await c.send(new DeleteObjectCommand({ Bucket: config.bucket, Key: testKey }));
+        if (readBack !== 'geniusDebug R2 write test') {
+          return { ok: false, error: 'write succeeded but read-back mismatch' };
+        }
+        return { ok: true, detail: `bucket "${config.bucket}" reachable — write + read verified` };
       }
       const { SESClient, GetSendQuotaCommand } = await import('@aws-sdk/client-ses');
       const c = new SESClient({
