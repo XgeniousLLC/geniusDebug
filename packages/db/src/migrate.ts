@@ -5,7 +5,12 @@ import { migrate } from 'drizzle-orm/postgres-js/migrator';
 
 /** Applies all migrations in ./migrations (including the hand-authored partitioning). */
 async function main() {
-  const url = process.env.DATABASE_URL ?? 'postgres://sharifur@localhost:5432/geniusdebug_dev';
+  if (!process.env.DATABASE_URL) {
+    // Fail loudly rather than silently migrating a local fallback DB in prod.
+    console.error('[db] DATABASE_URL is not set — refusing to run migrations against the local fallback.');
+    process.exit(1);
+  }
+  const url = process.env.DATABASE_URL;
   const client = postgres(url, { max: 1 });
   const db = drizzle(client);
   console.log('[db] running migrations…');
