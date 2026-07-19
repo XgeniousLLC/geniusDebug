@@ -115,6 +115,7 @@ export interface SentryTransactionPayload extends SentryEventPayload {
   type?: 'transaction';
   start_timestamp?: number;
   spans?: SentrySpan[];
+  measurements?: Record<string, { value: number; unit?: string }>;
   contexts?: SentryEventPayload['contexts'] & {
     trace?: { trace_id?: string; span_id?: string; op?: string; description?: string };
   };

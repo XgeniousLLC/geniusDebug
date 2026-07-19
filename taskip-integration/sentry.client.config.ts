@@ -24,9 +24,15 @@ if (cfg.enabled && process.env.NEXT_PUBLIC_SENTRY_DSN) {
 
     integrations: [
       Sentry.replayIntegration({
-        maskAllText: true, // PII off by default (FR-SDK-7 / FR-RPL-4)
+        // Replay is readable — only password fields are masked (FR-SDK-7 / FR-RPL-4).
+        // maskAllText/maskAllInputs made the whole recording an unreadable grey block;
+        // we scrub tokens/PII server-side (beforeSend) and mask only credentials here.
+        // Input VALUES cannot be recorded — Sentry masks them at record time (its own
+        // product masks email+password; proven GD-141). Match Sentry's default so
+        // inputs show length-preserving asterisks; page text stays readable.
+        maskAllText: false,
         maskAllInputs: true,
-        blockAllMedia: true,
+        blockAllMedia: false,
       }),
     ],
 

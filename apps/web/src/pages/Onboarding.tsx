@@ -27,7 +27,7 @@ export function Onboarding() {
   const gotEvent = (issues.data?.length ?? 0) > 0;
 
   return (
-    <div className="mx-auto max-w-2xl px-6 py-8">
+    <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6">
       <h1 className="mb-1 text-h1 font-semibold">Set up geniusDebug</h1>
       <p className="mb-6 text-small text-text-muted">Point Taskip's @sentry/nextjs at your project, then trigger an error.</p>
 

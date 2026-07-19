@@ -24,6 +24,38 @@ function Svg({ size = 16, children, ...rest }: P & { children: React.ReactNode }
   );
 }
 
+export const ReleasesIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M4 7l8-4 8 4v10l-8 4-8-4V7z" />
+    <path d="M4 7l8 4 8-4M12 11v10" />
+  </Svg>
+);
+export const PlayIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M7 5l12 7-12 7V5z" fill="currentColor" stroke="none" />
+  </Svg>
+);
+export const PauseIcon = (p: P) => (
+  <Svg {...p}>
+    <rect x="6" y="5" width="4" height="14" rx="1" fill="currentColor" stroke="none" />
+    <rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor" stroke="none" />
+  </Svg>
+);
+export const FullscreenIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3" />
+  </Svg>
+);
+export const MenuIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M3 6h18M3 12h18M3 18h18" />
+  </Svg>
+);
+export const CloseIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M6 6l12 12M18 6L6 18" />
+  </Svg>
+);
 export const IssuesIcon = (p: P) => (
   <Svg {...p}>
     <circle cx="12" cy="12" r="8" />

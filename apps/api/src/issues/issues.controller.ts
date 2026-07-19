@@ -21,6 +21,16 @@ export class IssuesController {
     return this.issues.detail(req.user!, shortId);
   }
 
+  @Get(':shortId/replays')
+  async replays(@Req() req: Request & { user?: AuthPrincipal }, @Param('shortId') shortId: string) {
+    return this.issues.replaysForIssue(req.user!, shortId);
+  }
+
+  @Get(':shortId/similar')
+  async similar(@Req() req: Request & { user?: AuthPrincipal }, @Param('shortId') shortId: string) {
+    return this.issues.similarIssues(req.user!, shortId);
+  }
+
   @Post(':shortId/actions')
   async act(
     @Req() req: Request & { user?: AuthPrincipal },
@@ -40,5 +50,25 @@ export class IssuesController {
   ) {
     if (!body.targetShortId) throw new BadRequestException('targetShortId required');
     return this.issues.merge(req.user!, shortId, body.targetShortId, req.user!.userId);
+  }
+
+  @Post(':shortId/share')
+  async share(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Param('shortId') shortId: string,
+    @Body() body: { enabled?: boolean },
+  ) {
+    return this.issues.setShare(req.user!, shortId, body.enabled !== false);
+  }
+}
+
+/** Unauthenticated public issue view (GD-133) — NO JwtGuard. Read-only by token. */
+@Controller('public/issues')
+export class PublicIssueController {
+  constructor(private readonly issues: IssuesService) {}
+
+  @Get(':token')
+  async view(@Param('token') token: string) {
+    return this.issues.publicIssue(token);
   }
 }

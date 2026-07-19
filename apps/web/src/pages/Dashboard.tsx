@@ -23,7 +23,7 @@ export function Dashboard() {
 
   if (q.isLoading) {
     return (
-      <div className="mx-auto max-w-6xl px-6 py-5">
+      <div className="mx-auto max-w-6xl px-4 py-5 sm:px-6">
         <h1 className="mb-4 text-h1 font-semibold">Dashboard</h1>
         <Skeleton className="h-40 w-full" />
       </div>
@@ -33,7 +33,7 @@ export function Dashboard() {
   if (!d) return null;
   if (d.totals.projects === 0) {
     return (
-      <div className="mx-auto max-w-6xl px-6 py-5">
+      <div className="mx-auto max-w-6xl px-4 py-5 sm:px-6">
         <h1 className="mb-4 text-h1 font-semibold">Dashboard</h1>
         <NoProject />
       </div>
@@ -43,7 +43,7 @@ export function Dashboard() {
   const maxHour = Math.max(1, ...d.activityByHour.map((h) => h.events));
 
   return (
-    <div className="mx-auto max-w-6xl px-6 py-5">
+    <div className="mx-auto max-w-6xl px-4 py-5 sm:px-6">
       <h1 className="mb-4 text-h1 font-semibold">Dashboard</h1>
 
       {/* Stat tiles */}

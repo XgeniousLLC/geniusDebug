@@ -8,7 +8,9 @@ import { toast, ACTION_PAST } from '../store/toast';
 import { timeAgo } from '../lib/format';
 import { Button, LevelPill, StatusChip, IdChip, Tag, Card, Skeleton, ErrorState } from '../components/ui';
 import { StackTrace } from '../components/StackTrace';
-import { CheckIcon, ArchiveIcon, BellOffIcon } from '../components/icons';
+import { CheckIcon, ArchiveIcon, BellOffIcon, PlayIcon } from '../components/icons';
+import { ReplayViewer } from './ReplayPlayer';
+import { buildAgentMarkdown } from '../lib/agentMarkdown';
 
 interface DetailResponse {
   issue: IssueDto;
@@ -16,6 +18,7 @@ interface DetailResponse {
   events: EventDto[];
   activity: { id: string; action: string; userName: string | null; createdAt: string }[];
   counts: { bucket: string; count: number }[];
+  shareToken?: string | null;
 }
 
 interface FixSuggestion {
@@ -35,8 +38,21 @@ interface SuggestResponse {
   prEnabled: boolean;
   prUrl: string | null;
 }
+interface IssueReplay {
+  id: string;
+  replayId: string | null;
+  durationMs: number | null;
+  segments: number;
+  user: { username?: string; id?: string } | null;
+  traceId: string | null;
+  createdAt: string;
+}
+interface SimilarIssue {
+  issue: IssueDto;
+  score: number;
+}
 
-type Tab = 'stack' | 'breadcrumbs' | 'tags' | 'context' | 'events';
+type Tab = 'stack' | 'breadcrumbs' | 'tags' | 'context' | 'events' | 'replay';
 
 export function IssueDetail() {
   const { shortId = '' } = useParams();
@@ -98,6 +114,18 @@ export function IssueDetail() {
     onError: (e: unknown) => toast.error(`Couldn't create GitHub issue: ${errMsg(e)}`),
   });
 
+  // Replays + similar issues for this issue (GD-132).
+  const issueReplays = useQuery({
+    queryKey: ['issue-replays', shortId],
+    queryFn: () => api<IssueReplay[]>(`/issues/${shortId}/replays`),
+  });
+  const similar = useQuery({
+    queryKey: ['issue-similar', shortId],
+    queryFn: () => api<SimilarIssue[]>(`/issues/${shortId}/similar`),
+  });
+  const [selectedReplay, setSelectedReplay] = React.useState<string | null>(null);
+  const [shareOpen, setShareOpen] = React.useState(false);
+
   // AI fix suggestion (DeepSeek, FR-AIF) — diagnosis is inert; PR is human-gated.
   const suggestion = useQuery({
     queryKey: ['suggest', shortId],
@@ -152,7 +180,7 @@ export function IssueDetail() {
   const contexts = (event?.contexts ?? {}) as Record<string, { name?: string; version?: string; model?: string }>;
 
   return (
-    <div className="mx-auto max-w-6xl px-6 py-5">
+    <div className="mx-auto max-w-6xl px-4 py-5 sm:px-6">
       {/* Breadcrumb */}
       <div className="mb-3 flex items-center gap-1.5 font-mono text-caption text-text-faint">
         <Link to="/issues" className="hover:text-accent">Issues</Link>
@@ -176,7 +204,24 @@ export function IssueDetail() {
             <span className="text-text-faint">first seen {timeAgo(issue.firstSeen)} ago</span>
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+          <Button
+            title="Copy the full error as Markdown for an AI coding agent"
+            onClick={() => {
+              const md = buildAgentMarkdown(issue, event);
+              navigator.clipboard.writeText(md).then(() => toast.success('Copied AI-agent Markdown'));
+              // also offer a .md download
+              const blob = new Blob([md], { type: 'text/markdown' });
+              const a = document.createElement('a');
+              a.href = URL.createObjectURL(blob);
+              a.download = `${issue.shortId}.md`;
+              a.click();
+              URL.revokeObjectURL(a.href);
+            }}
+          >
+            Copy for AI
+          </Button>
+          <Button onClick={() => setShareOpen(true)} title="Share issue">Share</Button>
           <select
             value={issue.assigneeUserId ?? ''}
             onChange={(e) => assign.mutate(e.target.value)}
@@ -206,6 +251,15 @@ export function IssueDetail() {
         </div>
       </div>
 
+      {shareOpen && (
+        <ShareModal
+          shortId={issue.shortId}
+          eventId={event?.id ?? null}
+          initialToken={q.data.shareToken ?? null}
+          onClose={() => setShareOpen(false)}
+        />
+      )}
+
       {/* Event navigation */}
       {events.length > 0 && (
         <div className="mb-4 flex items-center gap-2 text-small text-text-muted">
@@ -220,9 +274,20 @@ export function IssueDetail() {
         </div>
       )}
 
-      <div className="grid grid-cols-[1fr_300px] gap-5">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1fr_300px]">
         {/* Left column */}
         <div className="min-w-0">
+          {/* Events over time (FR-UI-2 / GD-132) */}
+          {(q.data.counts?.length ?? 0) > 0 && (
+            <Card className="mb-4 p-4">
+              <div className="mb-2 flex items-center justify-between">
+                <h2 className="text-h2 font-semibold">Events</h2>
+                <span className="text-caption text-text-faint">{issue.timesSeen} total · first seen {timeAgo(issue.firstSeen)} ago</span>
+              </div>
+              <EventsChart counts={q.data.counts} />
+            </Card>
+          )}
+
           {/* Highlights (FR-UI-5) */}
           <Card className="mb-4 p-4">
             <div className="mb-2 flex items-center justify-between">
@@ -240,7 +305,7 @@ export function IssueDetail() {
                 ))}
               </div>
             )}
-            <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-small">
+            <div className="grid grid-cols-1 gap-x-6 gap-y-2 text-small sm:grid-cols-2">
               {pinned.has('handled') && <Highlight k="handled" v={event ? (event.handled ? 'true' : 'false') : '—'} />}
               {pinned.has('level') && <Highlight k="level" v={event?.level ?? issue.level} />}
               {pinned.has('transaction') && <Highlight k="transaction" v={event?.transaction ?? '—'} mono />}
@@ -266,18 +331,29 @@ export function IssueDetail() {
           </Card>
 
           {/* Tabs */}
-          <div className="mb-3 flex gap-4 border-b border-border">
-            {(['stack', 'breadcrumbs', 'tags', 'context', 'events'] as Tab[]).map((t) => (
-              <button
-                key={t}
-                onClick={() => setTab(t)}
-                className={`-mb-px border-b-2 pb-2 text-small capitalize ${
-                  tab === t ? 'border-accent text-text' : 'border-transparent text-text-muted hover:text-text'
-                }`}
-              >
-                {t === 'stack' ? 'Stack trace' : t === 'events' ? 'All events' : t}
-              </button>
-            ))}
+          <div className="mb-3 flex flex-wrap gap-4 border-b border-border">
+            {(['stack', 'breadcrumbs', 'tags', 'context', 'events', 'replay'] as Tab[]).map((t) => {
+              const replayCount = issueReplays.data?.length ?? 0;
+              if (t === 'replay' && replayCount === 0) return null;
+              return (
+                <button
+                  key={t}
+                  onClick={() => setTab(t)}
+                  className={`-mb-px flex items-center gap-1.5 border-b-2 pb-2 text-small capitalize ${
+                    tab === t ? 'border-accent text-text' : 'border-transparent text-text-muted hover:text-text'
+                  }`}
+                >
+                  {t === 'stack' ? 'Stack trace' : t === 'events' ? 'All events' : t}
+                  {/* Occurrence stack count — only when the error is repeating (GD-140). */}
+                  {t === 'events' && events.length > 1 && (
+                    <span className="rounded-full bg-surface-2 px-1.5 text-caption text-text-muted">{events.length}</span>
+                  )}
+                  {t === 'replay' && (
+                    <span className="rounded-full bg-accent/15 px-1.5 text-caption text-accent">{replayCount}</span>
+                  )}
+                </button>
+              );
+            })}
           </div>
 
           {tab === 'stack' && <StackTrace frames={frames} />}
@@ -294,51 +370,148 @@ export function IssueDetail() {
             </div>
           )}
 
-          {tab === 'tags' && (
-            <div className="flex flex-wrap gap-2">
-              {Object.entries(event?.tags ?? {}).length === 0 && <span className="text-small text-text-muted">No tags.</span>}
-              {Object.entries(event?.tags ?? {}).map(([k, v]) => (
-                <Tag key={k} k={k} v={String(v)} />
-              ))}
-            </div>
-          )}
+          {tab === 'tags' &&
+            (() => {
+              // Derive Sentry-style tags from event fields + contexts, then merge stored tags (GD-144).
+              const c = (event?.contexts ?? {}) as Record<string, { name?: string; version?: string; family?: string; model?: string }>;
+              const derived: Record<string, string> = {};
+              const put = (k: string, v: unknown) => {
+                if (v !== undefined && v !== null && v !== '') derived[k] = String(v);
+              };
+              put('level', event?.level ?? issue.level);
+              put('handled', event ? (event.handled ? 'yes' : 'no') : undefined);
+              put('environment', event?.environment);
+              put('release', event?.release);
+              put('transaction', event?.transaction);
+              put('url', event?.url);
+              if (c.browser?.name) put('browser', `${c.browser.name}${c.browser.version ? ` ${c.browser.version}` : ''}`);
+              put('browser.name', c.browser?.name);
+              if (c.os?.name) put('os', `${c.os.name}${c.os.version ? ` ${c.os.version}` : ''}`);
+              put('os.name', c.os?.name);
+              if (c.device?.family || c.device?.model) put('device', c.device?.family ?? c.device?.model);
+              const merged = { ...derived, ...(event?.tags ?? {}) };
+              const entries = Object.entries(merged);
+              return (
+                <div className="flex flex-wrap gap-2">
+                  {entries.length === 0 && <span className="text-small text-text-muted">No tags.</span>}
+                  {entries.map(([k, v]) => (
+                    <Tag key={k} k={k} v={String(v)} />
+                  ))}
+                </div>
+              );
+            })()}
 
           {tab === 'context' && (
-            <div className="grid grid-cols-3 gap-3">
-              <ContextCard title="Browser" v={contexts.browser} />
-              <ContextCard title="OS" v={contexts.os} />
-              <ContextCard title="Device" v={contexts.device} />
-              <Card className="col-span-3 p-3">
-                <div className="mb-1 text-caption uppercase text-text-faint">User</div>
-                <pre className="overflow-x-auto font-mono text-mono text-text">{JSON.stringify(event?.user ?? {}, null, 2)}</pre>
-              </Card>
+            <div className="flex flex-col gap-4">
+              {event?.request && Object.keys(event.request).length > 0 && (
+                <div>
+                  <h2 className="mb-2 text-h2 font-semibold">HTTP Request</h2>
+                  <div className="grid grid-cols-1">
+                    <HttpRequestCard request={event.request} />
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <h2 className="mb-2 text-h2 font-semibold">Contexts</h2>
+                {(() => {
+                  const all = (event?.contexts ?? {}) as Record<string, Record<string, unknown>>;
+                  const cards = Object.entries(all).filter(([, v]) => v && typeof v === 'object');
+                  const trace = event?.traceId
+                    ? { trace_id: event.traceId, span_id: event.spanId ?? undefined, status: (all.trace?.status as string) ?? undefined }
+                    : null;
+                  const user = (event?.user ?? {}) as Record<string, unknown>;
+                  return (
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                      {Object.keys(user).length > 0 && <ContextCard title="User" obj={user} />}
+                      {cards.map(([k, v]) => (
+                        <ContextCard key={k} title={k} obj={v} />
+                      ))}
+                      {trace && !all.trace && <ContextCard title="Trace" obj={trace as Record<string, unknown>} />}
+                      {cards.length === 0 && Object.keys(user).length === 0 && !trace && (
+                        <span className="text-small text-text-muted">No context captured for this event.</span>
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
             </div>
           )}
 
           {tab === 'events' && (
-            <div className="overflow-hidden rounded-md border border-border">
-              {events.map((e, i) => (
+            <>
+              {events.length > 1 && (
+                <div className="mb-2 text-caption text-text-faint">
+                  {events.length} occurrences of this error — each trigger is logged as its own event.
+                </div>
+              )}
+              <div className="overflow-hidden rounded-md border border-border">
+                {events.map((e, i) => (
                 <button
                   key={e.id}
                   onClick={() => { setEventIdx(i); setTab('stack'); }}
                   className="flex w-full items-center justify-between border-b border-border bg-bg px-3 py-2 text-left last:border-0 hover:bg-surface-2"
                 >
-                  <span className="font-mono text-caption text-text-muted">{e.id.slice(0, 12)}…</span>
-                  <span className="text-caption text-text-faint">{timeAgo(e.timestamp)} ago</span>
-                </button>
-              ))}
-            </div>
+                    <span className="font-mono text-caption text-text-muted">{e.id.slice(0, 12)}…</span>
+                    <span className="text-caption text-text-faint">{timeAgo(e.timestamp)} ago</span>
+                  </button>
+                ))}
+              </div>
+            </>
           )}
+
+          {/* Replay tab (GD-138) — embedded player + session stack. */}
+          {tab === 'replay' &&
+            (issueReplays.data?.length ?? 0) > 0 &&
+            (() => {
+              const list = issueReplays.data!;
+              const activeKey = selectedReplay ?? list[0].id;
+              const active = list.find((r) => r.id === activeKey) ?? list[0];
+              return (
+                <div>
+                  <div className="mb-3 flex items-center justify-between">
+                    <h2 className="text-h2 font-semibold">Session replays</h2>
+                    <span className="text-caption text-text-faint">
+                      {list.length} session{list.length > 1 ? 's' : ''} · newest first
+                    </span>
+                  </div>
+                  <ReplayViewer replayId={active.id} durationMs={active.durationMs} />
+                  {list.length > 1 && (
+                    <div className="mt-3 divide-y divide-border overflow-hidden rounded-md border border-border">
+                      {list.map((r) => (
+                        <button
+                          key={r.id}
+                          onClick={() => setSelectedReplay(r.id)}
+                          className={`flex w-full items-center gap-3 px-3 py-2 text-left text-small hover:bg-surface-2 ${
+                            r.id === active.id ? 'bg-surface-2' : ''
+                          }`}
+                        >
+                          <PlayIcon size={12} className="shrink-0 text-accent" />
+                          <span className="font-mono text-caption text-text-muted">{(r.replayId ?? r.id).slice(0, 12)}…</span>
+                          <span className="text-caption text-text-faint">{r.segments} seg</span>
+                          <span className="ml-auto text-caption text-text-faint">
+                            {((r.durationMs ?? 0) / 1000).toFixed(1)}s · {timeAgo(r.createdAt)} ago
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
         </div>
 
         {/* Right rail */}
         <div className="flex flex-col gap-4">
           <Card className="p-4">
             <div className="mb-2 text-h2 font-semibold">Session Replay</div>
-            {event?.traceId ? (
-              <Link to={`/replays`} className="text-small text-accent hover:underline">See replays →</Link>
+            {(issueReplays.data?.length ?? 0) > 0 ? (
+              <div className="text-small text-text-muted">
+                {issueReplays.data!.length} replay{issueReplays.data!.length > 1 ? 's' : ''} — watch under{' '}
+                <span className="text-accent">Replays in this issue</span>.
+              </div>
             ) : (
-              <div className="text-small text-text-muted">No replay for this event.</div>
+              <div className="text-small text-text-muted">No replay captured for this issue.</div>
             )}
           </Card>
           <Card className="p-4">
@@ -391,6 +564,28 @@ export function IssueDetail() {
             <Row k="First seen" v={`${timeAgo(issue.firstSeen)} ago`} />
             <Row k="Last seen" v={`${timeAgo(issue.lastSeen)} ago`} />
           </Card>
+          {(similar.data?.length ?? 0) > 0 && (
+            <Card className="p-4">
+              <div className="mb-2 flex items-center justify-between">
+                <div className="text-h2 font-semibold">Similar Issues</div>
+                <span className="text-caption text-text-faint">by stack trace</span>
+              </div>
+              <div className="flex flex-col gap-2">
+                {similar.data!.map((s) => (
+                  <Link
+                    key={s.issue.shortId}
+                    to={`/issues/${s.issue.shortId}`}
+                    className="flex items-center gap-2 text-caption hover:text-accent"
+                    title={`${Math.round(s.score * 100)}% similar`}
+                  >
+                    <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: simColor(s.score) }} />
+                    <span className="min-w-0 truncate text-text">{s.issue.title}</span>
+                    <span className="ml-auto shrink-0 font-mono text-text-faint">{s.issue.timesSeen}</span>
+                  </Link>
+                ))}
+              </div>
+            </Card>
+          )}
           <Card className="p-4">
             <div className="mb-2 text-h2 font-semibold">Activity</div>
             {activity.length === 0 && <div className="text-small text-text-muted">No activity yet.</div>}
@@ -415,13 +610,52 @@ function Highlight({ k, v, mono }: { k: string; v: React.ReactNode; mono?: boole
     </div>
   );
 }
-function ContextCard({ title, v }: { title: string; v?: { name?: string; version?: string; model?: string; family?: string } }) {
+/** Renders every field of a context object (browser/os/device/culture/react/…) — GD-144. */
+function ContextCard({ title, obj }: { title: string; obj: Record<string, unknown> }) {
+  const entries = Object.entries(obj).filter(([k]) => k !== 'type');
   return (
     <Card className="p-3">
-      <div className="mb-1 text-caption uppercase text-text-faint">{title}</div>
-      <div className="font-mono text-mono text-text">
-        {v?.name ?? v?.model ?? v?.family ?? '—'} {v?.version ?? ''}
+      <div className="mb-2 text-caption font-semibold uppercase tracking-wide text-text-faint">{title}</div>
+      <div className="flex flex-col gap-1">
+        {entries.length === 0 && <span className="text-caption text-text-faint">—</span>}
+        {entries.map(([k, v]) => (
+          <div key={k} className="flex items-baseline justify-between gap-3 text-small">
+            <span className="shrink-0 text-text-muted">{k}</span>
+            <span className="truncate text-right font-mono text-mono text-text">
+              {typeof v === 'object' ? JSON.stringify(v) : String(v)}
+            </span>
+          </div>
+        ))}
       </div>
+    </Card>
+  );
+}
+
+/** HTTP Request card (method + url + headers), cookies/auth scrubbed — GD-144. */
+function HttpRequestCard({ request }: { request: Record<string, unknown> }) {
+  const method = (request.method as string) ?? 'GET';
+  const url = (request.url as string) ?? '';
+  const headers = (request.headers as Record<string, string>) ?? {};
+  const shown = Object.entries(headers).filter(([k]) => !/cookie|authorization/i.test(k));
+  return (
+    <Card className="col-span-full p-4">
+      <div className="mb-2 flex items-center gap-2">
+        <span className="rounded bg-accent/15 px-1.5 py-0.5 font-mono text-caption font-semibold text-accent">{method}</span>
+        {url && (
+          <a href={url} target="_blank" rel="noreferrer" className="truncate font-mono text-small text-text hover:text-accent">{url}</a>
+        )}
+      </div>
+      {shown.length > 0 && (
+        <div className="rounded-md border border-border">
+          <div className="border-b border-border px-3 py-1.5 text-caption font-semibold uppercase tracking-wide text-text-faint">Headers</div>
+          {shown.map(([k, v]) => (
+            <div key={k} className="grid grid-cols-[140px_1fr] gap-3 border-b border-border px-3 py-1.5 text-small last:border-0">
+              <span className="text-text-muted">{k}</span>
+              <span className="break-all font-mono text-mono text-text">{String(v)}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </Card>
   );
 }
@@ -430,6 +664,125 @@ function Row({ k, v }: { k: string; v: string }) {
     <div className="flex items-center justify-between py-1 text-small">
       <span className="text-text-muted">{k}</span>
       <span className="font-mono text-text">{v}</span>
+    </div>
+  );
+}
+
+/** Share Issue dialog (GD-133) — copy link / markdown + public-link toggle. */
+function ShareModal({
+  shortId,
+  eventId,
+  initialToken,
+  onClose,
+}: {
+  shortId: string;
+  eventId: string | null;
+  initialToken: string | null;
+  onClose: () => void;
+}) {
+  const [includeEvent, setIncludeEvent] = React.useState(!!eventId);
+  const [token, setToken] = React.useState<string | null>(initialToken);
+  const [copied, setCopied] = React.useState('');
+  const origin = window.location.origin;
+
+  const privateUrl =
+    includeEvent && eventId
+      ? `${origin}/issues/${shortId}?event=${eventId}`
+      : `${origin}/issues/${shortId}`;
+  const publicUrl = token ? `${origin}/share/${token}` : null;
+
+  const share = useMutation({
+    mutationFn: (enabled: boolean) =>
+      api<{ shareToken: string | null }>(`/issues/${shortId}/share`, {
+        method: 'POST',
+        body: JSON.stringify({ enabled }),
+      }),
+    onSuccess: (r) => {
+      setToken(r.shareToken);
+      toast.success(r.shareToken ? 'Public link created' : 'Public link disabled');
+    },
+    onError: (e: unknown) => toast.error(`Couldn't update share: ${errMsg(e)}`),
+  });
+
+  const copy = (text: string, label: string) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(label);
+      toast.success('Copied');
+      setTimeout(() => setCopied(''), 1500);
+    });
+  };
+  const markdown = `[${shortId}](${publicUrl ?? privateUrl})`;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 pt-24" onClick={onClose}>
+      <Card className="w-full max-w-xl p-0" >
+        <div className="flex items-center justify-between border-b border-border px-5 py-3" onClick={(e) => e.stopPropagation()}>
+          <h2 className="text-h2 font-semibold">Share Issue</h2>
+          <button onClick={onClose} className="text-text-faint hover:text-text" aria-label="Close">✕</button>
+        </div>
+        <div className="flex flex-col gap-4 px-5 py-4" onClick={(e) => e.stopPropagation()}>
+          <div>
+            <input
+              readOnly
+              value={publicUrl ?? privateUrl}
+              className="w-full rounded-md border border-border bg-bg px-3 py-2 font-mono text-caption text-text"
+              onFocus={(e) => e.currentTarget.select()}
+            />
+            {eventId && (
+              <label className="mt-2 flex items-center gap-2 text-small text-text-muted">
+                <input type="checkbox" checked={includeEvent} onChange={(e) => setIncludeEvent(e.target.checked)} />
+                Include Event ID in link
+              </label>
+            )}
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button onClick={() => copy(markdown, 'md')}>{copied === 'md' ? 'Copied' : 'Copy as Markdown'}</Button>
+            <Button variant="primary" onClick={() => copy(publicUrl ?? privateUrl, 'link')}>
+              {copied === 'link' ? 'Copied' : 'Copy Link'}
+            </Button>
+          </div>
+          <div className="flex items-center justify-between border-t border-border pt-4">
+            <div>
+              <div className="text-small font-medium text-text">Create a public link</div>
+              <div className="text-caption text-text-faint">Read-only view for anyone outside your org.</div>
+            </div>
+            <button
+              onClick={() => share.mutate(!token)}
+              disabled={share.isPending}
+              className={`relative h-6 w-11 rounded-full transition ${token ? 'bg-accent' : 'bg-surface-2'} disabled:opacity-50`}
+              aria-label="Toggle public link"
+            >
+              <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${token ? 'left-[22px]' : 'left-0.5'}`} />
+            </button>
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+/** Green (most) → red (least) similarity dot, matching the Sentry gradient (GD-132). */
+function simColor(score: number): string {
+  if (score >= 0.6) return '#22c55e';
+  if (score >= 0.45) return '#84cc16';
+  if (score >= 0.3) return '#f59e0b';
+  if (score >= 0.2) return '#f97316';
+  return '#ef4444';
+}
+
+/** Compact event-volume bar chart from issue count buckets (GD-132). */
+function EventsChart({ counts }: { counts: { bucket: string; count: number }[] }) {
+  const max = Math.max(1, ...counts.map((c) => c.count));
+  return (
+    <div className="flex h-20 items-end gap-0.5" title="Events over time">
+      {counts.map((c, i) => (
+        <div
+          key={i}
+          className="min-w-0 flex-1 rounded-sm bg-accent/70 transition hover:bg-accent"
+          style={{ height: `${Math.max(3, (c.count / max) * 100)}%` }}
+          title={`${new Date(c.bucket).toLocaleString()} · ${c.count}`}
+        />
+      ))}
     </div>
   );
 }

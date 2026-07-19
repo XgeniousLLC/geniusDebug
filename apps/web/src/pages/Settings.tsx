@@ -65,7 +65,7 @@ export function Settings() {
   const dsnUrl = dsn && project ? buildDsn(dsn.publicKey, project.id) : '…';
 
   return (
-    <div className="mx-auto max-w-4xl px-6 py-5">
+    <div className="mx-auto max-w-4xl px-4 py-5 sm:px-6">
       <h1 className="mb-4 text-h1 font-semibold">Settings</h1>
 
       <div className="mb-5 flex gap-1 border-b border-border">
@@ -369,7 +369,7 @@ function IntegrationForm({
         <div className="text-caption text-text-faint">Only admins can edit integrations.</div>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {fields.map((f) => (
               <label key={f.key} className="flex flex-col gap-1">
                 <span className="text-caption text-text-faint">
@@ -418,7 +418,7 @@ function SystemMetrics() {
   if (m.isLoading || !m.data) return <Skeleton className="h-16 w-full" />;
   const drops = Object.entries(m.data.dropsToday);
   return (
-    <div className="grid grid-cols-2 gap-x-6 text-small">
+    <div className="grid grid-cols-1 gap-x-6 text-small sm:grid-cols-2">
       <Row k="Queue waiting" v={String(m.data.queue.waiting)} />
       <Row k="Queue active" v={String(m.data.queue.active)} />
       <Row k="Dead-letter" v={String(m.data.queue.deadLetter)} />

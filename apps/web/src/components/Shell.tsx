@@ -11,11 +11,15 @@ import {
   ReplaysIcon,
   AlertsIcon,
   ProjectsIcon,
+  ReleasesIcon,
+  TracesIcon,
   SettingsIcon,
   SunIcon,
   MoonIcon,
   SignOutIcon,
   SearchIcon,
+  MenuIcon,
+  CloseIcon,
 } from './icons';
 
 // Traces intentionally omitted — reached from an issue's detail (it's issue-scoped),
@@ -24,6 +28,8 @@ const NAV = [
   { to: '/dashboard', label: 'Dashboard', Icon: DashboardIcon },
   { to: '/issues', label: 'Issues', Icon: IssuesIcon },
   { to: '/replays', label: 'Replays', Icon: ReplaysIcon },
+  { to: '/releases', label: 'Releases', Icon: ReleasesIcon },
+  { to: '/performance', label: 'Performance', Icon: TracesIcon },
   { to: '/alerts', label: 'Alerts', Icon: AlertsIcon },
   { to: '/projects', label: 'Projects', Icon: ProjectsIcon },
   { to: '/settings', label: 'Settings', Icon: SettingsIcon },
@@ -58,7 +64,7 @@ function GlobalSearch() {
   }
 
   return (
-    <form onSubmit={submit} className="relative w-full max-w-md">
+    <form onSubmit={submit} className="relative w-full min-w-0 max-w-md">
       <SearchIcon size={15} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-text-faint" />
       <input
         ref={ref}
@@ -164,8 +170,13 @@ function ProjectSwitcher({ projects }: { projects: ProjectSummary[] }) {
 export function Shell({ children }: { children: React.ReactNode }) {
   const { user, signOut, theme, toggleTheme, environment, setEnvironment, range, setRange, currentProjectId } = useUi();
   // The time range only filters the Issues feed — show it only there (FR-UI-2).
-  const showRange = useLocation().pathname === '/issues';
+  const pathname = useLocation().pathname;
+  const showRange = pathname === '/issues';
   const navigate = useNavigate();
+
+  // Mobile: sidebar becomes an off-canvas drawer (GD-124). Close on route change.
+  const [navOpen, setNavOpen] = React.useState(false);
+  React.useEffect(() => setNavOpen(false), [pathname]);
 
   const projects = useQuery({
     queryKey: ['projects'],
@@ -181,9 +192,28 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex h-full">
-      {/* Left sidebar (brief §3) */}
-      <aside className="flex w-[220px] shrink-0 flex-col border-r border-border bg-surface">
-        <div className="flex flex-col px-4 pt-3 pb-2">
+      {/* Mobile drawer backdrop */}
+      {navOpen && (
+        <button
+          aria-label="Close menu"
+          onClick={() => setNavOpen(false)}
+          className="fixed inset-0 z-30 bg-black/40 md:hidden"
+        />
+      )}
+      {/* Left sidebar (brief §3) — off-canvas drawer < md, static ≥ md */}
+      <aside
+        className={`fixed inset-y-0 left-0 z-40 flex w-[220px] shrink-0 flex-col border-r border-border bg-surface transition-transform md:static md:z-auto md:translate-x-0 ${
+          navOpen ? 'translate-x-0' : '-translate-x-full'
+        }`}
+      >
+        <div className="relative flex flex-col px-4 pt-3 pb-2">
+          <button
+            onClick={() => setNavOpen(false)}
+            aria-label="Close menu"
+            className="absolute right-3 top-3 rounded-md border border-border p-1 text-text-muted hover:bg-surface-2 md:hidden"
+          >
+            <CloseIcon size={16} />
+          </button>
           <GeniusDebugWordmark size={24} />
           <a
             href="https://xgenious.com"
@@ -273,11 +303,18 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
       {/* Main column */}
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 items-center gap-3 border-b border-border bg-bg px-5">
+        <header className="flex h-14 items-center gap-2 border-b border-border bg-bg px-3 sm:gap-3 sm:px-5">
+          <button
+            onClick={() => setNavOpen(true)}
+            aria-label="Open menu"
+            className="shrink-0 rounded-md border border-border p-1.5 text-text-muted hover:bg-surface-2 md:hidden"
+          >
+            <MenuIcon size={18} />
+          </button>
           <select
             value={environment}
             onChange={(e) => setEnvironment(e.target.value)}
-            className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-small text-text"
+            className="shrink-0 rounded-md border border-border bg-surface px-2.5 py-1.5 text-small text-text"
           >
             <option value="all">All Envs</option>
             {envs.data?.map((e) => (

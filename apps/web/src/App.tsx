@@ -11,12 +11,15 @@ import { Issues } from './pages/Issues';
 import { IssueDetail } from './pages/IssueDetail';
 import { Traces } from './pages/Traces';
 import { Replays } from './pages/Replays';
+import { Releases } from './pages/Releases';
+import { Performance } from './pages/Performance';
 import { ReplayPlayer } from './pages/ReplayPlayer';
 import { Alerts } from './pages/Alerts';
 import { Projects } from './pages/Projects';
 import { ProjectSetup } from './pages/ProjectSetup';
 import { Settings } from './pages/Settings';
 import { NotFound } from './pages/NotFound';
+import { Share } from './pages/Share';
 import { Forbidden } from './pages/Forbidden';
 import { AccountProfile } from './pages/AccountProfile';
 import { AccountPassword } from './pages/AccountPassword';
@@ -32,6 +35,7 @@ export function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/share/:token" element={<Share />} />
       <Route path="/forgot" element={<Forgot />} />
       <Route path="/reset" element={<Reset />} />
       <Route path="/onboarding" element={<RequireAuth><Onboarding /></RequireAuth>} />
@@ -42,6 +46,8 @@ export function App() {
       <Route path="/traces" element={<RequireAuth><Traces /></RequireAuth>} />
       <Route path="/traces/:traceId" element={<RequireAuth><Traces /></RequireAuth>} />
       <Route path="/replays" element={<RequireAuth><Replays /></RequireAuth>} />
+      <Route path="/releases" element={<RequireAuth><Releases /></RequireAuth>} />
+      <Route path="/performance" element={<RequireAuth><Performance /></RequireAuth>} />
       <Route path="/replays/:replayId" element={<RequireAuth><ReplayPlayer /></RequireAuth>} />
       <Route path="/alerts" element={<RequireAuth><Alerts /></RequireAuth>} />
       <Route path="/projects" element={<RequireAuth><Projects /></RequireAuth>} />

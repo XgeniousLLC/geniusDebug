@@ -3,7 +3,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { AuthController } from './auth/auth.controller';
 import { AuthService } from './auth/auth.service';
 import { JwtGuard } from './auth/jwt.guard';
-import { IssuesController } from './issues/issues.controller';
+import { IssuesController, PublicIssueController } from './issues/issues.controller';
 import { IssuesService } from './issues/issues.service';
 import { ProjectsController } from './projects/projects.controller';
 import { MiscController } from './misc/misc.controller';
@@ -38,6 +38,7 @@ class HealthController {
     RootController,
     AuthController,
     IssuesController,
+    PublicIssueController,
     ProjectsController,
     MiscController,
     AdminController,
