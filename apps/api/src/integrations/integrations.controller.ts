@@ -18,13 +18,14 @@ import { and, eq } from 'drizzle-orm';
 import { JwtGuard, type AuthPrincipal } from '../auth/jwt.guard';
 import { encrypt, decrypt } from '../crypto';
 
-const KINDS = ['r2', 'ses'] as const;
+const KINDS = ['r2', 'ses', 'deepseek'] as const;
 type Kind = (typeof KINDS)[number];
 
 /** Non-secret config keys we accept per kind (everything else is ignored). */
 const CONFIG_KEYS: Record<Kind, string[]> = {
   r2: ['endpoint', 'bucket', 'accountId'],
   ses: ['region', 'from'],
+  deepseek: ['model'], // AI fix-suggester (FR-AIF); single-key secret
 };
 
 /**
@@ -55,7 +56,7 @@ export class IntegrationsController {
     const byKind = new Map(rows.map((r) => [r.kind, r]));
     return KINDS.map((kind) => {
       const r = byKind.get(kind);
-      const envConfigured = kind === 'r2' ? r2EnvSet() : sesEnvSet();
+      const envConfigured = kind === 'r2' ? r2EnvSet() : kind === 'ses' ? sesEnvSet() : deepseekEnvSet();
       return {
         kind,
         connected: !!r && r.isActive && !!r.secretEnc,
@@ -83,10 +84,18 @@ export class IntegrationsController {
     }
 
     // Secret fields arrive in plaintext only when the admin (re)enters them.
-    const accessKeyId = typeof body.accessKeyId === 'string' ? body.accessKeyId.trim() : '';
-    const secretAccessKey = typeof body.secretAccessKey === 'string' ? body.secretAccessKey.trim() : '';
-    const hasNewSecret = !!accessKeyId && !!secretAccessKey;
-    const secretEnc = hasNewSecret ? encrypt(JSON.stringify({ accessKeyId, secretAccessKey })) : undefined;
+    // deepseek uses a single API key; r2/ses use an accessKey pair.
+    let secretEnc: string | undefined;
+    if (kind === 'deepseek') {
+      const apiKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
+      secretEnc = apiKey ? encrypt(JSON.stringify({ apiKey })) : undefined;
+    } else {
+      const accessKeyId = typeof body.accessKeyId === 'string' ? body.accessKeyId.trim() : '';
+      const secretAccessKey = typeof body.secretAccessKey === 'string' ? body.secretAccessKey.trim() : '';
+      secretEnc = accessKeyId && secretAccessKey ? encrypt(JSON.stringify({ accessKeyId, secretAccessKey })) : undefined;
+    }
+    const missingSecretMsg =
+      kind === 'deepseek' ? 'apiKey is required' : 'accessKeyId and secretAccessKey are required';
 
     // Per-kind required non-secret fields.
     if (kind === 'r2' && (!config.endpoint || !config.bucket)) {
@@ -103,11 +112,11 @@ export class IntegrationsController {
       .limit(1);
 
     if (existing.length === 0) {
-      if (!secretEnc) throw new BadRequestException('accessKeyId and secretAccessKey are required');
+      if (!secretEnc) throw new BadRequestException(missingSecretMsg);
       await db.insert(integrations).values({ orgId, kind, config, secretEnc, isActive: true });
     } else {
       const finalSecret = secretEnc ?? existing[0].secretEnc;
-      if (!finalSecret) throw new BadRequestException('accessKeyId and secretAccessKey are required');
+      if (!finalSecret) throw new BadRequestException(missingSecretMsg);
       await db
         .update(integrations)
         .set({ config, secretEnc: finalSecret, isActive: true, updatedAt: new Date() })
@@ -139,7 +148,7 @@ export class IntegrationsController {
       .limit(1);
     if (rows.length === 0 || !rows[0].secretEnc) return { ok: false, error: 'not configured — save credentials first' };
 
-    let secret: { accessKeyId: string; secretAccessKey: string };
+    let secret: { accessKeyId?: string; secretAccessKey?: string; apiKey?: string };
     try {
       secret = JSON.parse(decrypt(rows[0].secretEnc));
     } catch {
@@ -148,12 +157,19 @@ export class IntegrationsController {
     const config = rows[0].config as Record<string, string>;
 
     try {
+      if (kind === 'deepseek') {
+        const res = await fetch('https://api.deepseek.com/models', {
+          headers: { authorization: `Bearer ${secret.apiKey}` },
+        });
+        if (!res.ok) return { ok: false, error: `DeepSeek ${res.status} — check the API key` };
+        return { ok: true, detail: 'DeepSeek API key valid' };
+      }
       if (kind === 'r2') {
         const { S3Client, ListObjectsV2Command } = await import('@aws-sdk/client-s3');
         const c = new S3Client({
           region: 'auto',
           endpoint: config.endpoint,
-          credentials: { accessKeyId: secret.accessKeyId, secretAccessKey: secret.secretAccessKey },
+          credentials: { accessKeyId: secret.accessKeyId ?? '', secretAccessKey: secret.secretAccessKey ?? '' },
         });
         await c.send(new ListObjectsV2Command({ Bucket: config.bucket, MaxKeys: 1 }));
         return { ok: true, detail: `bucket "${config.bucket}" reachable` };
@@ -161,7 +177,7 @@ export class IntegrationsController {
       const { SESClient, GetSendQuotaCommand } = await import('@aws-sdk/client-ses');
       const c = new SESClient({
         region: config.region ?? 'us-east-1',
-        credentials: { accessKeyId: secret.accessKeyId, secretAccessKey: secret.secretAccessKey },
+        credentials: { accessKeyId: secret.accessKeyId ?? '', secretAccessKey: secret.secretAccessKey ?? '' },
       });
       const q = await c.send(new GetSendQuotaCommand({}));
       return { ok: true, detail: `SES reachable — 24h quota ${q.Max24HourSend ?? '?'}` };
@@ -176,4 +192,7 @@ function r2EnvSet(): boolean {
 }
 function sesEnvSet(): boolean {
   return !!(process.env.SES_ACCESS_KEY_ID && process.env.SES_SECRET_ACCESS_KEY && process.env.SES_FROM);
+}
+function deepseekEnvSet(): boolean {
+  return !!process.env.DEEPSEEK_API_KEY;
 }

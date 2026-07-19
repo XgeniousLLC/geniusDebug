@@ -587,6 +587,18 @@ GitHub advanced (GD-043/44/45) code-complete; live needs a GitHub App install.
 ### Sprint Stats
 - Total: 1  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 1  /  BLOCKED: 0
 
+## Sprint 27 — AI fix suggester P1 (DeepSeek, diagnose-only)
+**Status:** CODE COMPLETE (needs DeepSeek key + redeploy)
+**Started:** 2026-07-19
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-116 | AI fix suggester — P1 diagnose (DeepSeek only) | DONE | HIGH | FR-AIF (`docs/ai-fix-suggester.md` P1). **Single provider = DeepSeek** (OpenAI-compatible `chat/completions`, `response_format: json_object`). New `fix_suggestions` table (migration 0010); `deepseek.ts` client resolves key from env `DEEPSEEK_API_KEY` or the encrypted `integrations` row (kind `deepseek`, single `apiKey` secret); `SuggestService` grounds the prompt on the issue + latest event's **symbolicated in-app frames** (stored pre/post context — no GitHub fetch in P1), forces structured JSON (rootCause/confidence/evidence/patches/testSuggestion/needMoreContext), validates + persists, caches by (issue,event). `POST/GET /issues/:shortId/suggest` — project-access scoped, **any role**, read-only (inert data, no repo writes — guardrail per doc §3). Web: "Suggested fix" card on Issue Detail (confidence badge, root cause, evidence, red/green diff, Regenerate, "AI · Unverified" tag). Integrations tab gains a DeepSeek provider (apiKey + model, live key Test). |
+
+### Sprint Stats
+- Total: 1  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 1  /  BLOCKED: 0
+- Tests: 27 green. Migration 0010 applied. **Set DeepSeek key** (Settings→Integrations→DeepSeek, or `DEEPSEEK_API_KEY` env) then redeploy api+web. P2 (GitHub source fetch), P3 (verify), P4 (draft-PR w/ human approval) still parked.
+
 ## Sprint 26 — Edge-case hardening (replays/traces/envelope/auth)
 **Status:** CODE COMPLETE (needs migrate + redeploy)
 **Started:** 2026-07-19

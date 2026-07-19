@@ -343,6 +343,32 @@ export const replays = pgTable(
   }),
 );
 
+/* ---------------------- AI fix suggestions (FR-AIF) ----------------------- */
+// AI-generated probable-fix suggestions for an issue (DeepSeek). Inert data —
+// no repo mutation happens here (see docs/ai-fix-suggester.md guardrails).
+export const fixSuggestions = pgTable(
+  'fix_suggestions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    issueId: uuid('issue_id').notNull().references(() => issues.id, { onDelete: 'cascade' }),
+    eventId: uuid('event_id'), // the event the suggestion was grounded on
+    model: varchar('model', { length: 80 }).notNull(),
+    rootCause: text('root_cause').notNull(),
+    confidence: varchar('confidence', { length: 12 }).notNull(), // high|medium|low
+    explanation: text('explanation'),
+    evidence: jsonb('evidence').$type<Array<{ path?: string; line?: number; why?: string }>>().default([]),
+    patches: jsonb('patches').$type<Array<{ path: string; unifiedDiff: string }>>().default([]),
+    testSuggestion: text('test_suggestion'),
+    needMoreContext: jsonb('need_more_context').$type<string[]>().default([]),
+    meta: jsonb('meta').$type<Record<string, unknown>>(),
+    createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => ({
+    issueIdx: index('fix_suggestions_issue_idx').on(t.issueId, t.createdAt),
+  }),
+);
+
 /* ------------------------------ alerting ---------------------------------- */
 export const alertRules = pgTable('alert_rules', {
   id: uuid('id').defaultRandom().primaryKey(),

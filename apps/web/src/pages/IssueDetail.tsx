@@ -17,6 +17,19 @@ interface DetailResponse {
   counts: { bucket: string; count: number }[];
 }
 
+interface FixSuggestion {
+  id: string;
+  model: string;
+  rootCause: string;
+  confidence: 'high' | 'medium' | 'low';
+  explanation: string | null;
+  evidence: { path?: string; line?: number; why?: string }[] | null;
+  patches: { path: string; unifiedDiff: string }[] | null;
+  testSuggestion: string | null;
+  needMoreContext: string[] | null;
+  createdAt: string;
+}
+
 type Tab = 'stack' | 'breadcrumbs' | 'tags' | 'context' | 'events';
 
 export function IssueDetail() {
@@ -76,6 +89,28 @@ export function IssueDetail() {
       toast.success('GitHub issue created');
     },
     onError: (e: unknown) => toast.error(`Couldn't create GitHub issue: ${errMsg(e)}`),
+  });
+
+  // AI fix suggestion (DeepSeek, FR-AIF) — read-only, inert.
+  const suggestion = useQuery({
+    queryKey: ['suggest', shortId],
+    queryFn: () => api<{ suggestion: FixSuggestion | null }>(`/issues/${shortId}/suggest`),
+  });
+  const genSuggest = useMutation({
+    mutationFn: (refresh: boolean) =>
+      api<{ suggestion: FixSuggestion | null; reason?: string }>(`/issues/${shortId}/suggest`, {
+        method: 'POST',
+        body: JSON.stringify({ refresh }),
+      }),
+    onSuccess: (r) => {
+      if (r.suggestion) {
+        qc.setQueryData(['suggest', shortId], { suggestion: r.suggestion });
+        toast.success('Fix suggestion ready');
+      } else {
+        toast.error(r.reason ?? 'No suggestion produced');
+      }
+    },
+    onError: (e: unknown) => toast.error(`Suggest failed: ${errMsg(e)}`),
   });
 
   if (q.isLoading) return <div className="p-6"><Skeleton className="h-40 w-full" /></div>;
@@ -292,6 +327,12 @@ export function IssueDetail() {
               {createIssue.isPending ? 'Creating…' : 'Create GitHub Issue →'}
             </button>
           </Card>
+          <SuggestCard
+            data={suggestion.data?.suggestion ?? null}
+            loading={suggestion.isLoading}
+            pending={genSuggest.isPending}
+            onGenerate={(refresh) => genSuggest.mutate(refresh)}
+          />
           <Card className="p-4">
             <div className="mb-2 text-h2 font-semibold">Stats</div>
             <Row k="Times seen" v={String(issue.timesSeen)} />
@@ -339,5 +380,120 @@ function Row({ k, v }: { k: string; v: string }) {
       <span className="text-text-muted">{k}</span>
       <span className="font-mono text-text">{v}</span>
     </div>
+  );
+}
+
+const CONF_TONE: Record<string, string> = {
+  high: 'bg-level-info/15 text-level-info',
+  medium: 'bg-level-warning/15 text-level-warning',
+  low: 'bg-surface-2 text-text-muted',
+};
+
+/** AI "Suggested fix" card (DeepSeek, FR-AIF) — inert diagnosis, never writes. */
+function SuggestCard({
+  data,
+  loading,
+  pending,
+  onGenerate,
+}: {
+  data: FixSuggestion | null;
+  loading: boolean;
+  pending: boolean;
+  onGenerate: (refresh: boolean) => void;
+}) {
+  return (
+    <Card className="p-4">
+      <div className="mb-2 flex items-center justify-between">
+        <div className="text-h2 font-semibold">Suggested fix</div>
+        <span className="rounded bg-surface-2 px-1.5 py-0.5 text-caption text-text-faint">AI · Unverified</span>
+      </div>
+
+      {loading ? (
+        <Skeleton className="h-16 w-full" />
+      ) : !data ? (
+        <div className="text-small text-text-muted">
+          <p className="mb-2">Get an AI diagnosis of the probable root cause and a fix, grounded in this issue's stack trace.</p>
+          <Button size="sm" variant="secondary" onClick={() => onGenerate(false)} disabled={pending}>
+            {pending ? 'Analyzing…' : 'Suggest a fix'}
+          </Button>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2.5 text-small">
+          <div className="flex items-center gap-2">
+            <span className={`rounded px-1.5 py-0.5 text-caption font-medium ${CONF_TONE[data.confidence] ?? CONF_TONE.low}`}>
+              {data.confidence} confidence
+            </span>
+            <span className="font-mono text-caption text-text-faint">{data.model}</span>
+          </div>
+
+          <div>
+            <div className="mb-0.5 text-caption uppercase tracking-wide text-text-faint">Root cause</div>
+            <p className="text-text">{data.rootCause}</p>
+          </div>
+
+          {data.explanation && <p className="text-text-muted">{data.explanation}</p>}
+
+          {(data.evidence?.length ?? 0) > 0 && (
+            <div>
+              <div className="mb-0.5 text-caption uppercase tracking-wide text-text-faint">Evidence</div>
+              <ul className="flex flex-col gap-0.5">
+                {data.evidence!.map((e, i) => (
+                  <li key={i} className="text-text-muted">
+                    <span className="font-mono text-text-faint">
+                      {e.path}
+                      {e.line ? `:${e.line}` : ''}
+                    </span>{' '}
+                    {e.why}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {(data.patches?.length ?? 0) > 0 &&
+            data.patches!.map((p, i) => (
+              <div key={i}>
+                <div className="mb-0.5 font-mono text-caption text-text-faint">{p.path}</div>
+                <pre className="overflow-x-auto rounded bg-surface-2 p-2 font-mono text-caption leading-relaxed">
+                  {p.unifiedDiff.split('\n').map((ln, j) => (
+                    <div
+                      key={j}
+                      className={ln.startsWith('+') ? 'text-level-info' : ln.startsWith('-') ? 'text-level-error' : 'text-text-muted'}
+                    >
+                      {ln || ' '}
+                    </div>
+                  ))}
+                </pre>
+              </div>
+            ))}
+
+          {data.testSuggestion && (
+            <div>
+              <div className="mb-0.5 text-caption uppercase tracking-wide text-text-faint">Test</div>
+              <p className="text-text-muted">{data.testSuggestion}</p>
+            </div>
+          )}
+
+          {(data.needMoreContext?.length ?? 0) > 0 && (
+            <div className="rounded border border-border bg-surface-2 p-2 text-text-muted">
+              <div className="mb-0.5 text-caption uppercase tracking-wide text-text-faint">Needs more context</div>
+              <ul className="list-inside list-disc">
+                {data.needMoreContext!.map((n, i) => (
+                  <li key={i}>{n}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <button
+            onClick={() => onGenerate(true)}
+            disabled={pending}
+            className="self-start text-caption text-accent hover:underline disabled:opacity-50"
+          >
+            {pending ? 'Analyzing…' : 'Regenerate'}
+          </button>
+        </div>
+      )}
+    </Card>
   );
 }

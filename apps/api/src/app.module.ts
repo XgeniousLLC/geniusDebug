@@ -14,6 +14,8 @@ import { AlertsController } from './alerts/alerts.controller';
 import { MetricsController } from './metrics/metrics.controller';
 import { IntegrationsController } from './integrations/integrations.controller';
 import { DashboardController } from './dashboard/dashboard.controller';
+import { SuggestController } from './suggest/suggest.controller';
+import { SuggestService } from './suggest/suggest.service';
 import { RootController } from './http-pages';
 
 @Controller()
@@ -44,7 +46,8 @@ class HealthController {
     MetricsController,
     IntegrationsController,
     DashboardController,
+    SuggestController,
   ],
-  providers: [AuthService, IssuesService, JwtGuard, GithubService],
+  providers: [AuthService, IssuesService, JwtGuard, GithubService, SuggestService],
 })
 export class AppModule {}
