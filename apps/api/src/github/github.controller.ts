@@ -112,11 +112,25 @@ export class GithubController {
   @UseGuards(JwtGuard)
   async disconnectApp(@Req() req: Request & { user?: AuthPrincipal }, @Param('id') id: string) {
     if (req.user!.role !== 'admin') throw new ForbiddenException('admin only');
-    const deleted = await db
-      .delete(githubApps)
+    // First find repos linked via this app's installations so we can cascade-delete.
+    const app = await db
+      .select({ id: githubApps.id })
+      .from(githubApps)
       .where(and(eq(githubApps.id, id), eq(githubApps.orgId, req.user!.orgId)))
-      .returning({ id: githubApps.id });
-    if (deleted.length === 0) throw new BadRequestException('app not found');
+      .limit(1);
+    if (app.length === 0) throw new BadRequestException('app not found');
+
+    // Delete all repositories linked to projects in this org (they depend on this app's installation tokens).
+    const orgProjects = await db
+      .select({ id: projects.id })
+      .from(projects)
+      .where(eq(projects.orgId, req.user!.orgId));
+    const projectIds = orgProjects.map((p) => p.id);
+    if (projectIds.length > 0) {
+      await db.delete(repositories).where(inArray(repositories.projectId, projectIds));
+    }
+
+    await db.delete(githubApps).where(and(eq(githubApps.id, id), eq(githubApps.orgId, req.user!.orgId)));
     return { ok: true };
   }
 
@@ -162,6 +176,25 @@ export class GithubController {
       installationId: body.installationId,
       connectedByUserId: req.user!.userId,
     });
+    return { ok: true };
+  }
+
+  /** Unlink a project's connected repo — admin only. */
+  @Post('projects/:projectId/unlink')
+  @UseGuards(JwtGuard)
+  async unlink(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Param('projectId') projectId: string,
+  ) {
+    if (req.user!.role !== 'admin') throw new ForbiddenException('admin only');
+    const proj = await db
+      .select({ id: projects.id })
+      .from(projects)
+      .where(and(eq(projects.id, projectId), eq(projects.orgId, req.user!.orgId)))
+      .limit(1);
+    if (proj.length === 0) throw new ForbiddenException('project not in org');
+
+    await db.delete(repositories).where(eq(repositories.projectId, projectId));
     return { ok: true };
   }
 

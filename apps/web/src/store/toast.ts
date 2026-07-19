@@ -31,7 +31,9 @@ export const ACTION_PAST: Record<string, string> = {
   resolve: 'resolved',
   unresolve: 'reopened',
   archive: 'archived',
+  unarchive: 'unarchived',
   mute: 'muted',
+  unmute: 'unmuted',
   assign: 'assignee updated',
 };
 
