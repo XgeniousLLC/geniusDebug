@@ -668,6 +668,7 @@ GitHub advanced (GD-043/44/45) code-complete; live needs a GitHub App install.
 | GD-120 | Ingest 500: try/catch + meaningful error responses | DONE | HIGH | ingest controller has zero try/catch — any thrown exception (R2 split, queue add, DB) becomes generic 500. Wrap critical path, log real error, return meaningful status (400/503). |
 | GD-121 | Issue action buttons: state-aware labels | DONE | HIGH | Issues feed + Issue detail always show Resolve/Archive/Mute regardless of current status. Read issue.status, show context-appropriate buttons (resolve↔unresolve, archive↔unarchive, mute↔unmute). Backend already supports all reverse actions. |
 | GD-122 | GitHub disconnect cascade + unlink + link feedback | DONE | HIGH | disconnectApp now cascade-deletes linked repos; new POST /projects/:id/unlink endpoint; link/unlink/disconnect mutations all show toast feedback; disconnect invalidates repo queries too; link button shows loading state. |
+| GD-123 | Replay playback: try fallback r2Prefix + R2 startup warning | DONE | MED | recording endpoint now tries canonical blobs/ key when stored r2Prefix is fallback path (replays ingested before R2 configured); better error messaging on replay page; ingest logs warning when R2 unconfigured. |
 
 ### Sprint Stats
-- Total: 3  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 3  /  BLOCKED: 0
+- Total: 4  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 4  /  BLOCKED: 0

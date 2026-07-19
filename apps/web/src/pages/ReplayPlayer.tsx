@@ -142,8 +142,15 @@ function PlaceholderCanvas({ reason }: { reason?: string }) {
           <span className="rounded bg-surface px-1.5 py-0.5 text-caption text-text-faint">masked</span>
         </div>
       </div>
-      <div className="absolute bottom-2 right-3 text-caption text-text-faint">
-        {reason ? `No DOM playback — ${reason}` : 'DOM playback (rrweb) · placeholder'}
+      <div className="absolute bottom-2 left-3 right-3 text-caption text-text-faint">
+        {reason ? (
+          <div className="flex flex-col gap-1">
+            <span>No DOM playback — {reason}</span>
+            {(reason.includes('R2') || reason.includes('blob')) && (
+              <span className="text-text-muted">Ensure R2 is connected in Settings → Integrations and that <code className="rounded bg-surface px-1">APP_ENCRYPTION_KEY</code> is set on all services.</span>
+            )}
+          </div>
+        ) : 'DOM playback (rrweb) · placeholder'}
       </div>
     </Card>
   );

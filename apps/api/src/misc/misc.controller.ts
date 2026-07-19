@@ -94,8 +94,18 @@ export class MiscController {
     const events: unknown[] = [];
     let fetched = 0;
     for (const s of segs) {
-      if (!s.r2Prefix || !s.r2Prefix.startsWith('blobs/')) continue;
-      const blob = await getObject(s.r2Prefix);
+      if (!s.r2Prefix) continue;
+      // Try the stored r2Prefix first; if it doesn't start with 'blobs/' (fallback
+      // path from when R2 wasn't configured), also try the canonical blobs/ key.
+      const keysToTry = [s.r2Prefix];
+      if (!s.r2Prefix.startsWith('blobs/') && s.replayId) {
+        keysToTry.push(`blobs/${s.projectId}/${s.replayId}/${s.segmentId ?? 0}-replay_recording`);
+      }
+      let blob: Buffer | null = null;
+      for (const key of keysToTry) {
+        blob = await getObject(key);
+        if (blob) break;
+      }
       if (!blob) continue;
       const decoded = decodeReplayEvents(blob);
       if (decoded.length) {
@@ -104,9 +114,10 @@ export class MiscController {
       }
     }
     if (events.length === 0) {
+      const hasPrefix = segs.some((s) => s.r2Prefix);
       // Observability (NFR-MNT-2): a blob existed but nothing decoded → count it.
-      if (segs.some((s) => s.r2Prefix?.startsWith('blobs/'))) await countDrop(row.projectId, 'replay_decode_failed');
-      return { events: [], reason: segs.some((s) => s.r2Prefix?.startsWith('blobs/')) ? 'blob unavailable (R2 unconfigured or missing)' : 'no recording blob in R2' };
+      if (hasPrefix) await countDrop(row.projectId, 'replay_decode_failed');
+      return { events: [], reason: hasPrefix ? 'blob unavailable (R2 unconfigured, wrong encryption key, or decode failed)' : 'no recording blob in R2' };
     }
     return { events, segments: fetched };
   }
