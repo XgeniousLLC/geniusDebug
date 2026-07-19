@@ -4,6 +4,8 @@ import { db, traces, spans, events, issues, replays, alertRules, notifications }
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { JwtGuard, type AuthPrincipal } from '../auth/jwt.guard';
 import { accessibleProjectIds, assertProjectAccess } from '../access';
+import { getObject } from '../r2';
+import { decodeReplayEvents } from './replay-decode';
 
 /** Read endpoints backing the Trace / Replay / Alerts pages (FR-TRC/FR-RPL/FR-ALR). */
 @Controller()
@@ -41,6 +43,20 @@ export class MiscController {
     if (!rows[0]) return null;
     await assertProjectAccess(req.user!, rows[0].projectId);
     return rows[0];
+  }
+
+  /** rrweb events for DOM playback (FR-RPL-5/6) — fetch + decode the R2 blob. */
+  @Get('replays/:id/recording')
+  async recording(@Req() req: Request & { user?: AuthPrincipal }, @Param('id') id: string) {
+    const rows = await db.select().from(replays).where(eq(replays.id, id)).limit(1);
+    if (!rows[0]) return { events: [], reason: 'not found' };
+    await assertProjectAccess(req.user!, rows[0].projectId);
+    const key = rows[0].r2Prefix;
+    // Only R2-backed blobs are retrievable; inline-fallback replays have no key.
+    if (!key || !key.startsWith('blobs/')) return { events: [], reason: 'no recording blob in R2' };
+    const blob = await getObject(key);
+    if (!blob) return { events: [], reason: 'blob unavailable (R2 unconfigured or missing)' };
+    return { events: decodeReplayEvents(blob) };
   }
 
   @Get('alerts')

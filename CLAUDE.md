@@ -260,7 +260,7 @@ Needs a real GitHub/R2 round-trip to fully exercise (user tests with creds):
 | GD-050 | Internal metrics endpoint | DONE | MED | NFR-MNT-2: queue depth, latency, drops |
 | GD-051 | Drop counters (session/client_report) | DONE | MED | FR-ING-6 |
 | GD-052 | Per-project usage stats | DONE | LOW | FR-RET-3 |
-| GD-053 | Real rrweb replay playback | PARTIAL | LOW | FR-RPL (live needs R2 blob) |
+| GD-053 | Real rrweb replay playback | DONE | LOW | FR-RPL — completed in GD-105 (Sprint 25): all recordings streamed to R2, decode endpoint, rrweb-player render |
 
 ### Sprint Stats
 - Total: 21  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 19  /  PARTIAL: 2
@@ -601,9 +601,11 @@ GitHub advanced (GD-043/44/45) code-complete; live needs a GitHub App install.
 | GD-102 | Toast feedback on issue actions | DONE | MED | FR-UI-4: resolve/archive/mute/assign/merge + create-GitHub-issue were silent on success AND failure. New Zustand `toast` store + `<Toaster>` (mounted in Shell, auto-dismiss, error lingers 6s). Wired `onSuccess`/`onError` (surfaces server `ApiError.message`) on all mutations in Issues feed + Issue Detail. Dashboard is read-only (no actions to wire). |
 | GD-103 | Fix ingest 400 "bad item header" on replay envelope | DONE | HIGH | FR-ING-3/FR-RPL-2: ingest `shallowValidate` also split framing on `\n` (2 lines/item) → length-prefixed binary `replay_recording` payload (contains `\n`) mis-framed → next line parsed as header → 400 before enqueue → replays rejected at the door (companion to GD-101 on the worker side). Rewrote the framing walk byte-accurate honoring item `length` (header scan + size caps only, payloads opaque, hot-path cheap). Regression test added (7 ingest tests green). |
 | GD-104 | Doc: AI fix-suggester agent (NEXT STAGE) | DONE | LOW | Wrote `docs/ai-fix-suggester.md` — design for an agent that analyzes the symbolicated error + source pulled from the linked GitHub repo and suggests a probable fix (root cause + unified-diff patch), surfaced on Issue Detail. PLANNED/parked; phased P1 diagnose → P2 grounded patches → P3 draft PR. Not built — build after core stabilizes. |
+| GD-105 | Real rrweb replay playback (closes GD-053) | DONE | MED | FR-RPL-5/6: (1) ingest now streams **every** `replay_recording` to R2, not just oversized — and byte-accurate (honors item `length`, stores RAW bytes; the old `\n`-split + utf8 re-encode corrupted the blob AND left small recordings with no R2 blob → no playback). (2) new api R2 read client + `GET /replays/:id/recording` → fetch blob, strip `{segment_id}\n`, zlib/gzip/raw decode → rrweb events (5 unit tests, incl. Sentry's zlib-deflate default). (3) web ReplayPlayer mounts real `rrweb-player` (lazy 129KB chunk) when events present; masked placeholder + reason when no blob. |
 
 ### Sprint Stats
-- Total: 8  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 7  /  PLANNED: 1 (GD-104 doc-only)
+- Total: 9  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 8  /  PLANNED: 1 (GD-104 doc-only)
+- Tests: 26 green (7 ingest + 14 workers + 5 api). Needs redeploy: ingest+api+workers+web.
 
 ### Notes
 - **Replays root cause was a backend bug** (GD-101), not client config: the length-prefixed `replay_recording` item crashed the envelope parser. Fixed. `replay_event` metadata now inserts and replays appear once redeployed.
