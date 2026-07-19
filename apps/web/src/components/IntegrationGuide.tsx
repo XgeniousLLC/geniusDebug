@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
 import { Button, Skeleton } from './ui';
+import { GithubConnect } from './GithubConnect';
 
 export interface GuideProject {
   id: string;
@@ -131,6 +132,17 @@ Sentry.init({
             )}
           </div>
         )}
+      </div>
+
+      {/* Connect a GitHub repo (optional) — deep-links stack frames to source. */}
+      <div className="rounded-md border border-border bg-surface/50 p-3">
+        <div className="mb-2">
+          <div className="text-small font-semibold text-text">Connect a GitHub repo</div>
+          <div className="text-caption text-text-muted">
+            Optional — link this project's repo so stack frames deep-link to the exact source line (FR-GH-1/3).
+          </div>
+        </div>
+        <GithubConnect projectId={project.id} />
       </div>
     </div>
   );

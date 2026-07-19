@@ -17,7 +17,7 @@ export function GithubConnect({ projectId }: { projectId: string }) {
   const app = useQuery({
     queryKey: ['gh-app'],
     queryFn: () =>
-      api<{ installed: boolean; apps: { id: string; slug: string; ownerLogin?: string | null; installUrl: string }[] }>('/github/app'),
+      api<{ installed: boolean; app: { id: string; slug: string; ownerLogin?: string | null; installUrl: string } | null }>('/github/app'),
   });
   const repo = useQuery({
     queryKey: ['repo', projectId],
@@ -68,11 +68,11 @@ export function GithubConnect({ projectId }: { projectId: string }) {
 
   if (app.isLoading || repo.isLoading) return <Skeleton className="h-10 w-full" />;
 
-  const apps = app.data?.apps ?? [];
+  const connectedApp = app.data?.app ?? null;
 
   const inp = 'h-8 rounded-md border border-border bg-bg px-2 text-small text-text';
 
-  // Create-another form (personal or org) — an org may connect several apps.
+  // Create the App (personal or org) — one App per org.
   const createForm = (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-end gap-2">
@@ -90,37 +90,35 @@ export function GithubConnect({ projectId }: { projectId: string }) {
           </label>
         )}
         <Button variant="primary" size="sm" onClick={createApp} disabled={account === 'org' && !org}>
-          {apps.length > 0 ? 'Create another App' : 'Create GitHub App'}
+          Create GitHub App
         </Button>
       </div>
       <div className="text-caption text-text-muted">
-        Creates a least-privilege App (contents + metadata, read-only) under your {account} account, then install it on repos.
+        Creates a least-privilege App (contents + metadata, read-only) under your {account} account, then install it on a repo.
       </div>
     </div>
   );
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Connected apps (org-scoped) — install more repos or disconnect. */}
-      {apps.length > 0 && (
+      {/* Connected App (org-scoped) — install repo or disconnect. */}
+      {connectedApp && (
         <div className="flex flex-col gap-1">
-          <div className="text-caption uppercase text-text-faint">Connected apps</div>
-          {apps.map((a) => (
-            <div key={a.id} className="flex items-center justify-between rounded-md border border-border px-3 py-1.5 text-small">
-              <span className="text-text-muted">
-                App <span className="font-mono text-text">{a.slug}</span>
-                {a.ownerLogin ? ` · ${a.ownerLogin}` : ''}
-              </span>
-              <span className="flex items-center gap-3">
-                <a href={a.installUrl} className="text-accent hover:underline">
-                  Install / add repos →
-                </a>
-                <Button size="sm" variant="danger" disabled={disconnect.isPending} onClick={() => disconnect.mutate(a.id)}>
-                  Disconnect
-                </Button>
-              </span>
-            </div>
-          ))}
+          <div className="text-caption uppercase text-text-faint">Connected app</div>
+          <div className="flex items-center justify-between rounded-md border border-border px-3 py-1.5 text-small">
+            <span className="text-text-muted">
+              App <span className="font-mono text-text">{connectedApp.slug}</span>
+              {connectedApp.ownerLogin ? ` · ${connectedApp.ownerLogin}` : ''}
+            </span>
+            <span className="flex items-center gap-3">
+              <a href={connectedApp.installUrl} className="text-accent hover:underline">
+                Install / add repos →
+              </a>
+              <Button size="sm" variant="danger" disabled={disconnect.isPending} onClick={() => disconnect.mutate(connectedApp.id)}>
+                Disconnect
+              </Button>
+            </span>
+          </div>
         </div>
       )}
 
@@ -156,7 +154,7 @@ export function GithubConnect({ projectId }: { projectId: string }) {
         </div>
       )}
 
-      {createForm}
+      {!connectedApp && createForm}
       {!repo.data && <ManualLink projectId={projectId} />}
     </div>
   );
