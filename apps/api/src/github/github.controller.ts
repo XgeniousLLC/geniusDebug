@@ -59,10 +59,9 @@ export class GithubController {
     }
     try {
       const app = await this.gh.convertManifest(code);
-      // Store encrypted at rest (NFR-SEC-5). Append — an org may connect several
-      // apps (personal + org accounts). Dedupe by GitHub app id so retrying the
-      // same create flow doesn't leave duplicate rows.
-      await db.delete(githubApps).where(and(eq(githubApps.orgId, orgId), eq(githubApps.appId, String(app.id))));
+      // Store encrypted at rest (NFR-SEC-5). One app per org — replace any
+      // existing app for this org (unique index enforces single row).
+      await db.delete(githubApps).where(eq(githubApps.orgId, orgId));
       await db.insert(githubApps).values({
         orgId,
         name: `geniusDebug-${orgId.slice(0, 8)}`,
@@ -86,26 +85,24 @@ export class GithubController {
     }
   }
 
-  /** All Apps connected by the caller's org + their install URLs (FR-GH-1). */
+  /** The single App connected by the caller's org + its install URL (FR-GH-1). */
   @Get('app')
   @UseGuards(JwtGuard)
   async currentApp(@Req() req: Request & { user?: AuthPrincipal }) {
     const rows = await db
-      .select({ id: githubApps.id, slug: githubApps.slug, ownerLogin: githubApps.ownerLogin, createdAt: githubApps.createdAt })
+      .select({ id: githubApps.id, slug: githubApps.slug, ownerLogin: githubApps.ownerLogin })
       .from(githubApps)
       .where(eq(githubApps.orgId, req.user!.orgId))
-      .orderBy(githubApps.createdAt);
-    const apps = rows.map((r) => ({
-      id: r.id,
-      slug: r.slug,
-      ownerLogin: r.ownerLogin,
-      installUrl: `https://github.com/apps/${r.slug}/installations/new`,
-    }));
-    // `installed`/`slug` kept for backward-compat with older clients.
-    return { installed: apps.length > 0, slug: apps[0]?.slug, apps };
+      .limit(1);
+    if (rows.length === 0) return { installed: false, app: null };
+    const r = rows[0];
+    return {
+      installed: true,
+      app: { id: r.id, slug: r.slug, ownerLogin: r.ownerLogin, installUrl: `https://github.com/apps/${r.slug}/installations/new` },
+    };
   }
 
-  /** Disconnect (delete) one connected App — admin only (FR-GH-1). */
+  /** Disconnect (delete) the org's connected App — admin only (FR-GH-1). */
   @Post('app/:id/disconnect')
   @UseGuards(JwtGuard)
   async disconnectApp(@Req() req: Request & { user?: AuthPrincipal }, @Param('id') id: string) {

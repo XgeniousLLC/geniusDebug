@@ -87,7 +87,7 @@ export function Settings() {
       {tab === 'general' && project && (
         <>
           <Section title="General">
-            <Row k="Project" v={project?.name ?? '—'} />
+            <ProjectName project={project} isAdmin={isAdmin} />
             <Row k="Slug" v={project?.slug ?? '—'} />
             <Row k="Platform" v={project?.platform ?? '—'} />
           </Section>
@@ -454,6 +454,8 @@ interface Member {
   name: string;
   email: string;
   role: 'admin' | 'member';
+  pending?: boolean;
+  invitedAt?: string;
 }
 function Members() {
   const qc = useQueryClient();
@@ -464,9 +466,10 @@ function Members() {
   const [openAccess, setOpenAccess] = React.useState<string | null>(null);
 
   const [inviteLink, setInviteLink] = React.useState<string | null>(null);
+  const [msg, setMsg] = React.useState<{ ok: boolean; text: string } | null>(null);
   const invite = useMutation({
     mutationFn: () =>
-      api<{ ok: boolean; id: string; emailSent?: boolean; inviteLink?: string }>('/members', {
+      api<{ ok: boolean; id: string; emailSent?: boolean; inviteLink?: string; reason?: string }>('/members', {
         method: 'POST',
         body: JSON.stringify({ name, email, role: 'member' }),
       }),
@@ -477,15 +480,27 @@ function Members() {
       setOpenAccess(r.id); // prompt admin to grant project access right away
       // SES unset → no email went out; surface the link so the admin can share it.
       setInviteLink(r.emailSent ? null : r.inviteLink ?? null);
+      setMsg({ ok: true, text: r.emailSent ? `Invite emailed to ${email}.` : `Invite created — share the link below${r.reason ? ` (${r.reason})` : ''}.` });
     },
+    onError: (e) => setMsg({ ok: false, text: e instanceof ApiError ? e.message : 'invite failed' }),
+  });
+  const reinvite = useMutation({
+    mutationFn: (id: string) => api<{ emailSent?: boolean; inviteLink?: string; reason?: string }>(`/members/${id}/reinvite`, { method: 'POST' }),
+    onSuccess: (r) => {
+      setInviteLink(r.emailSent ? null : r.inviteLink ?? null);
+      setMsg({ ok: true, text: r.emailSent ? 'Invite re-sent.' : `Invite link regenerated — share it below${r.reason ? ` (${r.reason})` : ''}.` });
+    },
+    onError: (e) => setMsg({ ok: false, text: e instanceof ApiError ? e.message : 'reinvite failed' }),
   });
   const remove = useMutation({
     mutationFn: (id: string) => api(`/members/${id}/remove`, { method: 'POST' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['members'] }),
+    onError: (e) => setMsg({ ok: false, text: e instanceof ApiError ? e.message : 'remove failed' }),
   });
   const role = useMutation({
     mutationFn: (v: { id: string; role: string }) => api(`/members/${v.id}/role`, { method: 'POST', body: JSON.stringify({ role: v.role }) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['members'] }),
+    onError: (e) => setMsg({ ok: false, text: e instanceof ApiError ? e.message : 'role change failed' }),
   });
 
   const inp = 'h-8 rounded-md border border-border bg-bg px-2 text-small text-text';
@@ -498,8 +513,20 @@ function Members() {
               <div>
                 <span className="text-text">{m.name}</span>
                 <span className="ml-2 font-mono text-caption text-text-muted">{m.email}</span>
+                {m.pending && (
+                  <span className="ml-2 rounded bg-status-unresolved/15 px-1.5 py-0.5 text-caption text-status-unresolved">invite pending</span>
+                )}
               </div>
               <div className="flex items-center gap-2">
+                {m.pending && (
+                  <button
+                    onClick={() => reinvite.mutate(m.id)}
+                    disabled={reinvite.isPending}
+                    className="text-caption text-accent hover:underline disabled:opacity-50"
+                  >
+                    reinvite
+                  </button>
+                )}
                 {m.role === 'member' && (
                   <button
                     onClick={() => setOpenAccess((o) => (o === m.id ? null : m.id))}
@@ -536,10 +563,13 @@ function Members() {
           <span className="text-caption text-text-faint">email</span>
           <input className={inp} value={email} onChange={(e) => setEmail(e.target.value)} />
         </label>
-        <Button size="sm" variant="primary" disabled={invite.isPending || !name || !email} onClick={() => invite.mutate()}>
+        <Button size="sm" variant="primary" disabled={invite.isPending || !name || !email} onClick={() => { setMsg(null); invite.mutate(); }}>
           {invite.isPending ? 'Inviting…' : 'Invite'}
         </Button>
       </div>
+      {msg && (
+        <div className={`mt-2 text-caption ${msg.ok ? 'text-status-resolved' : 'text-level-error'}`}>{msg.text}</div>
+      )}
       {inviteLink && (
         <div className="mt-2 rounded-md border border-border bg-surface-2 p-2 text-caption">
           <span className="text-text-faint">Email not configured — share this invite link (valid 7 days):</span>
@@ -628,6 +658,54 @@ function Row({ k, v }: { k: string; v: string }) {
     <div className="flex items-center justify-between border-b border-border py-1.5 text-small last:border-0">
       <span className="text-text-muted">{k}</span>
       <span className="font-mono text-text">{v}</span>
+    </div>
+  );
+}
+
+/** Editable project name (admin). Renames the project; slug/keys are unchanged. */
+function ProjectName({ project, isAdmin }: { project: Project; isAdmin: boolean }) {
+  const qc = useQueryClient();
+  const [editing, setEditing] = React.useState(false);
+  const [name, setName] = React.useState(project.name);
+  React.useEffect(() => setName(project.name), [project.name]);
+
+  const rename = useMutation({
+    mutationFn: () => api(`/projects/${project.id}`, { method: 'PATCH', body: JSON.stringify({ name: name.trim() }) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['projects'] });
+      setEditing(false);
+    },
+  });
+
+  if (!isAdmin || !editing) {
+    return (
+      <div className="flex items-center justify-between border-b border-border py-1.5 text-small last:border-0">
+        <span className="text-text-muted">Project</span>
+        <span className="flex items-center gap-2">
+          <span className="font-mono text-text">{project.name}</span>
+          {isAdmin && (
+            <button onClick={() => setEditing(true)} className="text-caption text-accent hover:underline">
+              edit
+            </button>
+          )}
+        </span>
+      </div>
+    );
+  }
+
+  const inp = 'h-8 rounded-md border border-border bg-bg px-2 text-small text-text';
+  return (
+    <div className="flex items-center justify-between border-b border-border py-1.5 text-small last:border-0">
+      <span className="text-text-muted">Project</span>
+      <span className="flex items-center gap-2">
+        <input className={inp} value={name} onChange={(e) => setName(e.target.value)} autoFocus />
+        <Button size="sm" variant="primary" disabled={rename.isPending || !name.trim() || name.trim() === project.name} onClick={() => rename.mutate()}>
+          {rename.isPending ? 'Saving…' : 'Save'}
+        </Button>
+        <button onClick={() => { setName(project.name); setEditing(false); }} className="text-caption text-text-muted hover:underline">
+          cancel
+        </button>
+      </span>
     </div>
   );
 }

@@ -24,6 +24,26 @@ function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 }
 
+/** Invite acceptance link (7-day reset token → /reset). */
+function inviteLink(email: string, token: string): string {
+  return `${WEB_URL}/reset?token=${token}&email=${encodeURIComponent(email)}`;
+}
+
+/** Invite email body — shared by invite + reinvite (FR-ADM-6). */
+function buildInviteEmail(fromEmail: string | undefined, role: string, toEmail: string, token: string): string {
+  const link = inviteLink(toEmail, token);
+  return `
+    <div style="font-family:system-ui,sans-serif;max-width:520px;margin:0 auto">
+      <h2 style="margin:0 0 12px">You've been invited to geniusDebug</h2>
+      <p>${escapeHtml(fromEmail ?? 'An admin')} added you to their geniusDebug workspace as
+         <strong>${escapeHtml(role)}</strong>.</p>
+      <p>Set your password to accept the invite and sign in:</p>
+      <p><a href="${link}" style="display:inline-block;background:#6d5efc;color:#fff;
+         padding:10px 18px;border-radius:8px;text-decoration:none">Accept invite &amp; set password</a></p>
+      <p style="color:#666;font-size:13px">Or paste this link (valid 7 days):<br>${link}</p>
+    </div>`;
+}
+
 /**
  * Admin + deploy-pipeline endpoints (FR-GH-1, FR-ADM-5, FR-BLD-2 / §4.3).
  * Repo linking + token issuance are admin-only (JWT). Artifact registration uses
@@ -148,11 +168,30 @@ export class AdminController {
   @Get('members')
   @UseGuards(JwtGuard)
   async listMembers(@Req() req: Request & { user?: AuthPrincipal }) {
-    return db
-      .select({ id: users.id, name: users.name, email: users.email, role: memberships.role })
+    const rows = await db
+      .select({
+        id: users.id,
+        name: users.name,
+        email: users.email,
+        role: memberships.role,
+        // Invited-but-not-accepted: still holds a live reset token (set at invite,
+        // cleared when they set a password). FR-ADM-6.
+        resetTokenHash: users.resetTokenHash,
+        resetExpires: users.resetExpires,
+        invitedAt: users.createdAt,
+      })
       .from(memberships)
       .innerJoin(users, eq(users.id, memberships.userId))
       .where(eq(memberships.orgId, req.user!.orgId));
+    const now = Date.now();
+    return rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      email: r.email,
+      role: r.role,
+      pending: r.resetTokenHash != null && !!r.resetExpires && r.resetExpires.getTime() > now,
+      invitedAt: r.invitedAt,
+    }));
   }
 
   @Post('members')
@@ -185,22 +224,43 @@ export class AdminController {
       .returning({ id: users.id });
     await db.insert(memberships).values({ orgId: req.user!.orgId, userId: u[0].id, role: body.role ?? 'member' });
 
-    const link = `${WEB_URL}/reset?token=${token}&email=${encodeURIComponent(body.email)}`;
-    const html = `
-      <div style="font-family:system-ui,sans-serif;max-width:520px;margin:0 auto">
-        <h2 style="margin:0 0 12px">You've been invited to geniusDebug</h2>
-        <p>${escapeHtml(req.user!.email ?? 'An admin')} added you to their geniusDebug workspace as
-           <strong>${body.role ?? 'member'}</strong>.</p>
-        <p>Set your password to accept the invite and sign in:</p>
-        <p><a href="${link}" style="display:inline-block;background:#6d5efc;color:#fff;
-           padding:10px 18px;border-radius:8px;text-decoration:none">Accept invite &amp; set password</a></p>
-        <p style="color:#666;font-size:13px">Or paste this link (valid 7 days):<br>${link}</p>
-      </div>`;
+    const html = buildInviteEmail(req.user!.email, body.role ?? 'member', body.email, token);
+    const link = inviteLink(body.email, token);
     const mail = await sendEmail([body.email], "You've been invited to geniusDebug", html, req.user!.orgId);
     // eslint-disable-next-line no-console
     if (!mail.sent) console.log(`[admin] invite link for ${body.email}: ${link}`);
     // In dev / when SES is unset, hand the link back so the admin can share it manually.
-    return { ok: true, id: u[0].id, emailSent: mail.sent, inviteLink: mail.sent ? undefined : link };
+    return { ok: true, id: u[0].id, emailSent: mail.sent, inviteLink: mail.sent ? undefined : link, reason: mail.reason };
+  }
+
+  /**
+   * Re-send an invite to a pending member: mint a fresh 7-day token and email it
+   * again (or hand the link back when SES is unset). Admin-only. FR-ADM-6.
+   */
+  @Post('members/:id/reinvite')
+  @UseGuards(JwtGuard)
+  async reinvite(@Req() req: Request & { user?: AuthPrincipal }, @Param('id') id: string) {
+    if (req.user!.role !== 'admin') throw new ForbiddenException('admin only');
+    const rows = await db
+      .select({ email: users.email, role: memberships.role })
+      .from(users)
+      .innerJoin(memberships, and(eq(memberships.userId, users.id), eq(memberships.orgId, req.user!.orgId)))
+      .where(and(eq(users.id, id), eq(users.orgId, req.user!.orgId)))
+      .limit(1);
+    if (rows.length === 0) throw new BadRequestException('member not found');
+    const { email, role } = rows[0];
+
+    const token = randomBytes(24).toString('hex');
+    const tokenHash = await bcrypt.hash(token, 10);
+    const expires = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    await db.update(users).set({ resetTokenHash: tokenHash, resetExpires: expires }).where(eq(users.id, id));
+
+    const html = buildInviteEmail(req.user!.email, role, email, token);
+    const link = inviteLink(email, token);
+    const mail = await sendEmail([email], "You've been invited to geniusDebug", html, req.user!.orgId);
+    // eslint-disable-next-line no-console
+    if (!mail.sent) console.log(`[admin] re-invite link for ${email}: ${link}`);
+    return { ok: true, emailSent: mail.sent, inviteLink: mail.sent ? undefined : link, reason: mail.reason };
   }
 
   @Post('members/:id/role')

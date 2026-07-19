@@ -53,17 +53,27 @@ export async function sendEmail(
   const cfg = await resolveConfig(orgId);
   if (!cfg) return { sent: false, reason: 'email (SES) not configured' };
   if (to.length === 0) return { sent: false, reason: 'no recipient' };
-  const { SESClient, SendEmailCommand } = await import('@aws-sdk/client-ses');
-  const client = new SESClient({
-    region: cfg.region,
-    credentials: { accessKeyId: cfg.accessKeyId, secretAccessKey: cfg.secretAccessKey },
-  });
-  await client.send(
-    new SendEmailCommand({
-      Source: cfg.from,
-      Destination: { ToAddresses: to },
-      Message: { Subject: { Data: subject }, Body: { Html: { Data: html } } },
-    }),
-  );
-  return { sent: true };
+  // Never let an SES/SDK failure become a 500 — the caller offers a copy/mailto
+  // fallback on { sent:false }. Surface the real cause (bad creds, unverified
+  // sender, sandbox recipient, region, or a missing @aws-sdk/client-ses install).
+  try {
+    const { SESClient, SendEmailCommand } = await import('@aws-sdk/client-ses');
+    const client = new SESClient({
+      region: cfg.region,
+      credentials: { accessKeyId: cfg.accessKeyId, secretAccessKey: cfg.secretAccessKey },
+    });
+    await client.send(
+      new SendEmailCommand({
+        Source: cfg.from,
+        Destination: { ToAddresses: to },
+        Message: { Subject: { Data: subject }, Body: { Html: { Data: html } } },
+      }),
+    );
+    return { sent: true };
+  } catch (e) {
+    const reason = e instanceof Error ? e.message : 'SES send failed';
+    // eslint-disable-next-line no-console
+    console.error('[mailer] SES send failed:', reason);
+    return { sent: false, reason };
+  }
 }

@@ -5,6 +5,7 @@ import {
   Get,
   HttpCode,
   Param,
+  Patch,
   Post,
   Req,
   UseGuards,
@@ -121,6 +122,30 @@ export class ProjectsController {
 
       return proj[0];
     });
+  }
+
+  /** Rename a project (FR-ADM). Admin-only, org-scoped. Slug/keys are unchanged. */
+  @Patch(':id')
+  async rename(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Param('id') id: string,
+    @Body() body: { name?: string },
+  ) {
+    if (req.user!.role !== 'admin') throw new ForbiddenException('admin only');
+    const owned = await db
+      .select({ id: projects.id })
+      .from(projects)
+      .where(and(eq(projects.id, id), eq(projects.orgId, req.user!.orgId)))
+      .limit(1);
+    if (owned.length === 0) throw new ForbiddenException('project not in org');
+    const name = (body.name ?? '').trim();
+    if (!name) throw new BadRequestException('name required');
+    const updated = await db
+      .update(projects)
+      .set({ name })
+      .where(eq(projects.id, id))
+      .returning({ id: projects.id, name: projects.name, slug: projects.slug });
+    return updated[0];
   }
 
   /**

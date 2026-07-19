@@ -57,6 +57,13 @@
       "when": 1784406699400,
       "tag": "0007_milky_abomination",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1784438941962,
+      "tag": "0008_lucky_rocket_raccoon",
+      "breakpoints": true
     }
   ]
 }

@@ -547,3 +547,25 @@ GitHub advanced (GD-043/44/45) code-complete; live needs a GitHub App install.
 - Web Settings→GitHub: "Connected apps" list, each row = slug · owner + Install/add-repos link + Disconnect (danger btn, admin). Create form appends ("Create another App"). Repo picker + manual link unchanged.
 - GD-088: extracted the whole GitHub flow (`GithubApp`+`ManualLink`+`GithubLink`) from Settings.tsx into shared `components/GithubConnect.tsx` (export `GithubConnect`); Settings imports it. Added a "Connect a GitHub repo" `Card` to `ProjectSetup` (`/projects/:id/setup`) after the SDK guide — repo linking is now part of the post-create onboarding. Manual link works inline on the setup page; the App-install redirect still lands on `/settings?installation_id=` (repo picker appears there) — acceptable seam, not changed.
 - api+web+db typecheck clean; web prod build clean (116 modules); 19 tests green (6 ingest + 13 workers). Needs api+web redeploy on Coolify.
+
+## Sprint 22 — Revert to 1 app/repo per project, project rename, member invite UX, email 500 fix
+**Status:** COMPLETE
+**Started:** 2026-07-19
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-089 | Revert to one GitHub App per org (keep disconnect) | DONE | HIGH | user: individual project = one repo + one app. Restore `github_apps_org_uq` unique (migration 0008, dedupe-then-unique); `appCallback` replaces org app; `GET /github/app` → `{installed, app}`; GithubConnect single-app UI + Disconnect (no "create another") |
+| GD-090 | GitHub repo connect + status inside setup guide | DONE | MED | move `GithubConnect` into shared `IntegrationGuide` so setup page + Projects inline guide both show connect + connected-repo status; drop the separate ProjectSetup card |
+| GD-091 | Edit project name | DONE | MED | FR-ADM: `PATCH /projects/:id {name}` (admin, org-scoped, slug unchanged); Settings→General editable Project name (edit/save/cancel) |
+| GD-092 | Fix setup-email 500 | DONE | HIGH | `mailer.sendEmail` now try/catches SES send + aws-sdk import → returns `{sent:false, reason}` (was throwing → 500 on the setup/email + invite paths); UI shows reason + mailto/copy fallback |
+| GD-093 | Member invite UX: surface errors, pending badge, reinvite | DONE | MED | FR-ADM-6: invite/remove/role mutations get `onError` → inline message (was silent on "email already a member" 400); `GET /members` returns `pending` (live reset token) + `invitedAt`; "invite pending" badge + `reinvite` btn; new `POST /members/:id/reinvite` (fresh 7-day token, resend/return link) |
+
+### Sprint Stats
+- Total: 5  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 5  /  BLOCKED: 0
+
+### Verification notes (Sprint 22)
+- api+web+db typecheck clean; web prod build clean; 19 tests green.
+- Migration 0008 applied (dedupe dup github_apps per org → restore `github_apps_org_uq` unique). Supersedes GD-087's multi-app (Sprint 21) per user correction.
+- Email 500 root cause: SES now configured (Integrations) but `SendEmailCommand` threw (unverified sender/sandbox/creds) and mailer didn't catch → Nest 500. Now graceful `{sent:false, reason}`; both `/projects/:id/setup/email` and invite/reinvite return the reason so UI offers copy/mailto.
+- Members: `pending` = user still holds a live (unexpired, unconsumed) reset token; cleared when they set a password via the invite link. Reinvite mints a new token + resends.
+- Needs api+web redeploy on Coolify. To actually deliver mail, verify the SES sender identity / move out of sandbox (the reason string will say which).
