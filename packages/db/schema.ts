@@ -142,6 +142,9 @@ export const repositories = pgTable('repositories', {
   name: varchar('name', { length: 160 }).notNull(),
   defaultBranch: varchar('default_branch', { length: 160 }).notNull().default('main'),
   installationId: varchar('installation_id', { length: 120 }),
+  // Opt-in per repo: allow the AI suggester to open DRAFT PRs (FR-AIF §3.3).
+  // Off by default — requires the elevated App perms (contents+PR write).
+  prEnabled: boolean('pr_enabled').notNull().default(false),
   tokenRef: text('token_ref'), // encrypted reference, never plaintext (NFR-SEC-5)
   connectedByUserId: uuid('connected_by_user_id').references(() => users.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
@@ -366,6 +369,25 @@ export const fixSuggestions = pgTable(
   },
   (t) => ({
     issueIdx: index('fix_suggestions_issue_idx').on(t.issueId, t.createdAt),
+  }),
+);
+
+// Draft PRs opened from an AI suggestion — the ONLY repo-mutating record
+// (FR-AIF §3). Idempotent per (suggestion, patchHash). Never auto-merged by us.
+export const fixPullRequests = pgTable(
+  'fix_pull_requests',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    suggestionId: uuid('suggestion_id').notNull().references(() => fixSuggestions.id, { onDelete: 'cascade' }),
+    patchHash: varchar('patch_hash', { length: 64 }).notNull(),
+    branch: varchar('branch', { length: 240 }).notNull(),
+    prUrl: text('pr_url').notNull(),
+    status: varchar('status', { length: 16 }).notNull().default('draft'),
+    createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => ({
+    uq: uniqueIndex('fix_prs_suggestion_patch_uq').on(t.suggestionId, t.patchHash),
   }),
 );
 

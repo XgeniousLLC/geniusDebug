@@ -42,9 +42,11 @@ export class GithubController {
       setup_url: `${API_URL}/github/installation/callback`,
       hook_attributes: { url: `${API_URL}/github/webhook`, active: false },
       public: false,
-      // Least-privilege (FR-GH-8): read code for blame/suspect-commits, write
-      // issues so "Create GitHub Issue" (FR-GH-6) works.
-      default_permissions: { contents: 'read', metadata: 'read', issues: 'write' },
+      // Least-privilege (FR-GH-8): metadata read; contents write (read for
+      // blame/suspect-commits + source grounding, write to push AI draft-PR
+      // branches, FR-AIF); issues write (Create GitHub Issue, FR-GH-6); pull
+      // requests write (open draft PRs, FR-AIF §3.3).
+      default_permissions: { contents: 'write', metadata: 'read', issues: 'write', pull_requests: 'write' },
       default_events: [],
     };
     return { postUrl, manifest, state };

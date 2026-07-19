@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, ForbiddenException, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtGuard, type AuthPrincipal } from '../auth/jwt.guard';
 import { SuggestService } from './suggest.service';
@@ -16,7 +16,33 @@ export class SuggestController {
 
   @Get()
   async latest(@Req() req: Request & { user?: AuthPrincipal }, @Param('shortId') shortId: string) {
-    return { suggestion: await this.svc.latest(req.user!, shortId) };
+    return this.svc.latestWithPr(req.user!, shortId);
+  }
+
+  /**
+   * Open a DRAFT pull request from an approved suggestion (FR-AIF P4). Explicit
+   * human action; admin-gated; no model in this path (deterministic patch apply).
+   */
+  @Post('pr')
+  async openPr(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Param('shortId') shortId: string,
+    @Body() body: { suggestionId?: string },
+  ) {
+    if (req.user!.role !== 'admin') throw new ForbiddenException('admin only');
+    if (!body?.suggestionId) throw new ForbiddenException('suggestionId required');
+    return this.svc.openPr(req.user!, shortId, body.suggestionId);
+  }
+
+  /** Admin: enable/disable AI draft PRs for this issue's project repo (FR-AIF §3.3). */
+  @Post('pr-enabled')
+  async setPrEnabled(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Param('shortId') shortId: string,
+    @Body() body: { enabled?: boolean },
+  ) {
+    if (req.user!.role !== 'admin') throw new ForbiddenException('admin only');
+    return this.svc.setPrEnabled(req.user!, shortId, !!body?.enabled);
   }
 
   @Post()

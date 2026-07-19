@@ -1,11 +1,20 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { db, issues, events, fixSuggestions, repositories, releases } from '@geniusdebug/db';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { createHash } from 'node:crypto';
+import { db, issues, events, fixSuggestions, fixPullRequests, repositories, releases } from '@geniusdebug/db';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import type { AuthPrincipal } from '../auth/jwt.guard';
 import { accessibleProjectIds } from '../access';
 import { GithubService } from '../github/github.service';
 import { deepseekJson, deepseekConfigured } from './deepseek';
 import { redact, REDACT_PATH } from './redact';
+import { applyUnifiedDiff } from './apply-diff';
+
+const WEB_URL = process.env.WEB_URL ?? 'http://localhost:5199';
+
+/** Approval key: sha256 of the normalized patch set (FR-AIF §3.2). */
+function patchHash(patches: { path: string; unifiedDiff: string }[]): string {
+  return createHash('sha256').update(JSON.stringify(patches)).digest('hex').slice(0, 40);
+}
 
 interface Frame {
   filename?: string;
@@ -16,6 +25,15 @@ interface Frame {
   preContext?: string[];
   contextLine?: string;
   postContext?: string[];
+}
+
+interface CritiqueResult {
+  addresses?: boolean;
+  compiles?: boolean;
+  risk?: 'low' | 'medium' | 'high';
+  verdict?: 'accept' | 'revise' | 'reject';
+  confidence?: string;
+  note?: string;
 }
 
 interface RawSuggestion {
@@ -64,6 +82,24 @@ export class SuggestService {
     return rows[0] ?? null;
   }
 
+  /** Latest suggestion + whether the repo allows draft PRs + any existing PR. */
+  async latestWithPr(user: AuthPrincipal, shortId: string) {
+    const issue = await this.resolveIssue(user, shortId);
+    const suggestion = (
+      await db.select().from(fixSuggestions).where(eq(fixSuggestions.issueId, issue.id)).orderBy(desc(fixSuggestions.createdAt)).limit(1)
+    )[0] ?? null;
+    const repo = (await db.select({ prEnabled: repositories.prEnabled }).from(repositories).where(eq(repositories.projectId, issue.projectId)).limit(1))[0];
+    let prUrl: string | null = null;
+    if (suggestion) {
+      const hash = patchHash((suggestion.patches ?? []).filter((p) => p.path && p.unifiedDiff));
+      const pr = (
+        await db.select({ prUrl: fixPullRequests.prUrl }).from(fixPullRequests).where(and(eq(fixPullRequests.suggestionId, suggestion.id), eq(fixPullRequests.patchHash, hash))).limit(1)
+      )[0];
+      prUrl = pr?.prUrl ?? null;
+    }
+    return { suggestion, prEnabled: !!repo?.prEnabled, prUrl };
+  }
+
   /** Generate (or return cached) a probable-fix suggestion via DeepSeek (FR-AIF). */
   async generate(user: AuthPrincipal, shortId: string, refresh: boolean) {
     const issue = await this.resolveIssue(user, shortId);
@@ -89,10 +125,24 @@ export class SuggestService {
     if (!res.ok || !res.data) return { suggestion: null, reason: res.reason ?? 'no suggestion produced' };
 
     const d = res.data;
-    const confidence = ['high', 'medium', 'low'].includes(String(d.confidence)) ? String(d.confidence) : 'low';
+    let confidence = ['high', 'medium', 'low'].includes(String(d.confidence)) ? String(d.confidence) : 'low';
     const patches = (d.patches ?? [])
       .filter((p) => p.path && p.unifiedDiff)
       .map((p) => ({ path: p.path!, unifiedDiff: p.unifiedDiff! }));
+    const needMoreContext = (d.needMoreContext ?? []).slice(0, 10);
+
+    // P3: adversarial self-critique — does the patch actually address the root
+    // cause, would it compile, what's the regression risk? Calibrate confidence.
+    const critique = await this.critique(prompt, d.rootCause ?? '', patches);
+    if (critique) {
+      if (critique.verdict === 'reject') {
+        confidence = 'low';
+        if (critique.note) needMoreContext.push(`Reviewer rejected the patch: ${critique.note}`);
+      } else if (['high', 'medium', 'low'].includes(String(critique.confidence))) {
+        // Never let critique upgrade past the generator's own confidence when it flags risk.
+        confidence = critique.risk === 'high' ? 'low' : String(critique.confidence);
+      }
+    }
 
     const inserted = (
       await db
@@ -107,14 +157,126 @@ export class SuggestService {
           evidence: (d.evidence ?? []).slice(0, 20),
           patches,
           testSuggestion: d.testSuggestion ?? null,
-          needMoreContext: (d.needMoreContext ?? []).slice(0, 10),
-          meta: { usage: res.usage, baseSha: sources.baseSha, sourceFiles: sources.windows.map((w) => w.path) },
+          needMoreContext: needMoreContext.slice(0, 12),
+          meta: { usage: res.usage, baseSha: sources.baseSha, sourceFiles: sources.windows.map((w) => w.path), critique },
           createdBy: user.userId,
         })
         .returning()
     )[0];
 
     return { suggestion: inserted, cached: false };
+  }
+
+  /** Admin toggle: allow/deny AI draft PRs for the issue's project repo (FR-AIF §3.3). */
+  async setPrEnabled(user: AuthPrincipal, shortId: string, enabled: boolean) {
+    const issue = await this.resolveIssue(user, shortId);
+    const repo = (await db.select({ id: repositories.id }).from(repositories).where(eq(repositories.projectId, issue.projectId)).limit(1))[0];
+    if (!repo) throw new BadRequestException('no GitHub repo linked to this project');
+    await db.update(repositories).set({ prEnabled: enabled }).where(eq(repositories.id, repo.id));
+    return { ok: true, prEnabled: enabled };
+  }
+
+  /**
+   * Open a DRAFT pull request from an approved suggestion (FR-AIF P4). This is
+   * the ONLY repo-mutating path and the model is NOT in it — deterministic code
+   * applies the exact stored patch. Guardrails: admin (controller) + project
+   * access + per-repo opt-in + patch re-validation (context drift → abort) +
+   * draft-only + new branch only + idempotent per (suggestion, patchHash).
+   */
+  async openPr(user: AuthPrincipal, shortId: string, suggestionId: string) {
+    const issue = await this.resolveIssue(user, shortId);
+    const sug = (await db.select().from(fixSuggestions).where(eq(fixSuggestions.id, suggestionId)).limit(1))[0];
+    if (!sug || sug.issueId !== issue.id) throw new BadRequestException('suggestion not found for this issue');
+
+    const patches = (sug.patches ?? []).filter((p) => p.path && p.unifiedDiff);
+    if (patches.length === 0) throw new BadRequestException('this suggestion has no patch to apply');
+    const hash = patchHash(patches);
+
+    const repo = (await db.select().from(repositories).where(eq(repositories.projectId, issue.projectId)).limit(1))[0];
+    if (!repo) throw new BadRequestException('no GitHub repo linked to this project');
+    if (!repo.prEnabled) throw new BadRequestException('draft PRs are disabled for this repo — an admin must enable them in Settings → GitHub');
+    if (!repo.installationId) throw new BadRequestException('no GitHub App installation');
+
+    // Idempotent: return the existing draft PR for this exact patch.
+    const existing = (
+      await db
+        .select()
+        .from(fixPullRequests)
+        .where(and(eq(fixPullRequests.suggestionId, suggestionId), eq(fixPullRequests.patchHash, hash)))
+        .limit(1)
+    )[0];
+    if (existing) return { ok: true, url: existing.prUrl, branch: existing.branch, existing: true };
+
+    const token = await this.gh.installationTokenForOrg(user.orgId, repo.installationId);
+    if (!token) throw new BadRequestException('could not authenticate the GitHub App');
+
+    const base = repo.defaultBranch;
+    const baseSha = await this.gh.branchHeadSha(token, repo.owner, repo.name, base);
+    if (!baseSha) throw new BadRequestException(`could not read the head of "${base}"`);
+
+    const branch = `genius-fix/${shortId.toLowerCase()}-${hash.slice(0, 8)}`;
+    await this.gh.createBranch(token, repo.owner, repo.name, branch, baseSha); // false = already exists, reuse
+
+    // Apply each patch against the branch content; abort on any drift (never a bad PR).
+    for (const p of patches) {
+      const path = p.path.replace(/^\.\//, '').replace(/^\/+/, '');
+      const meta = await this.gh.fileMeta(token, repo.owner, repo.name, path, branch);
+      if (!meta) throw new BadRequestException(`file not found in repo: ${path}`);
+      let next: string;
+      try {
+        next = applyUnifiedDiff(meta.content, p.unifiedDiff);
+      } catch (err) {
+        throw new BadRequestException(`patch no longer applies to ${path} (${(err as Error).message}). Regenerate the suggestion.`);
+      }
+      if (next === meta.content) continue; // no-op hunk
+      await this.gh.putFile(token, repo.owner, repo.name, path, next, `fix: ${issue.title.slice(0, 72)} (${shortId})`, branch, meta.sha);
+    }
+
+    const body = [
+      `Proposed fix for **${shortId}** — ${issue.title}`,
+      ``,
+      `**Root cause:** ${sug.rootCause}`,
+      sug.confidence ? `**Confidence:** ${sug.confidence}` : '',
+      ``,
+      `> 🤖 AI-generated draft (DeepSeek), unverified. Review before merging.`,
+      `> geniusDebug: ${WEB_URL}/issues/${shortId}`,
+    ]
+      .filter(Boolean)
+      .join('\n');
+    const url = await this.gh.createDraftPr(token, repo.owner, repo.name, branch, base, `fix: ${issue.title.slice(0, 80)} (${shortId})`, body);
+
+    await db
+      .insert(fixPullRequests)
+      .values({ suggestionId, patchHash: hash, branch, prUrl: url, status: 'draft', createdBy: user.userId })
+      .onConflictDoNothing({ target: [fixPullRequests.suggestionId, fixPullRequests.patchHash] });
+
+    return { ok: true, url, branch, existing: false };
+  }
+
+  /** Adversarial review of the generated patch (P3). Cheap second opinion. */
+  private async critique(
+    groundingPrompt: string,
+    rootCause: string,
+    patches: { path: string; unifiedDiff: string }[],
+  ): Promise<CritiqueResult | null> {
+    if (patches.length === 0) return null; // nothing to verify
+    const system =
+      'You are a skeptical senior reviewer. Given a runtime error, its source, and a proposed fix, judge the fix strictly. ' +
+      'Default to skepticism. Reply with a JSON object: {addresses: boolean, compiles: boolean, risk: "low"|"medium"|"high", ' +
+      'verdict: "accept"|"revise"|"reject", confidence: "high"|"medium"|"low", note: string}.';
+    const user = [
+      groundingPrompt,
+      ``,
+      `## Proposed root cause`,
+      rootCause,
+      ``,
+      `## Proposed patch`,
+      patches.map((p) => `--- ${p.path}\n${p.unifiedDiff}`).join('\n\n'),
+      ``,
+      `Does this patch actually fix the root cause? Would it compile/run? What is the regression risk?`,
+    ].join('\n');
+    const res = await deepseekJson<CritiqueResult>(system, user);
+    return res.ok && res.data ? res.data : null;
   }
 
   /**

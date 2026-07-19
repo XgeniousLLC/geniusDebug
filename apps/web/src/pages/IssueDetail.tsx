@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import type { IssueDto, EventDto, NormalizedFrame } from '@geniusdebug/shared';
 import { api, errMsg } from '../lib/api';
+import { useUi } from '../store/ui';
 import { toast, ACTION_PAST } from '../store/toast';
 import { timeAgo } from '../lib/format';
 import { Button, LevelPill, StatusChip, IdChip, Tag, Card, Skeleton, ErrorState } from '../components/ui';
@@ -29,12 +30,18 @@ interface FixSuggestion {
   needMoreContext: string[] | null;
   createdAt: string;
 }
+interface SuggestResponse {
+  suggestion: FixSuggestion | null;
+  prEnabled: boolean;
+  prUrl: string | null;
+}
 
 type Tab = 'stack' | 'breadcrumbs' | 'tags' | 'context' | 'events';
 
 export function IssueDetail() {
   const { shortId = '' } = useParams();
   const qc = useQueryClient();
+  const isAdmin = useUi((s) => s.user?.role === 'admin');
   const [tab, setTab] = React.useState<Tab>('stack');
   const [eventIdx, setEventIdx] = React.useState(0);
   const [editingHi, setEditingHi] = React.useState(false);
@@ -91,10 +98,10 @@ export function IssueDetail() {
     onError: (e: unknown) => toast.error(`Couldn't create GitHub issue: ${errMsg(e)}`),
   });
 
-  // AI fix suggestion (DeepSeek, FR-AIF) — read-only, inert.
+  // AI fix suggestion (DeepSeek, FR-AIF) — diagnosis is inert; PR is human-gated.
   const suggestion = useQuery({
     queryKey: ['suggest', shortId],
-    queryFn: () => api<{ suggestion: FixSuggestion | null }>(`/issues/${shortId}/suggest`),
+    queryFn: () => api<SuggestResponse>(`/issues/${shortId}/suggest`),
   });
   const genSuggest = useMutation({
     mutationFn: (refresh: boolean) =>
@@ -104,13 +111,36 @@ export function IssueDetail() {
       }),
     onSuccess: (r) => {
       if (r.suggestion) {
-        qc.setQueryData(['suggest', shortId], { suggestion: r.suggestion });
+        qc.setQueryData(['suggest', shortId], (prev: SuggestResponse | undefined) => ({
+          suggestion: r.suggestion,
+          prEnabled: prev?.prEnabled ?? false,
+          prUrl: null,
+        }));
         toast.success('Fix suggestion ready');
       } else {
         toast.error(r.reason ?? 'No suggestion produced');
       }
     },
     onError: (e: unknown) => toast.error(`Suggest failed: ${errMsg(e)}`),
+  });
+  const openPr = useMutation({
+    mutationFn: (suggestionId: string) =>
+      api<{ url: string }>(`/issues/${shortId}/suggest/pr`, { method: 'POST', body: JSON.stringify({ suggestionId }) }),
+    onSuccess: (r) => {
+      window.open(r.url, '_blank');
+      qc.setQueryData(['suggest', shortId], (prev: SuggestResponse | undefined) => (prev ? { ...prev, prUrl: r.url } : prev));
+      toast.success('Draft PR opened');
+    },
+    onError: (e: unknown) => toast.error(`Couldn't open PR: ${errMsg(e)}`),
+  });
+  const togglePr = useMutation({
+    mutationFn: (enabled: boolean) =>
+      api<{ prEnabled: boolean }>(`/issues/${shortId}/suggest/pr-enabled`, { method: 'POST', body: JSON.stringify({ enabled }) }),
+    onSuccess: (r) => {
+      qc.setQueryData(['suggest', shortId], (prev: SuggestResponse | undefined) => (prev ? { ...prev, prEnabled: r.prEnabled } : prev));
+      toast.success(r.prEnabled ? 'Draft PRs enabled for this repo' : 'Draft PRs disabled');
+    },
+    onError: (e: unknown) => toast.error(`Couldn't update: ${errMsg(e)}`),
   });
 
   if (q.isLoading) return <div className="p-6"><Skeleton className="h-40 w-full" /></div>;
@@ -332,6 +362,15 @@ export function IssueDetail() {
             loading={suggestion.isLoading}
             pending={genSuggest.isPending}
             onGenerate={(refresh) => genSuggest.mutate(refresh)}
+            isAdmin={isAdmin}
+            prEnabled={suggestion.data?.prEnabled ?? false}
+            prUrl={suggestion.data?.prUrl ?? null}
+            prPending={openPr.isPending}
+            onOpenPr={(id) => {
+              if (window.confirm('Open a DRAFT pull request applying this patch to a new branch? It will NOT be merged.')) openPr.mutate(id);
+            }}
+            onTogglePr={(en) => togglePr.mutate(en)}
+            togglePending={togglePr.isPending}
           />
           <Card className="p-4">
             <div className="mb-2 text-h2 font-semibold">Stats</div>
@@ -395,12 +434,27 @@ function SuggestCard({
   loading,
   pending,
   onGenerate,
+  isAdmin,
+  prEnabled,
+  prUrl,
+  prPending,
+  onOpenPr,
+  onTogglePr,
+  togglePending,
 }: {
   data: FixSuggestion | null;
   loading: boolean;
   pending: boolean;
   onGenerate: (refresh: boolean) => void;
+  isAdmin: boolean;
+  prEnabled: boolean;
+  prUrl: string | null;
+  prPending: boolean;
+  onOpenPr: (suggestionId: string) => void;
+  onTogglePr: (enabled: boolean) => void;
+  togglePending: boolean;
 }) {
+  const hasPatch = (data?.patches?.length ?? 0) > 0;
   return (
     <Card className="p-4">
       <div className="mb-2 flex items-center justify-between">
@@ -482,6 +536,37 @@ function SuggestCard({
                   <li key={i}>{n}</li>
                 ))}
               </ul>
+            </div>
+          )}
+
+          {/* Draft-PR controls (P4) — explicit human action, admin-gated, draft-only. */}
+          {hasPatch && (
+            <div className="mt-1 border-t border-border pt-2.5">
+              {prUrl ? (
+                <a href={prUrl} target="_blank" rel="noreferrer" className="text-small text-accent hover:underline">
+                  View draft PR →
+                </a>
+              ) : !isAdmin ? (
+                <span className="text-caption text-text-faint">An admin can open a draft PR from this patch.</span>
+              ) : prEnabled ? (
+                <div className="flex flex-col gap-1">
+                  <Button size="sm" variant="secondary" onClick={() => data && onOpenPr(data.id)} disabled={prPending}>
+                    {prPending ? 'Opening…' : 'Open draft PR →'}
+                  </Button>
+                  <span className="text-caption text-text-faint">Applies the patch to a new branch as a draft. Never auto-merged.</span>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-1">
+                  <span className="text-caption text-text-faint">Draft PRs are off for this repo.</span>
+                  <button
+                    onClick={() => onTogglePr(true)}
+                    disabled={togglePending}
+                    className="self-start text-caption text-accent hover:underline disabled:opacity-50"
+                  >
+                    {togglePending ? 'Enabling…' : 'Enable draft PRs for this repo'}
+                  </button>
+                </div>
+              )}
             </div>
           )}
 

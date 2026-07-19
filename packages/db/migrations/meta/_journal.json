@@ -78,6 +78,13 @@
       "when": 1784456249986,
       "tag": "0010_next_joystick",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1784457228152,
+      "tag": "0011_condemned_wither",
+      "breakpoints": true
     }
   ]
 }
