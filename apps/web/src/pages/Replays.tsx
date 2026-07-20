@@ -43,6 +43,7 @@ export function Replays() {
   const q = useQuery({
     queryKey: ['replays', currentProjectId],
     queryFn: () => api<Replay[]>(`/replays${currentProjectId ? `?projectId=${currentProjectId}` : ''}`),
+    refetchInterval: 5000, // new replays surface automatically (GD-147)
   });
 
   return (

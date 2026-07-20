@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
-import type { IssueDto } from '@geniusdebug/shared';
+import type { IssueDto, IssueListResponse } from '@geniusdebug/shared';
 import { api, errMsg } from '../lib/api';
 import { useUi, RANGE_LABELS, type IssueRange } from '../store/ui';
 import { toast, ACTION_PAST } from '../store/toast';
@@ -46,18 +46,19 @@ export function Issues() {
     if (q !== null) setQuery(q);
   }, [params]);
 
-  const key = ['issues', { environment, range, status, category, sort, query, projectId: currentProjectId }];
+  const key = ['issues', { environment, range, status, category, sort, query, projectId: currentProjectId, page }];
   const issues = useQuery({
     queryKey: key,
     queryFn: () => {
-      const p = new URLSearchParams({ status, sort });
+      const p = new URLSearchParams({ status, sort, limit: String(PAGE_SIZE), offset: String(page * PAGE_SIZE) });
       if (category !== 'all') p.set('category', category);
       if (environment !== 'all') p.set('environment', environment);
       if (range !== 'all') p.set('range', range);
       if (query) p.set('query', query);
       if (currentProjectId) p.set('projectId', currentProjectId);
-      return api<IssueDto[]>(`/issues?${p.toString()}`);
+      return api<IssueListResponse>(`/issues?${p.toString()}`);
     },
+    placeholderData: (prev) => prev, // keep the current page visible while the next loads
     refetchInterval: 5000, // subtle real-time feel (brief §14)
   });
 
@@ -103,14 +104,13 @@ export function Issues() {
     bulkDelete.mutate(ids);
   }
 
-  const allRows = issues.data ?? [];
-  const total = allRows.length;
+  const rows = issues.data?.items ?? [];
+  const total = issues.data?.total ?? 0;
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const clampedPage = Math.min(page, pageCount - 1);
-  const rows = allRows.slice(clampedPage * PAGE_SIZE, clampedPage * PAGE_SIZE + PAGE_SIZE);
   // Reset paging/cursor when the filter set changes.
   React.useEffect(() => setPage(0), [status, category, sort, query, range, environment, currentProjectId]);
-  React.useEffect(() => setCursor(0), [clampedPage]);
+  React.useEffect(() => setCursor(0), [page]);
 
   // Org-level empty state: no projects at all (cached — Shell already fetched it).
   const projects = useQuery({ queryKey: ['projects'], queryFn: () => api<{ id: string }[]>('/projects') });

@@ -77,6 +77,12 @@ export interface IssueDto {
   assigneeName?: string | null;
 }
 
+/** Paginated issue feed response (FR-UI-2). */
+export interface IssueListResponse {
+  items: IssueDto[];
+  total: number;
+}
+
 export interface EventDto {
   id: string;
   issueId: string;

@@ -32,5 +32,6 @@ export const issueListQuerySchema = z.object({
   // Time window on last-seen (FR-UI-2): 'all' = Since First Seen (no bound).
   range: z.enum(['24h', '7d', '14d', '30d', 'all']).optional(),
   limit: z.coerce.number().min(1).max(100).optional(),
+  offset: z.coerce.number().min(0).optional(),
 });
 export type IssueListQuery = z.infer<typeof issueListQuerySchema>;

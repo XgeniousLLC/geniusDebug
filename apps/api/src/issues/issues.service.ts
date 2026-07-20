@@ -1,8 +1,8 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
 import { db, issues, events, environments, issueActivity, users, issueCounts, replays, repositories, releases } from '@geniusdebug/db';
-import { and, eq, ne, desc, asc, ilike, or, inArray, gte } from 'drizzle-orm';
-import type { IssueDto, EventDto, IssueListQuery, IssueActionInput } from '@geniusdebug/shared';
+import { and, eq, ne, desc, asc, ilike, or, inArray, gte, sql } from 'drizzle-orm';
+import type { IssueDto, EventDto, IssueListQuery, IssueListResponse, IssueActionInput } from '@geniusdebug/shared';
 import type { AuthPrincipal } from '../auth/jwt.guard';
 import { accessibleProjectIds } from '../access';
 import { GithubService } from '../github/github.service';
@@ -62,9 +62,10 @@ export class IssuesService {
     return ids[0] ?? null;
   }
 
-  async list(user: AuthPrincipal, q: IssueListQuery & { projectId?: string }): Promise<IssueDto[]> {
+  async list(user: AuthPrincipal, q: IssueListQuery & { projectId?: string }): Promise<IssueListResponse> {
+    const empty = { items: [], total: 0 };
     const projectId = await this.resolveProject(user, q.projectId);
-    if (!projectId) return [];
+    if (!projectId) return empty;
 
     const conds = [eq(issues.projectId, projectId)];
     const status = q.status ?? 'unresolved';
@@ -86,15 +87,18 @@ export class IssuesService {
         .from(environments)
         .where(and(eq(environments.projectId, projectId), eq(environments.name, q.environment)))
         .limit(1);
-      if (envRows.length === 0) return [];
+      if (envRows.length === 0) return empty;
       const evRows = await db
         .selectDistinct({ issueId: events.issueId })
         .from(events)
         .where(and(eq(events.projectId, projectId), eq(events.environmentId, envRows[0].id)));
       const ids = evRows.map((r) => r.issueId);
-      if (ids.length === 0) return [];
+      if (ids.length === 0) return empty;
       conds.push(inArray(issues.id, ids));
     }
+
+    const totalRow = await db.select({ c: sql<number>`count(*)::int` }).from(issues).where(and(...conds));
+    const total = totalRow[0]?.c ?? 0;
 
     const order =
       q.sort === 'firstSeen'
@@ -110,9 +114,10 @@ export class IssuesService {
       .from(issues)
       .where(and(...conds))
       .orderBy(order)
-      .limit(q.limit ?? 50);
+      .limit(q.limit ?? 25)
+      .offset(q.offset ?? 0);
 
-    if (rows.length === 0) return [];
+    if (rows.length === 0) return { items: [], total };
     const issueIds = rows.map((r) => r.id);
 
     // Sparkline: dense, zero-filled hourly series over the last 24h so the feed
@@ -141,11 +146,12 @@ export class IssuesService {
       for (const u of us) nameOf.set(u.id, u.name);
     }
 
-    return rows.map((r) => ({
+    const items = rows.map((r) => ({
       ...this.toDto(r),
       spark: sparkOf.get(r.id) ?? [],
       assigneeName: r.assigneeUserId ? (nameOf.get(r.assigneeUserId) ?? null) : null,
     }));
+    return { items, total };
   }
 
   async detail(user: AuthPrincipal, shortId: string) {
