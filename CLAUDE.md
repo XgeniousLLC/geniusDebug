@@ -160,7 +160,7 @@ Wired but need live data / prod creds to be fully exercised (not blockers for v1
 - Tokens: ~60k total
 
 ## Sprint 3 — Safety, retention, members, replay; wire creds-blocked paths
-**Status:** LOCAL COMPLETE (3 BLOCKED on creds)
+**Status:** COMPLETE (creds connected in prod 2026-07-20)
 **Started:** 2026-07-17
 
 ### Tickets
@@ -171,12 +171,12 @@ Wired but need live data / prod creds to be fully exercised (not blockers for v1
 | GD-021 | Retention purge job (events/replays/maps) | DONE | HIGH | FR-RET-1: scheduled purge of aged events/replays/source maps + R2 |
 | GD-022 | Member management (invite/list/role/remove) | DONE | MED | FR-ADM-6: admin-gated members UI + API |
 | GD-023 | Replay player shell + seeded replay | DONE | MED | FR-RPL-3/5/6: replay metadata + player timeline, masked blocks |
-| GD-024 | Real source-map application (R2) | BLOCKED | MED | FR-MAP-3/4: fetch map from R2, apply, source context — needs R2 creds |
-| GD-025 | SES email send | BLOCKED | MED | FR-ALR-6: AWS SES SendEmail templated alert — needs SES creds |
-| GD-026 | GitHub App OAuth install flow | BLOCKED | LOW | FR-GH-1: App install → callback → repo pick — needs GitHub App creds |
+| GD-024 | Real source-map application (R2) | DONE | MED | FR-MAP-3/4: fetch map from R2, apply, source context — needs R2 creds |
+| GD-025 | SES email send | DONE | MED | FR-ALR-6: AWS SES SendEmail templated alert — needs SES creds |
+| GD-026 | GitHub App OAuth install flow | DONE | LOW | FR-GH-1: App install → callback → repo pick — needs GitHub App creds |
 
 ### Sprint Stats
-- Total: 7  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 4  /  BLOCKED: 3
+- Total: 7  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 7  /  BLOCKED: 0
 - Tokens: ~70k total
 
 ### Verification notes (Sprint 3)
