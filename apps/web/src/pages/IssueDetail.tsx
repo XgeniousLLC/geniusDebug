@@ -774,11 +774,11 @@ function simColor(score: number): string {
 function EventsChart({ counts }: { counts: { bucket: string; count: number }[] }) {
   const max = Math.max(1, ...counts.map((c) => c.count));
   return (
-    <div className="flex h-20 items-end gap-0.5" title="Events over time">
+    <div className="flex h-20 items-end justify-start gap-1" title="Events over time">
       {counts.map((c, i) => (
         <div
           key={i}
-          className="min-w-0 flex-1 rounded-sm bg-accent transition hover:bg-accent-strong"
+          className="w-full max-w-[36px] flex-1 rounded-sm bg-accent transition hover:bg-accent-strong"
           style={{ height: `${Math.max(3, (c.count / max) * 100)}%` }}
           title={`${new Date(c.bucket).toLocaleString()} · ${c.count}`}
         />
