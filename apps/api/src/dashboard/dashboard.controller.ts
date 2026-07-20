@@ -1,4 +1,4 @@
-import { Controller, Get, Req, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import IORedis from 'ioredis';
 import { db, projects, events, issues, memberships, users } from '@geniusdebug/db';
@@ -18,17 +18,23 @@ const conn = new IORedis(process.env.REDIS_URL ?? 'redis://localhost:6379', redi
 @UseGuards(JwtGuard)
 export class DashboardController {
   @Get()
-  async overview(@Req() req: Request & { user?: AuthPrincipal }) {
+  async overview(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Query('projectId') projectId?: string,
+  ) {
     const orgId = req.user!.orgId;
     const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
-    // Scope to projects the caller can access (members: granted only).
+    // Scope to projects the caller can access (members: granted only). When the
+    // switcher selects a project, narrow the whole overview to just that project.
     const accessIds = await accessibleProjectIds(req.user!);
-    const projRows = accessIds.length
+    const scopedIds =
+      projectId && accessIds.includes(projectId) ? [projectId] : accessIds;
+    const projRows = scopedIds.length
       ? await db
           .select({ id: projects.id, name: projects.name, platform: projects.platform, ingestEnabled: projects.ingestEnabled })
           .from(projects)
-          .where(inArray(projects.id, accessIds))
+          .where(inArray(projects.id, scopedIds))
       : [];
     const pids = projRows.map((p) => p.id);
     const nameOf = new Map(projRows.map((p) => [p.id, p.name]));
