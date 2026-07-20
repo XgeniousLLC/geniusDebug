@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { Card, EmptyState, Skeleton, ErrorState } from '../components/ui';
 import { timeAgo } from '../lib/format';
+import { useUi } from '../store/ui';
 
 interface Sample {
   spanId: string;
@@ -32,7 +33,12 @@ interface PerfResponse {
  * transactions with `measurements` are ingested (GD-146).
  */
 export function Performance() {
-  const q = useQuery({ queryKey: ['performance'], queryFn: () => api<PerfResponse>('/performance') });
+  const currentProjectId = useUi((s) => s.currentProjectId);
+  const q = useQuery({
+    queryKey: ['performance', currentProjectId],
+    queryFn: () =>
+      api<PerfResponse>(`/performance${currentProjectId ? `?projectId=${currentProjectId}` : ''}`),
+  });
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-5 sm:px-6">

@@ -143,8 +143,13 @@ export class MiscController {
 
   /** Performance explorer (GD-136): worst spans + per-op p75, scoped to access. */
   @Get('performance')
-  async performance(@Req() req: Request & { user?: AuthPrincipal }) {
-    const pids = await accessibleProjectIds(req.user!);
+  async performance(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Query('projectId') projectId?: string,
+  ) {
+    const access = await accessibleProjectIds(req.user!);
+    // Narrow to the switcher-selected project when the caller can access it.
+    const pids = projectId && access.includes(projectId) ? [projectId] : access;
     if (pids.length === 0) return { samples: [], byOp: [] };
 
     // Slowest individual spans (samples table), joined to their trace/transaction.
