@@ -1,13 +1,60 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
-import { db, issues, events, environments, issueActivity, users, issueCounts, replays } from '@geniusdebug/db';
+import { db, issues, events, environments, issueActivity, users, issueCounts, replays, repositories, releases } from '@geniusdebug/db';
 import { and, eq, ne, desc, asc, ilike, or, inArray, gte } from 'drizzle-orm';
 import type { IssueDto, EventDto, IssueListQuery, IssueActionInput } from '@geniusdebug/shared';
 import type { AuthPrincipal } from '../auth/jwt.guard';
 import { accessibleProjectIds } from '../access';
+import { GithubService } from '../github/github.service';
 
 @Injectable()
 export class IssuesService {
+  constructor(private readonly gh: GithubService) {}
+
+  /** Fetch a frame's source from the linked GitHub repo (FR-MAP-6) so the crashing
+   *  line can be shown even when the event carried no embedded source context. */
+  async sourceForFrame(user: AuthPrincipal, shortId: string, rawPath: string, line: number) {
+    const projectIds = await accessibleProjectIds(user);
+    if (projectIds.length === 0) throw new NotFoundException('issue not found');
+    const rows = await db
+      .select({ projectId: issues.projectId, firstReleaseId: issues.firstReleaseId })
+      .from(issues)
+      .where(and(eq(issues.shortId, shortId), inArray(issues.projectId, projectIds)))
+      .limit(1);
+    if (rows.length === 0) throw new NotFoundException('issue not found');
+    const issue = rows[0];
+
+    const repo = (await db.select().from(repositories).where(eq(repositories.projectId, issue.projectId)).limit(1))[0];
+    if (!repo || !repo.installationId) return { available: false, reason: 'no GitHub repo linked' as const };
+    const token = await this.gh.installationTokenForOrg(user.orgId, repo.installationId);
+    if (!token) return { available: false, reason: 'GitHub auth unavailable' as const };
+
+    let ref = repo.defaultBranch;
+    if (issue.firstReleaseId) {
+      const rel = (await db.select({ sha: releases.commitSha }).from(releases).where(eq(releases.id, issue.firstReleaseId)).limit(1))[0];
+      if (rel?.sha) ref = rel.sha;
+    }
+
+    const path = rawPath
+      .replace(/^webpack-internal:\/\/\/(\(.*?\)\/)?/, '')
+      .replace(/^(https?:\/\/[^/]+\/)?_next\/(app|src)\//, '$2/')
+      .replace(/^webpack:\/+/, '')
+      .replace(/^\.\//, '')
+      .replace(/^\/+/, '');
+    if (!path || path.includes('node_modules/')) return { available: false, reason: 'not a repo source file' as const };
+
+    const content = await this.gh.getFileContent(token, repo.owner, repo.name, path, ref);
+    if (content == null) return { available: false, reason: 'file not found in repo' as const };
+
+    const all = content.split('\n');
+    const start = Math.max(1, line - 8);
+    const end = Math.min(all.length, line + 8);
+    const lines = [];
+    for (let n = start; n <= end; n++) lines.push({ n, text: all[n - 1] ?? '', crash: n === line });
+    const githubUrl = `https://github.com/${repo.owner}/${repo.name}/blob/${ref}/${path}${line ? `#L${line}` : ''}`;
+    return { available: true as const, path, lines, githubUrl };
+  }
+
   /** Resolve the target project among those the caller can access (default = first). */
   private async resolveProject(user: AuthPrincipal, projectId?: string): Promise<string | null> {
     const ids = await accessibleProjectIds(user);

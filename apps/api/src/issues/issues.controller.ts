@@ -31,6 +31,17 @@ export class IssuesController {
     return this.issues.similarIssues(req.user!, shortId);
   }
 
+  @Get(':shortId/source')
+  async source(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Param('shortId') shortId: string,
+    @Query('path') path: string,
+    @Query('line') line: string,
+  ) {
+    if (!path) throw new BadRequestException('path required');
+    return this.issues.sourceForFrame(req.user!, shortId, path, Number(line) || 1);
+  }
+
   @Post(':shortId/actions')
   async act(
     @Req() req: Request & { user?: AuthPrincipal },

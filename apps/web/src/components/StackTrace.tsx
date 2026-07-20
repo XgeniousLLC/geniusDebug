@@ -1,6 +1,17 @@
 import * as React from 'react';
+import { useQuery } from '@tanstack/react-query';
 import type { NormalizedFrame } from '@geniusdebug/shared';
+import { api } from '../lib/api';
 import { ChevronDownIcon } from './icons';
+
+interface FrameSource {
+  available: boolean;
+  path?: string;
+  lines?: { n: number; text: string; crash: boolean }[];
+  githubUrl?: string;
+  reason?: string;
+}
+const SOURCE_EXT = /\.(mjs|cjs|jsx?|tsx?|vue|svelte)$/;
 
 /**
  * Sentry-style stack trace (brief §4 / FR-MAP-3/5/6, FR-GH-3): crashing frame
@@ -8,7 +19,7 @@ import { ChevronDownIcon } from './icons';
  * badges + copy/GitHub actions, syntax-highlighted source context, and
  * consecutive system frames collapsed behind a "Show N more frames" toggle.
  */
-export function StackTrace({ frames }: { frames: NormalizedFrame[] }) {
+export function StackTrace({ frames, shortId }: { frames: NormalizedFrame[]; shortId?: string }) {
   if (!frames || frames.length === 0) {
     return <div className="text-small text-text-muted">No stack trace on this event.</div>;
   }
@@ -56,10 +67,10 @@ export function StackTrace({ frames }: { frames: NormalizedFrame[] }) {
       <div className="overflow-hidden rounded-lg border border-border">
         {groups.map((g, gi) =>
           g.system && g.frames.length > 1 ? (
-            <SystemGroup key={gi} frames={g.frames} lastGroup={gi === groups.length - 1} />
+            <SystemGroup key={gi} frames={g.frames} lastGroup={gi === groups.length - 1} shortId={shortId} />
           ) : (
             g.frames.map(({ f }, i) => (
-              <Frame key={`${gi}-${i}`} f={f} defaultOpen={f.inApp} last={gi === groups.length - 1 && i === g.frames.length - 1} />
+              <Frame key={`${gi}-${i}`} f={f} defaultOpen={f.inApp} last={gi === groups.length - 1 && i === g.frames.length - 1} shortId={shortId} />
             ))
           ),
         )}
@@ -69,7 +80,7 @@ export function StackTrace({ frames }: { frames: NormalizedFrame[] }) {
 }
 
 /** Collapsed run of system frames → "Show N more frames". */
-function SystemGroup({ frames, lastGroup }: { frames: { f: NormalizedFrame; idx: number }[]; lastGroup: boolean }) {
+function SystemGroup({ frames, lastGroup, shortId }: { frames: { f: NormalizedFrame; idx: number }[]; lastGroup: boolean; shortId?: string }) {
   const [open, setOpen] = React.useState(false);
   if (!open) {
     return (
@@ -85,16 +96,26 @@ function SystemGroup({ frames, lastGroup }: { frames: { f: NormalizedFrame; idx:
   return (
     <>
       {frames.map(({ f }, i) => (
-        <Frame key={i} f={f} defaultOpen={false} last={lastGroup && i === frames.length - 1} />
+        <Frame key={i} f={f} defaultOpen={false} last={lastGroup && i === frames.length - 1} shortId={shortId} />
       ))}
     </>
   );
 }
 
-function Frame({ f, defaultOpen, last }: { f: NormalizedFrame; defaultOpen: boolean; last: boolean }) {
+function Frame({ f, defaultOpen, last, shortId }: { f: NormalizedFrame; defaultOpen: boolean; last: boolean; shortId?: string }) {
   const [open, setOpen] = React.useState(defaultOpen);
   const file = shortFile(f.absPath ?? f.filename);
   const hasContext = f.contextLine != null || (f.preContext?.length ?? 0) > 0;
+  const rawPath = f.absPath ?? f.filename ?? '';
+  const canFetch = !!shortId && !hasContext && SOURCE_EXT.test(shortFile(rawPath)) && !shortFile(rawPath).includes('node_modules/');
+  // Lazily pull the file from the linked GitHub repo when the event carried no source.
+  const src = useQuery({
+    queryKey: ['frame-source', shortId, rawPath, f.lineno],
+    queryFn: () => api<FrameSource>(`/issues/${shortId}/source?path=${encodeURIComponent(rawPath)}&line=${f.lineno ?? 1}`),
+    enabled: open && canFetch,
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
   const copy = (e: React.MouseEvent) => {
     e.stopPropagation();
     navigator.clipboard?.writeText(`${f.absPath ?? f.filename ?? ''}:${f.lineno ?? ''}:${f.colno ?? ''}${f.function ? ` in ${f.function}` : ''}`);
@@ -149,6 +170,13 @@ function Frame({ f, defaultOpen, last }: { f: NormalizedFrame; defaultOpen: bool
               <CodeLine key={`post-${i}`} n={f.lineno != null ? f.lineno + i + 1 : null} text={l} />
             ))}
           </pre>
+        ) : src.data?.available && src.data.lines ? (
+          // Source pulled live from the linked GitHub repo (FR-MAP-6).
+          <pre className="overflow-x-auto border-t border-border bg-bg px-0 py-1.5 font-mono text-mono leading-6">
+            {src.data.lines.map((l) => (
+              <CodeLine key={l.n} n={l.n} text={l.text} crash={l.crash} />
+            ))}
+          </pre>
         ) : (
           <div className="border-t border-border bg-bg px-3 py-2 font-mono text-mono">
             <div className="flex flex-wrap gap-x-6 gap-y-1">
@@ -157,7 +185,13 @@ function Frame({ f, defaultOpen, last }: { f: NormalizedFrame; defaultOpen: bool
               {f.lineno != null && <Detail k="line" v={`${f.lineno}${f.colno != null ? `:${f.colno}` : ''}`} />}
             </div>
             <div className="mt-1.5 text-caption text-text-faint">
-              {f.inApp ? 'No source context — upload source maps to see the code here.' : 'System / minified frame — no source available.'}
+              {src.isFetching
+                ? 'Loading source from GitHub…'
+                : canFetch && src.data && !src.data.available
+                  ? `No source: ${src.data.reason ?? 'unavailable'}.`
+                  : f.inApp
+                    ? 'No source context — link a GitHub repo or upload source maps to see the code here.'
+                    : 'System / minified frame — no source available.'}
             </div>
           </div>
         ))}

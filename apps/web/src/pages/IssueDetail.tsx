@@ -221,6 +221,7 @@ export function IssueDetail() {
         </div>
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
           <Button
+            size="sm"
             title="Copy the full error as Markdown for an AI coding agent"
             onClick={() => {
               const md = buildAgentMarkdown(issue, event);
@@ -236,11 +237,11 @@ export function IssueDetail() {
           >
             Copy for AI
           </Button>
-          <Button onClick={() => setShareOpen(true)} title="Share issue">Share</Button>
+          <Button size="sm" onClick={() => setShareOpen(true)} title="Share issue">Share</Button>
           <select
             value={issue.assigneeUserId ?? ''}
             onChange={(e) => assign.mutate(e.target.value)}
-            className="h-9 rounded-md border border-border bg-surface px-2 text-small text-text"
+            className="h-7 rounded-md border border-border bg-surface px-2 text-caption text-text"
             title="Assign"
           >
             <option value="">Unassigned</option>
@@ -249,19 +250,19 @@ export function IssueDetail() {
             ))}
           </select>
           {issue.status === 'resolved' ? (
-            <Button onClick={() => act.mutate('unresolve')}><CheckIcon size={15} /> Unresolve</Button>
+            <Button size="sm" onClick={() => act.mutate('unresolve')}><CheckIcon size={13} /> Unresolve</Button>
           ) : issue.status === 'archived' ? (
-            <Button onClick={() => act.mutate('unarchive')}><ArchiveIcon size={15} /> Unarchive</Button>
+            <Button size="sm" onClick={() => act.mutate('unarchive')}><ArchiveIcon size={13} /> Unarchive</Button>
           ) : issue.status === 'muted' ? (
-            <Button onClick={() => act.mutate('unmute')}><BellOffIcon size={15} /> Unmute</Button>
+            <Button size="sm" onClick={() => act.mutate('unmute')}><BellOffIcon size={13} /> Unmute</Button>
           ) : (
-            <Button variant="primary" onClick={() => act.mutate('resolve')}><CheckIcon size={15} /> Resolve</Button>
+            <Button size="sm" variant="primary" onClick={() => act.mutate('resolve')}><CheckIcon size={13} /> Resolve</Button>
           )}
           {issue.status !== 'archived' && (
-            <Button onClick={() => act.mutate('archive')}><ArchiveIcon size={15} /> Archive</Button>
+            <Button size="sm" onClick={() => act.mutate('archive')}><ArchiveIcon size={13} /> Archive</Button>
           )}
           {issue.status !== 'muted' && (
-            <Button onClick={() => act.mutate('mute')}><BellOffIcon size={15} /> Mute</Button>
+            <Button size="sm" onClick={() => act.mutate('mute')}><BellOffIcon size={13} /> Mute</Button>
           )}
         </div>
       </div>
@@ -379,7 +380,7 @@ export function IssueDetail() {
             })}
           </div>
 
-          {tab === 'stack' && <StackTrace frames={frames} />}
+          {tab === 'stack' && <StackTrace frames={frames} shortId={issue.shortId} />}
 
           {tab === 'breadcrumbs' && <Breadcrumbs crumbs={event?.breadcrumbs ?? []} />}
 
