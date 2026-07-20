@@ -180,7 +180,7 @@ export function IssueDetail() {
   const contexts = (event?.contexts ?? {}) as Record<string, { name?: string; version?: string; model?: string }>;
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-5 sm:px-6">
+    <div className="w-full px-4 py-5 sm:px-6">
       {/* Breadcrumb */}
       <div className="mb-3 flex items-center gap-1.5 font-mono text-caption text-text-faint">
         <Link to="/issues" className="hover:text-accent">Issues</Link>
@@ -274,7 +274,7 @@ export function IssueDetail() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1fr_300px]">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
         {/* Left column */}
         <div className="min-w-0">
           {/* Events over time (FR-UI-2 / GD-132) */}
@@ -778,7 +778,7 @@ function EventsChart({ counts }: { counts: { bucket: string; count: number }[] }
       {counts.map((c, i) => (
         <div
           key={i}
-          className="min-w-0 flex-1 rounded-sm bg-accent/70 transition hover:bg-accent"
+          className="min-w-0 flex-1 rounded-sm bg-accent transition hover:bg-accent-strong"
           style={{ height: `${Math.max(3, (c.count / max) * 100)}%` }}
           title={`${new Date(c.bucket).toLocaleString()} · ${c.count}`}
         />

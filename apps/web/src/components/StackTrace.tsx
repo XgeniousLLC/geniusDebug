@@ -4,50 +4,70 @@ import type { NormalizedFrame } from '@geniusdebug/shared';
 /**
  * Stack frame block (brief §4 / FR-MAP-3/5/6, FR-GH-3): monospace, in-app frames
  * highlighted vs framework frames, source-context lines around the crash line,
- * "Open in GitHub" per in-app frame.
+ * "Open in GitHub" per in-app frame. Crashing frame first.
  */
 export function StackTrace({ frames }: { frames: NormalizedFrame[] }) {
   if (!frames || frames.length === 0) {
     return <div className="text-small text-text-muted">No stack trace on this event.</div>;
   }
-  // Sentry order is oldest→newest; show crashing frame first.
+  // Sentry order is oldest→newest; show the crashing frame first.
   const ordered = [...frames].reverse();
+  const appCount = ordered.filter((f) => f.inApp).length;
   return (
-    <div className="flex flex-col gap-2">
-      {ordered.map((f, i) => (
-        <Frame key={i} f={f} defaultOpen={f.inApp} />
-      ))}
+    <div>
+      <div className="mb-2 flex items-center gap-2 text-caption text-text-faint">
+        <span>
+          {ordered.length} frame{ordered.length === 1 ? '' : 's'}
+        </span>
+        {appCount > 0 && (
+          <>
+            <span>·</span>
+            <span className="text-accent">{appCount} in-app</span>
+          </>
+        )}
+      </div>
+      <div className="overflow-hidden rounded-lg border border-border">
+        {ordered.map((f, i) => (
+          <Frame key={i} f={f} defaultOpen={f.inApp} last={i === ordered.length - 1} />
+        ))}
+      </div>
     </div>
   );
 }
 
-function Frame({ f, defaultOpen }: { f: NormalizedFrame; defaultOpen: boolean }) {
+function splitPath(p: string): { dir: string; base: string } {
+  const clean = p.replace(/^webpack-internal:\/\/\/(\(.*?\)\/)?/, '').replace(/^\.\//, '');
+  const idx = clean.lastIndexOf('/');
+  return idx === -1 ? { dir: '', base: clean } : { dir: clean.slice(0, idx + 1), base: clean.slice(idx + 1) };
+}
+
+function Frame({ f, defaultOpen, last }: { f: NormalizedFrame; defaultOpen: boolean; last: boolean }) {
   const [open, setOpen] = React.useState(defaultOpen);
-  const path = f.absPath ?? f.filename ?? '<anonymous>';
+  const { dir, base } = splitPath(f.absPath ?? f.filename ?? '<anonymous>');
   const hasContext = f.contextLine != null || (f.preContext?.length ?? 0) > 0;
   return (
-    <div
-      className={`overflow-hidden rounded-md border ${
-        f.inApp ? 'border-border bg-surface' : 'border-border/60 bg-surface/40'
-      }`}
-    >
+    <div className={`${!last ? 'border-b border-border' : ''} ${f.inApp ? 'border-l-2 border-l-accent' : ''}`}>
       <button
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left hover:bg-surface-2"
+        className={`flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left hover:bg-surface-2 ${f.inApp ? 'bg-surface' : 'bg-surface/30'}`}
       >
         <div className="flex min-w-0 items-baseline gap-2 font-mono text-mono">
-          <span className={`truncate ${f.inApp ? 'text-text' : 'text-text-faint'}`}>{path}</span>
-          {f.function && <span className="text-accent">in {f.function}</span>}
-          {f.lineno != null && (
-            <span className="text-text-faint">
-              :{f.lineno}
-              {f.colno != null ? `:${f.colno}` : ''}
-            </span>
-          )}
+          <span className={`text-text-faint transition-transform ${open ? 'rotate-90' : ''}`} aria-hidden>
+            ▸
+          </span>
+          {f.function && <span className="shrink-0 text-accent">{f.function}</span>}
+          <span className="min-w-0 truncate">
+            {dir && <span className="text-text-faint">{dir}</span>}
+            <span className={f.inApp ? 'text-text' : 'text-text-faint'}>{base}</span>
+            {f.lineno != null && (
+              <span className="text-text-faint">
+                :{f.lineno}
+                {f.colno != null ? `:${f.colno}` : ''}
+              </span>
+            )}
+          </span>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          {!f.inApp && <span className="text-caption text-text-faint">framework</span>}
-          {f.inApp && <span className="rounded bg-accent/15 px-1.5 py-0.5 text-caption text-accent">in-app</span>}
           {f.githubUrl && (
             <a
               href={f.githubUrl}
@@ -56,37 +76,37 @@ function Frame({ f, defaultOpen }: { f: NormalizedFrame; defaultOpen: boolean })
               onClick={(e) => e.stopPropagation()}
               className="text-caption text-accent hover:underline"
             >
-              Open in GitHub ↗
+              GitHub ↗
             </a>
+          )}
+          {f.inApp ? (
+            <span className="rounded bg-accent/15 px-1.5 py-0.5 text-caption text-accent">in-app</span>
+          ) : (
+            <span className="text-caption text-text-faint">system</span>
           )}
         </div>
       </button>
       {open && hasContext && (
-        <pre className="overflow-x-auto border-t border-border bg-bg/50 px-3 py-2 font-mono text-mono leading-5">
+        <pre className="overflow-x-auto border-t border-border bg-bg px-0 py-1 font-mono text-mono leading-6">
           {(f.preContext ?? []).map((l, i) => (
-            <div key={`pre-${i}`} className="text-text-faint">
-              <span className="mr-3 inline-block w-8 select-none text-right text-text-faint">
-                {f.lineno != null ? f.lineno - (f.preContext!.length - i) : ''}
-              </span>
-              {l}
-            </div>
+            <CodeLine key={`pre-${i}`} n={f.lineno != null ? f.lineno - (f.preContext!.length - i) : null} text={l} />
           ))}
-          {f.contextLine != null && (
-            <div className="bg-level-error/10 text-text">
-              <span className="mr-3 inline-block w-8 select-none text-right text-level-error">{f.lineno}</span>
-              {f.contextLine}
-            </div>
-          )}
+          {f.contextLine != null && <CodeLine n={f.lineno ?? null} text={f.contextLine} crash />}
           {(f.postContext ?? []).map((l, i) => (
-            <div key={`post-${i}`} className="text-text-faint">
-              <span className="mr-3 inline-block w-8 select-none text-right text-text-faint">
-                {f.lineno != null ? f.lineno + i + 1 : ''}
-              </span>
-              {l}
-            </div>
+            <CodeLine key={`post-${i}`} n={f.lineno != null ? f.lineno + i + 1 : null} text={l} />
           ))}
         </pre>
       )}
+    </div>
+  );
+}
+
+function CodeLine({ n, text, crash }: { n: number | null; text: string; crash?: boolean }) {
+  return (
+    <div className={`flex ${crash ? 'bg-level-error/10' : ''}`}>
+      <span className={`inline-block w-12 shrink-0 select-none px-3 text-right ${crash ? 'text-level-error' : 'text-text-faint'}`}>{n ?? ''}</span>
+      <span className={`w-3 shrink-0 ${crash ? 'text-level-error' : 'text-transparent'}`}>▸</span>
+      <span className={`whitespace-pre pr-3 ${crash ? 'text-text' : 'text-text-muted'}`}>{text}</span>
     </div>
   );
 }
