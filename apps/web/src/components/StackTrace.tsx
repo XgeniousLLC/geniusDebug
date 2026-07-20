@@ -3,61 +3,99 @@ import type { NormalizedFrame } from '@geniusdebug/shared';
 import { ChevronDownIcon } from './icons';
 
 /**
- * Stack frame block (brief §4 / FR-MAP-3/5/6, FR-GH-3): monospace, in-app frames
- * highlighted vs framework frames, source-context lines around the crash line,
- * "Open in GitHub" per in-app frame. Crashing frame first.
+ * Sentry-style stack trace (brief §4 / FR-MAP-3/5/6, FR-GH-3): crashing frame
+ * first, a "Crashed in" summary, `file:line:col in function` headers with In-App
+ * badges + copy/GitHub actions, syntax-highlighted source context, and
+ * consecutive system frames collapsed behind a "Show N more frames" toggle.
  */
 export function StackTrace({ frames }: { frames: NormalizedFrame[] }) {
   if (!frames || frames.length === 0) {
     return <div className="text-small text-text-muted">No stack trace on this event.</div>;
   }
-  // Sentry order is oldest→newest; show the crashing frame first.
-  const ordered = [...frames].reverse();
+  const ordered = [...frames].reverse(); // crashing frame first
+  const crash = ordered[0];
+
+  // Group consecutive system frames so they collapse together (Sentry behavior).
+  const groups: { system: boolean; frames: { f: NormalizedFrame; idx: number }[] }[] = [];
+  ordered.forEach((f, idx) => {
+    const system = !f.inApp;
+    const last = groups[groups.length - 1];
+    if (last && last.system === system) last.frames.push({ f, idx });
+    else groups.push({ system, frames: [{ f, idx }] });
+  });
+
   const appCount = ordered.filter((f) => f.inApp).length;
+
   return (
     <div>
-      <div className="mb-2 flex items-center gap-2 text-caption text-text-faint">
-        <span>
-          {ordered.length} frame{ordered.length === 1 ? '' : 's'}
-        </span>
-        {appCount > 0 && (
-          <>
-            <span>·</span>
-            <span className="text-accent">{appCount} in-app</span>
-          </>
-        )}
+      {/* Crashed-in summary */}
+      <div className="mb-2 rounded-md border border-border bg-surface px-3 py-2 text-caption text-text-muted">
+        Crashed in {crash.inApp ? '' : 'non-app: '}
+        <span className="font-mono text-text">{shortFile(crash.absPath ?? crash.filename)}
+          {crash.lineno != null ? `:${crash.lineno}${crash.colno != null ? `:${crash.colno}` : ''}` : ''}</span>
+        {crash.function && <span> in <span className="font-mono text-text">{crash.function}</span></span>}
       </div>
+      <div className="mb-2 text-caption text-text-faint">
+        {ordered.length} frame{ordered.length === 1 ? '' : 's'}
+        {appCount > 0 && <span className="text-accent"> · {appCount} in-app</span>}
+      </div>
+
       <div className="overflow-hidden rounded-lg border border-border">
-        {ordered.map((f, i) => (
-          <Frame key={i} f={f} defaultOpen={f.inApp} last={i === ordered.length - 1} />
-        ))}
+        {groups.map((g, gi) =>
+          g.system && g.frames.length > 1 ? (
+            <SystemGroup key={gi} frames={g.frames} lastGroup={gi === groups.length - 1} />
+          ) : (
+            g.frames.map(({ f }, i) => (
+              <Frame key={`${gi}-${i}`} f={f} defaultOpen={f.inApp} last={gi === groups.length - 1 && i === g.frames.length - 1} />
+            ))
+          ),
+        )}
       </div>
     </div>
   );
 }
 
-function splitPath(p: string): { dir: string; base: string } {
-  const clean = p.replace(/^webpack-internal:\/\/\/(\(.*?\)\/)?/, '').replace(/^\.\//, '');
-  const idx = clean.lastIndexOf('/');
-  return idx === -1 ? { dir: '', base: clean } : { dir: clean.slice(0, idx + 1), base: clean.slice(idx + 1) };
+/** Collapsed run of system frames → "Show N more frames". */
+function SystemGroup({ frames, lastGroup }: { frames: { f: NormalizedFrame; idx: number }[]; lastGroup: boolean }) {
+  const [open, setOpen] = React.useState(false);
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className={`flex w-full items-center gap-2 bg-surface/40 px-3 py-2 text-caption text-text-muted hover:bg-surface-2 ${!lastGroup ? 'border-b border-border' : ''}`}
+      >
+        <ChevronDownIcon size={13} className="-rotate-90 text-text-faint" />
+        Show {frames.length} more frame{frames.length === 1 ? '' : 's'}
+      </button>
+    );
+  }
+  return (
+    <>
+      {frames.map(({ f }, i) => (
+        <Frame key={i} f={f} defaultOpen={false} last={lastGroup && i === frames.length - 1} />
+      ))}
+    </>
+  );
 }
 
 function Frame({ f, defaultOpen, last }: { f: NormalizedFrame; defaultOpen: boolean; last: boolean }) {
   const [open, setOpen] = React.useState(defaultOpen);
-  const { dir, base } = splitPath(f.absPath ?? f.filename ?? '<anonymous>');
+  const file = shortFile(f.absPath ?? f.filename);
   const hasContext = f.contextLine != null || (f.preContext?.length ?? 0) > 0;
+  const copy = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard?.writeText(`${f.absPath ?? f.filename ?? ''}:${f.lineno ?? ''}:${f.colno ?? ''}${f.function ? ` in ${f.function}` : ''}`);
+  };
   return (
     <div className={`${!last ? 'border-b border-border' : ''} ${f.inApp ? 'border-l-2 border-l-accent' : ''}`}>
       <button
         onClick={() => setOpen((o) => !o)}
         className={`flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left hover:bg-surface-2 ${f.inApp ? 'bg-surface' : 'bg-surface/30'}`}
       >
-        <div className="flex min-w-0 items-baseline gap-2 font-mono text-mono">
-          <ChevronDownIcon size={14} className={`shrink-0 text-text-faint transition-transform ${open ? '' : '-rotate-90'}`} />
-          {f.function && <span className="shrink-0 text-accent">{f.function}</span>}
-          <span className="min-w-0 truncate">
-            {dir && <span className="text-text-faint">{dir}</span>}
-            <span className={f.inApp ? 'text-text' : 'text-text-faint'}>{base}</span>
+        <div className="flex min-w-0 items-center gap-2 font-mono text-mono">
+          <ChevronDownIcon size={13} className={`shrink-0 text-text-faint transition-transform ${open ? '' : '-rotate-90'}`} />
+          <span className={`min-w-0 truncate ${f.inApp ? 'text-text' : 'text-text-faint'}`}>
+            {file}
             {f.lineno != null && (
               <span className="text-text-faint">
                 :{f.lineno}
@@ -65,21 +103,23 @@ function Frame({ f, defaultOpen, last }: { f: NormalizedFrame; defaultOpen: bool
               </span>
             )}
           </span>
+          {f.function && (
+            <span className="shrink-0 text-text-faint">
+              in <span className="text-accent">{f.function}</span>
+            </span>
+          )}
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          <span onClick={copy} className="text-text-faint hover:text-text" title="Copy frame">
+            <CopyGlyph />
+          </span>
           {f.githubUrl && (
-            <a
-              href={f.githubUrl}
-              target="_blank"
-              rel="noreferrer"
-              onClick={(e) => e.stopPropagation()}
-              className="text-caption text-accent hover:underline"
-            >
-              GitHub ↗
+            <a href={f.githubUrl} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="text-text-faint hover:text-text" title="Open in GitHub">
+              <GithubGlyph />
             </a>
           )}
           {f.inApp ? (
-            <span className="rounded bg-accent/15 px-1.5 py-0.5 text-caption text-accent">in-app</span>
+            <span className="rounded bg-accent/15 px-1.5 py-0.5 text-caption font-medium text-accent">In App</span>
           ) : (
             <span className="text-caption text-text-faint">system</span>
           )}
@@ -87,7 +127,7 @@ function Frame({ f, defaultOpen, last }: { f: NormalizedFrame; defaultOpen: bool
       </button>
       {open &&
         (hasContext ? (
-          <pre className="overflow-x-auto border-t border-border bg-bg px-0 py-1 font-mono text-mono leading-6">
+          <pre className="overflow-x-auto border-t border-border bg-bg px-0 py-1.5 font-mono text-mono leading-6">
             {(f.preContext ?? []).map((l, i) => (
               <CodeLine key={`pre-${i}`} n={f.lineno != null ? f.lineno - (f.preContext!.length - i) : null} text={l} />
             ))}
@@ -97,7 +137,6 @@ function Frame({ f, defaultOpen, last }: { f: NormalizedFrame; defaultOpen: bool
             ))}
           </pre>
         ) : (
-          // No source context (minified / system frame) — still show the frame details.
           <div className="border-t border-border bg-bg px-3 py-2 font-mono text-mono">
             <div className="flex flex-wrap gap-x-6 gap-y-1">
               {f.function && <Detail k="function" v={f.function} />}
@@ -126,8 +165,56 @@ function CodeLine({ n, text, crash }: { n: number | null; text: string; crash?: 
   return (
     <div className={`flex ${crash ? 'bg-level-error/10' : ''}`}>
       <span className={`inline-block w-12 shrink-0 select-none px-3 text-right ${crash ? 'text-level-error' : 'text-text-faint'}`}>{n ?? ''}</span>
-      <span className={`w-3 shrink-0 ${crash ? 'text-level-error' : 'text-transparent'}`}>▸</span>
-      <span className={`whitespace-pre pr-3 ${crash ? 'text-text' : 'text-text-muted'}`}>{text}</span>
+      <span className="whitespace-pre pr-4">{highlight(text)}</span>
     </div>
+  );
+}
+
+// ------------------------- helpers -------------------------
+
+function shortFile(p?: string | null): string {
+  if (!p) return '<anonymous>';
+  return p.replace(/^webpack-internal:\/\/\/(\(.*?\)\/)?/, '').replace(/^\.\//, '');
+}
+
+// Lightweight JS/TS syntax highlighter for source-context lines.
+const KW =
+  'const|let|var|function|return|if|else|for|while|do|switch|case|break|continue|new|throw|try|catch|finally|await|async|void|delete|import|export|default|from|as|class|extends|super|typeof|instanceof|in|of|yield|null|undefined|true|false|this';
+const TOKEN = new RegExp(`(//.*$)|("(?:[^"\\\\]|\\\\.)*"|'(?:[^'\\\\]|\\\\.)*'|\`(?:[^\`\\\\]|\\\\.)*\`)|(\\b(?:${KW})\\b)|(\\b\\d+(?:\\.\\d+)?\\b)|([A-Za-z_$][\\w$]*(?=\\s*\\())`, 'g');
+
+function highlight(line: string): React.ReactNode[] {
+  const out: React.ReactNode[] = [];
+  let last = 0;
+  let m: RegExpExecArray | null;
+  TOKEN.lastIndex = 0;
+  let key = 0;
+  while ((m = TOKEN.exec(line))) {
+    if (m.index > last) out.push(line.slice(last, m.index));
+    const [full, comment, str, kw, num, fn] = m;
+    if (comment) out.push(<span key={key++} className="italic text-text-faint">{full}</span>);
+    else if (str) out.push(<span key={key++} className="text-status-resolved">{full}</span>);
+    else if (kw) out.push(<span key={key++} className="text-level-fatal">{full}</span>);
+    else if (num) out.push(<span key={key++} className="text-level-warning">{full}</span>);
+    else if (fn) out.push(<span key={key++} className="text-accent">{full}</span>);
+    last = m.index + full.length;
+    if (full.length === 0) TOKEN.lastIndex++; // guard against zero-width
+  }
+  if (last < line.length) out.push(line.slice(last));
+  return out;
+}
+
+function CopyGlyph() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <rect x="9" y="9" width="11" height="11" rx="2" />
+      <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+    </svg>
+  );
+}
+function GithubGlyph() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.1-1.47-1.1-1.47-.9-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.9 1.53 2.36 1.09 2.94.83.09-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.65 0 0 .84-.27 2.75 1.02a9.5 9.5 0 0 1 5 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.38.2 2.4.1 2.65.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.74c0 .27.18.58.69.48A10 10 0 0 0 12 2z" />
+    </svg>
   );
 }
