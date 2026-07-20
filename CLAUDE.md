@@ -248,7 +248,7 @@ Needs a real GitHub/R2 round-trip to fully exercise (user tests with creds):
 | GD-038 | Global search (⌘K) | DONE | MED | brief §3: issue/trace/shortId lookup |
 | GD-039 | Keyboard nav (j/k/e/a) | DONE | LOW | brief §1/§5 feed nav |
 | GD-040 | Issue merge | DONE | LOW | FR-GRP-6: merge two issues |
-| GD-041 | Saved searches + real time-range | PARTIAL | LOW | brief §7 |
+| GD-041 | Saved searches + real time-range | DONE | LOW | brief §7: named saved searches (localStorage chips) + range done |
 | GD-042 | Assignee picker | DONE | MED | FR-UI-4: assign to member |
 | GD-043 | Suspect commit/blame + regression range | DONE | LOW | FR-GH-4/5 (live needs creds) |
 | GD-044 | Create GitHub Issue from issue | DONE | LOW | FR-GH-6 (live needs creds) |

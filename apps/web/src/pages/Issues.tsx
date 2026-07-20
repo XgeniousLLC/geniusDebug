@@ -13,6 +13,14 @@ import { CheckIcon } from '../components/icons';
 
 type StatusFilter = 'unresolved' | 'resolved' | 'archived' | 'all';
 type Sort = 'lastSeen' | 'firstSeen' | 'events' | 'users';
+interface SavedSearch {
+  name: string;
+  query: string;
+  status: StatusFilter;
+  sort: Sort;
+  category: string;
+  range: IssueRange;
+}
 
 const PAGE_SIZE = 25;
 const LEVEL_HEX: Record<string, string> = {
@@ -40,7 +48,34 @@ export function Issues() {
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [page, setPage] = React.useState(0);
   const [menuOpen, setMenuOpen] = React.useState(false);
+  const [saved, setSaved] = React.useState<SavedSearch[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('gd_saved_searches') ?? '[]') as SavedSearch[];
+    } catch {
+      return [];
+    }
+  });
   const qc = useQueryClient();
+
+  const persistSaved = (next: SavedSearch[]) => {
+    setSaved(next);
+    localStorage.setItem('gd_saved_searches', JSON.stringify(next));
+  };
+  const saveSearch = () => {
+    const name = window.prompt('Name this saved search', query || `is:${status}`)?.trim();
+    if (!name) return;
+    const entry: SavedSearch = { name, query, status, sort, category, range };
+    persistSaved([...saved.filter((s) => s.name !== name), entry]);
+    toast.success(`Saved search "${name}"`);
+  };
+  const applySearch = (s: SavedSearch) => {
+    setStatus(s.status);
+    setSort(s.sort);
+    setCategory(s.category);
+    setQuery(s.query);
+    setRange(s.range);
+    setPage(0);
+  };
 
   // Keep query in sync when the global search routes here with ?query=.
   React.useEffect(() => {
@@ -184,12 +219,8 @@ export function Issues() {
             className="h-full min-w-0 flex-1 bg-transparent text-small text-text outline-none placeholder:text-text-faint"
           />
           <button
-            onClick={() => {
-              const p = new URLSearchParams();
-              if (query) p.set('query', query);
-              navigate(`/issues${p.toString() ? `?${p}` : ''}`);
-              toast.success('Search saved to URL — copy the link to share');
-            }}
+            onClick={saveSearch}
+            title="Save the current filters as a named search"
             className="shrink-0 rounded-md border border-border px-2 py-0.5 text-caption text-text-muted hover:text-text"
           >
             Save
@@ -251,6 +282,28 @@ export function Issues() {
           )}
         </div>
       </div>
+
+      {/* Saved searches (GD-041) */}
+      {saved.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <span className="text-caption text-text-faint">Saved:</span>
+          {saved.map((s) => (
+            <span key={s.name} className="group inline-flex items-center gap-1 rounded-full border border-border bg-surface pl-2.5 pr-1 text-caption">
+              <button onClick={() => applySearch(s)} className="py-1 text-text-muted hover:text-text" title={`is:${s.status}${s.query ? ` ${s.query}` : ''}`}>
+                {s.name}
+              </button>
+              <button
+                onClick={() => persistSaved(saved.filter((x) => x.name !== s.name))}
+                className="rounded-full px-1 text-text-faint hover:text-level-error"
+                title="Delete saved search"
+                aria-label={`Delete ${s.name}`}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
 
       {selected.size > 0 && (
         <div className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-accent/40 bg-accent/10 px-3 py-2 text-small">

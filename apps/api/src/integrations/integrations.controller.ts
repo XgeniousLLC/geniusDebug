@@ -24,7 +24,7 @@ type Kind = (typeof KINDS)[number];
 /** Non-secret config keys we accept per kind (everything else is ignored). */
 const CONFIG_KEYS: Record<Kind, string[]> = {
   r2: ['endpoint', 'bucket', 'accountId'],
-  ses: ['region', 'from'],
+  ses: ['region', 'from', 'fromName'],
   deepseek: ['model'], // AI fix-suggester (FR-AIF); single-key secret
 };
 

@@ -214,6 +214,7 @@ const PROVIDERS: Provider[] = [
     fields: [
       { key: 'region', label: 'Region', placeholder: 'us-east-1', secret: false },
       { key: 'from', label: 'From address', placeholder: 'alerts@yourdomain.com', secret: false },
+      { key: 'fromName', label: 'From name', placeholder: 'geniusDebug Alerts', secret: false },
       { key: 'accessKeyId', label: 'Access Key ID', placeholder: '', secret: true },
       { key: 'secretAccessKey', label: 'Secret Access Key', placeholder: '', secret: true },
     ],
