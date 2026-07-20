@@ -2,7 +2,8 @@ import * as React from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { Card, IdChip, EmptyState, Skeleton, ErrorState } from '../components/ui';
+import { Card, EmptyState, Skeleton, ErrorState } from '../components/ui';
+import { timeAgo } from '../lib/format';
 
 /** Web-vitals header (LCP/FCP/INP/CLS/TTFB) from transaction measurements (GD-136/143). */
 const VITALS: { key: string; label: string; unit: 'ms' | 'score'; good: number; poor: number }[] = [
@@ -69,6 +70,14 @@ function SpanPanel({ span, avg, onClose }: { span: Span; avg: number; onClose: (
     </Card>
   );
 }
+function Meta({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
+  return (
+    <span className="flex items-center gap-1.5">
+      <span className="text-text-faint">{k}:</span>
+      <span className={`text-text ${mono ? 'font-mono' : ''}`}>{v}</span>
+    </span>
+  );
+}
 function Attr({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
   return (
     <div className="flex items-center justify-between gap-2 border-t border-border py-1.5 text-caption first:border-0">
@@ -120,7 +129,25 @@ interface TraceResponse {
   spans: Span[];
   errors: { id: string; issueId: string; message: string | null; level: string }[];
   issues: { id: string; shortId: string; title: string }[];
+  meta?: {
+    platform: string;
+    browser: string | null;
+    os: string | null;
+    environment: string | null;
+    errorCount: number;
+    leadMessage: string | null;
+    leadTimestamp: string | null;
+    transaction: string | null;
+  };
 }
+
+const PLATFORM_LABEL: Record<string, string> = {
+  javascript: 'Frontend (JavaScript)',
+  'javascript-nextjs': 'Frontend (Next.js)',
+  node: 'Backend (Node.js)',
+  php: 'Backend (PHP)',
+  python: 'Backend (Python)',
+};
 
 export function Traces() {
   const { traceId } = useParams();
@@ -169,20 +196,37 @@ function TraceWaterfall({ traceId }: { traceId: string }) {
     for (const [k, a] of acc) avgByOp.set(k, a.n ? a.sum / a.n : 0);
   }
 
+  const meta = q.data?.meta;
+  const totalMs = spans.length ? span : 0;
+  const platformLabel = meta ? (PLATFORM_LABEL[meta.platform] ?? meta.platform) : null;
+
   return (
     <div className="mx-auto max-w-6xl px-4 py-5 sm:px-6">
-      <div className="mb-2 flex items-center gap-1.5 font-mono text-caption text-text-faint">
-        <Link to="/traces" className="hover:text-accent">Traces</Link>
-        <span>/</span>
-        <span className="text-text-muted">{traceId.slice(0, 12)}…</span>
+      {/* header */}
+      <div className="mb-1 flex flex-wrap items-start justify-between gap-2">
+        <h1 className="flex items-baseline gap-2 text-h1 font-semibold">
+          Trace <span className="font-mono text-body font-normal text-text-faint">{traceId.slice(0, 12)}</span>
+        </h1>
+        <button
+          onClick={() => navigator.clipboard?.writeText(traceId).then(() => {}, () => {})}
+          className="rounded-lg border border-border bg-surface px-3 py-1.5 text-small text-text-muted hover:text-text"
+          title="Copy trace ID"
+        >
+          Open in Explore
+        </button>
       </div>
-      <h1 className="mb-1 text-h1 font-semibold">Trace</h1>
-      <div className="mb-4 flex flex-wrap items-center gap-2 text-small text-text-muted">
-        <span>Frontend</span><span className="text-text-faint">·</span>
-        <span>{q.data?.trace?.platform ?? 'javascript'}</span><span className="text-text-faint">·</span>
-        <IdChip label="trace" value={traceId} />
-        <span className="text-text-faint">·</span>
-        <span>{q.data?.issues.length ?? 0} issue(s) in trace</span>
+      {meta?.leadMessage && <p className="mb-2 truncate text-body text-level-error">{meta.leadMessage}</p>}
+      <div className="mb-4 flex flex-wrap items-center gap-x-6 gap-y-1 border-b border-border pb-4 text-small text-text-muted">
+        {platformLabel && <Meta k="Platform" v={platformLabel} />}
+        {meta?.browser && <Meta k="Browser" v={meta.browser} />}
+        {meta?.os && <Meta k="OS" v={meta.os} />}
+        {meta?.environment && <Meta k="Env" v={meta.environment} mono />}
+        {meta?.leadTimestamp && <Meta k="Age" v={timeAgo(meta.leadTimestamp)} />}
+        {(meta?.errorCount ?? 0) > 0 && (
+          <span className="text-level-error">
+            {meta!.errorCount} error{meta!.errorCount > 1 ? 's' : ''} in trace
+          </span>
+        )}
       </div>
 
       <WebVitals measurements={q.data?.trace?.measurements} />
@@ -211,42 +255,65 @@ function TraceWaterfall({ traceId }: { traceId: string }) {
       ) : (
         <div className={`grid gap-4 ${sel ? 'lg:grid-cols-[minmax(0,1fr)_320px]' : 'grid-cols-1'}`}>
           <div className="min-w-0">
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search in trace (op or description)…"
-              className="mb-2 h-8 w-full rounded-md border border-border bg-surface px-3 text-small text-text placeholder:text-text-faint"
-            />
+            {/* search + total duration */}
+            <div className="mb-3 flex flex-wrap items-center gap-3">
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search spans…"
+                className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 text-small text-text placeholder:text-text-faint sm:max-w-xs"
+              />
+              <span className="text-small text-text-muted">
+                Total duration: <span className="font-mono text-text">{Math.round(totalMs).toLocaleString()} ms</span>
+              </span>
+            </div>
+
             <Card className="overflow-hidden p-0">
+              {/* column header */}
+              <div className="grid grid-cols-[minmax(180px,34%)_1fr] items-center gap-3 border-b border-border bg-surface px-4 py-2.5 text-caption uppercase tracking-wide text-text-faint">
+                <span>Span</span>
+                <span>Timeline (0 – {Math.round(totalMs).toLocaleString()} ms)</span>
+              </div>
               {visible.map(({ span: sp, depth }, i) => {
                 const left = ((new Date(sp.startTs).getTime() - t0) / span) * 100;
-                const width = Math.max(((sp.durationMs ?? 1) / span) * 100, 0.5);
-                const err = sp.status && sp.status !== 'ok';
+                const width = Math.max(((sp.durationMs ?? 1) / span) * 100, 0.6);
+                const err = !!(sp.status && sp.status !== 'ok');
                 const active = sel?.span_id === sp.span_id;
+                const labelLeft = Math.min(left + width, 88); // keep duration label on-screen
                 return (
                   <button
                     key={`${sp.span_id}-${i}`}
                     onClick={() => setSel(active ? null : sp)}
-                    className={`grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-border px-3 py-1.5 text-left last:border-0 hover:bg-surface-2 ${active ? 'bg-surface-2' : ''}`}
+                    className={`grid w-full grid-cols-[minmax(180px,34%)_1fr] items-center gap-3 border-b border-border px-4 py-2.5 text-left last:border-0 hover:bg-surface-2 ${
+                      active ? 'bg-surface-2' : err ? 'bg-level-error/5' : ''
+                    }`}
                   >
-                    <div className="flex min-w-0 items-center font-mono text-mono" style={{ paddingLeft: depth * 14 }}>
-                      {depth > 0 && <span className="mr-1 text-text-faint">└</span>}
-                      <span className={err ? 'text-level-error' : 'text-accent'}>{sp.op ?? 'span'}</span>
-                      <span className="ml-1.5 truncate text-text-muted">{sp.description ?? ''}</span>
+                    {/* span label */}
+                    <div className="flex min-w-0 items-center gap-2" style={{ paddingLeft: depth * 18 }}>
+                      <span className={`h-2 w-2 shrink-0 rounded-full ${err ? 'bg-level-error' : 'bg-accent'}`} aria-hidden />
+                      <span className={`shrink-0 font-mono text-mono ${err ? 'text-level-error' : 'text-accent'}`}>{sp.op ?? 'span'}</span>
+                      {sp.description && <span className="truncate font-mono text-mono text-text-muted">{sp.description}</span>}
                     </div>
-                    <div className="flex items-center gap-3">
-                      <div className="relative hidden h-4 w-40 rounded bg-surface-2 sm:block">
-                        <div
-                          className={`absolute top-0 h-4 rounded ${err ? 'bg-level-error' : 'bg-accent'}`}
-                          style={{ left: `${left}%`, width: `${width}%` }}
-                        />
-                      </div>
-                      <span className="w-16 shrink-0 text-right font-mono text-caption tabular-nums text-text-muted">{(sp.durationMs ?? 0).toFixed(2)}ms</span>
+                    {/* timeline */}
+                    <div className="relative h-5">
+                      <div
+                        className={`absolute top-1/2 h-2.5 -translate-y-1/2 rounded-full ${err ? 'bg-level-error' : 'bg-accent'}`}
+                        style={{ left: `${left}%`, width: `${width}%` }}
+                      />
+                      {err && (
+                        <div className="absolute top-1/2 h-4 w-0.5 -translate-y-1/2 bg-level-error" style={{ left: `${Math.min(left + width, 99)}%` }} aria-hidden />
+                      )}
+                      <span
+                        className="absolute top-1/2 -translate-y-1/2 whitespace-nowrap font-mono text-caption tabular-nums text-text-faint"
+                        style={{ left: `calc(${labelLeft}% + 8px)` }}
+                      >
+                        {Math.round(sp.durationMs ?? 0).toLocaleString()} ms
+                      </span>
                     </div>
                   </button>
                 );
               })}
-              {visible.length === 0 && <div className="px-3 py-3 text-small text-text-faint">No spans match “{search}”.</div>}
+              {visible.length === 0 && <div className="px-4 py-3 text-small text-text-faint">No spans match “{search}”.</div>}
             </Card>
           </div>
 

@@ -65,7 +65,35 @@ export class IssuesService {
       .orderBy(order)
       .limit(q.limit ?? 50);
 
-    return rows.map(this.toDto);
+    if (rows.length === 0) return [];
+    const issueIds = rows.map((r) => r.id);
+
+    // Sparkline data: recent per-bucket counts for each listed issue.
+    const countRows = await db
+      .select({ issueId: issueCounts.issueId, bucket: issueCounts.bucket, count: issueCounts.count })
+      .from(issueCounts)
+      .where(inArray(issueCounts.issueId, issueIds))
+      .orderBy(asc(issueCounts.bucket));
+    const sparkOf = new Map<string, number[]>();
+    for (const c of countRows) {
+      const arr = sparkOf.get(c.issueId) ?? [];
+      arr.push(c.count);
+      sparkOf.set(c.issueId, arr);
+    }
+
+    // Assignee display names for the avatars.
+    const assigneeIds = [...new Set(rows.map((r) => r.assigneeUserId).filter((x): x is string => !!x))];
+    const nameOf = new Map<string, string>();
+    if (assigneeIds.length) {
+      const us = await db.select({ id: users.id, name: users.name }).from(users).where(inArray(users.id, assigneeIds));
+      for (const u of us) nameOf.set(u.id, u.name);
+    }
+
+    return rows.map((r) => ({
+      ...this.toDto(r),
+      spark: (sparkOf.get(r.id) ?? []).slice(-14),
+      assigneeName: r.assigneeUserId ? (nameOf.get(r.assigneeUserId) ?? null) : null,
+    }));
   }
 
   async detail(user: AuthPrincipal, shortId: string) {

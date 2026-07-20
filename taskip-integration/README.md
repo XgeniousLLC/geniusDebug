@@ -32,6 +32,24 @@ Env for the uploader (CI secrets, never committed): `GENIUSDEBUG_ORG_TOKEN`, `GE
 `R2_*`, `RELEASE=$VERCEL_GIT_COMMIT_SHA`. Get the **org upload token** once from geniusDebug
 Settings → issue token.
 
+## Session Replay playback requires R2 (server-side)
+The client config already records replays (`replaysOnErrorSampleRate: 1.0`). But **playback in the
+geniusDebug dashboard needs Cloudflare R2 connected**, because the rrweb recording blob is stored
+there — not in Postgres. In production (multiple containers) the ingest service streams every
+`replay_recording` to R2 and the api reads it back; without R2 the blob falls back to the ingest
+container's local disk, which the api container cannot read → the player shows "no recording blob".
+
+If replays list but don't play in production, check, in order:
+1. **R2 is connected** — Settings → Integrations → Cloudflare R2 → Test returns ok.
+2. **ingest + api were redeployed** after connecting R2 (they resolve R2 creds at boot).
+3. **`APP_ENCRYPTION_KEY` is identical** on ingest and api (a mismatch means ingest encrypts the
+   R2 secret with one key and api can't decrypt it → both silently fall back). Set the same
+   32-byte hex value on every service.
+
+The recording endpoint reports the exact reason it couldn't play (`reason` field): "no recording
+blob in R2" (R2 was off when ingested) vs "blob unavailable (R2 unconfigured, wrong encryption key,
+or decode failed)".
+
 ## Golden rule
 This never blocks or throws into Taskip. Sampling is conservative, Replay is on-error only,
 the tunnel fails fast, and the whole thing is gated by the remote kill switch — flip it off in

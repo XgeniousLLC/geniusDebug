@@ -1,7 +1,7 @@
 import { Controller, Get, Post, Body, Param, Query, Req, UseGuards } from '@nestjs/common';
 import { deepseekJson, deepseekConfigured } from '../suggest/deepseek';
 import type { Request } from 'express';
-import { db, traces, spans, events, issues, replays, alertRules, notifications, releases, projects } from '@geniusdebug/db';
+import { db, traces, spans, events, issues, replays, alertRules, notifications, releases, projects, environments } from '@geniusdebug/db';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { JwtGuard, type AuthPrincipal } from '../auth/jwt.guard';
 import { accessibleProjectIds, assertProjectAccess } from '../access';
@@ -21,15 +21,46 @@ export class MiscController {
     // Only expose a trace whose project the caller can access.
     if (!t[0] || !pids.includes(t[0].projectId)) return { trace: null, spans: [], errors: [], issues: [] };
     const spanRows = await db.select().from(spans).where(eq(spans.traceId, traceId)).orderBy(spans.startTs);
-    const errs = await db
-      .select({ id: events.id, issueId: events.issueId, message: events.message, level: events.level })
+    const errRows = await db
+      .select({
+        id: events.id,
+        issueId: events.issueId,
+        message: events.message,
+        level: events.level,
+        timestamp: events.timestamp,
+        contexts: events.contexts,
+        environmentId: events.environmentId,
+        transaction: events.transaction,
+      })
       .from(events)
-      .where(and(eq(events.traceId, traceId), inArray(events.projectId, pids.length ? pids : [''])));
+      .where(and(eq(events.traceId, traceId), inArray(events.projectId, pids.length ? pids : [''])))
+      .orderBy(desc(events.timestamp));
+    const errs = errRows.map((e) => ({ id: e.id, issueId: e.issueId, message: e.message, level: e.level }));
     const issueIds = [...new Set(errs.map((e) => e.issueId))];
     const relatedIssues = issueIds.length
       ? await db.select({ id: issues.id, shortId: issues.shortId, title: issues.title }).from(issues).where(inArray(issues.id, issueIds))
       : [];
-    return { trace: t[0] ?? null, spans: spanRows, errors: errs, issues: relatedIssues };
+
+    // Header meta (GD-143): browser/os/env/age/error-count, derived from the error event.
+    const lead = errRows[0];
+    let envName: string | null = null;
+    if (lead?.environmentId) {
+      const er = await db.select({ name: environments.name }).from(environments).where(eq(environments.id, lead.environmentId)).limit(1);
+      envName = er[0]?.name ?? null;
+    }
+    const ctx = (lead?.contexts ?? {}) as Record<string, { name?: string; version?: string } | undefined>;
+    const nv = (c?: { name?: string; version?: string }) => (c ? [c.name, c.version].filter(Boolean).join(' ') || null : null);
+    const meta = {
+      platform: t[0].platform,
+      browser: nv(ctx.browser),
+      os: nv(ctx.os),
+      environment: envName,
+      errorCount: errs.length,
+      leadMessage: lead?.message ?? relatedIssues[0]?.title ?? null,
+      leadTimestamp: lead?.timestamp?.toISOString() ?? null,
+      transaction: lead?.transaction ?? t[0].rootTransaction ?? null,
+    };
+    return { trace: t[0] ?? null, spans: spanRows, errors: errs, issues: relatedIssues, meta };
   }
 
   @Get('replays')

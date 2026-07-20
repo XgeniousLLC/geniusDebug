@@ -71,6 +71,10 @@ export interface IssueDto {
   timesSeen: number;
   usersAffected: number;
   environment?: string;
+  /** Recent per-bucket event counts for the feed sparkline (oldest → newest). */
+  spark?: number[];
+  /** Display name of the assignee (for the avatar), when assigned. */
+  assigneeName?: string | null;
 }
 
 export interface EventDto {
