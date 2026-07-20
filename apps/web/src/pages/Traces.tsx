@@ -39,35 +39,37 @@ function WebVitals({ measurements }: { measurements?: Record<string, { value: nu
   );
 }
 
-/** Span detail side panel (GD-143) — op, duration vs avg, timing, status, attributes. */
-function SpanPanel({ span, avg, onClose }: { span: Span; avg: number; onClose: () => void }) {
+/** Span detail drawer (GD-143/152) — op, description, Duration/Status/Start (Image #6). */
+function SpanPanel({ span, avg, t0, onClose }: { span: Span; avg: number; t0: number; onClose: () => void }) {
   const dur = span.durationMs ?? 0;
   const delta = avg > 0 ? Math.round(((dur - avg) / avg) * 100) : 0;
   const faster = delta < 0;
   const err = span.status && span.status !== 'ok';
+  const startOffset = Math.round(new Date(span.startTs).getTime() - t0);
   return (
-    <Card className="h-fit p-4 lg:sticky lg:top-4">
-      <div className="mb-2 flex items-center justify-between">
-        <span className={`font-mono text-small ${err ? 'text-level-error' : 'text-accent'}`}>{span.op ?? 'span'}</span>
-        <button onClick={onClose} className="text-text-faint hover:text-text" aria-label="Close">✕</button>
-      </div>
-      <div className="mb-3 flex items-baseline gap-2">
-        <span className="text-h1 font-semibold tabular-nums">{dur.toFixed(2)}ms</span>
+    <>
+      {/* click-catcher (transparent) so clicking the waterfall closes the drawer */}
+      <div className="fixed inset-0 z-30" onClick={onClose} aria-hidden />
+      <aside className="fixed inset-y-0 right-0 z-40 w-full max-w-md overflow-y-auto border-l border-border bg-surface p-5 shadow-2xl">
+        <div className="mb-1 flex items-center justify-between">
+          <span className={`font-mono text-small ${err ? 'text-level-error' : 'text-text-muted'}`}>{span.op ?? 'span'}</span>
+          <button onClick={onClose} className="text-text-faint hover:text-text" aria-label="Close">✕</button>
+        </div>
+        <div className="mb-4 break-words font-mono text-h2 font-semibold text-text">{span.description ?? span.op ?? 'span'}</div>
+
+        <div className="overflow-hidden rounded-lg border border-border">
+          <Attr k="Duration" v={`${Math.round(dur)} ms`} mono />
+          <Attr k="Status" v={span.status ?? 'ok'} tone={err ? 'text-level-error' : 'text-status-resolved'} mono />
+          <Attr k="Start" v={`+${startOffset} ms`} mono />
+        </div>
+
         {avg > 0 && (
-          <span className={`rounded-full px-2 py-0.5 text-caption ${faster ? 'bg-status-resolved/15 text-status-resolved' : 'bg-level-warning/15 text-level-warning'}`}>
-            {Math.abs(delta)}% {faster ? 'faster' : 'slower'} than avg {avg.toFixed(2)}ms
-          </span>
+          <div className={`mt-3 rounded-lg px-3 py-2 text-caption ${faster ? 'bg-status-resolved/10 text-status-resolved' : 'bg-level-warning/10 text-level-warning'}`}>
+            {Math.abs(delta)}% {faster ? 'faster' : 'slower'} than the {span.op ?? 'span'} average ({Math.round(avg)} ms)
+          </div>
         )}
-      </div>
-      {span.description && (
-        <div className="mb-3 rounded-md border border-border bg-bg px-3 py-2 font-mono text-caption text-text-muted">{span.description}</div>
-      )}
-      <Attr k="Span ID" v={span.span_id} mono />
-      {span.parentSpanId && <Attr k="Parent" v={span.parentSpanId} mono />}
-      <Attr k="Status" v={span.status ?? 'ok'} />
-      <Attr k="Start" v={new Date(span.startTs).toLocaleTimeString()} />
-      <Attr k="End" v={new Date(span.endTs).toLocaleTimeString()} />
-    </Card>
+      </aside>
+    </>
   );
 }
 function Meta({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
@@ -78,11 +80,11 @@ function Meta({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
     </span>
   );
 }
-function Attr({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
+function Attr({ k, v, mono, tone }: { k: string; v: string; mono?: boolean; tone?: string }) {
   return (
-    <div className="flex items-center justify-between gap-2 border-t border-border py-1.5 text-caption first:border-0">
-      <span className="text-text-faint">{k}</span>
-      <span className={`truncate text-text ${mono ? 'font-mono' : ''}`}>{v}</span>
+    <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2.5 text-small last:border-0">
+      <span className="text-text-muted">{k}</span>
+      <span className={`truncate ${tone ?? 'text-text'} ${mono ? 'font-mono' : ''}`}>{v}</span>
     </div>
   );
 }
@@ -90,7 +92,7 @@ function Attr({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
 /** Flatten spans into a parent→child ordered tree with depth for indentation (GD-143). */
 function buildSpanTree(spans: Span[]): { span: Span; depth: number }[] {
   const byParent = new Map<string | null, Span[]>();
-  const ids = new Set(spans.map((s) => s.span_id));
+  const ids = new Set(spans.map((s) => s.id));
   for (const s of spans) {
     const key = s.parentSpanId && ids.has(s.parentSpanId) ? s.parentSpanId : null;
     (byParent.get(key) ?? byParent.set(key, []).get(key)!).push(s);
@@ -100,7 +102,7 @@ function buildSpanTree(spans: Span[]): { span: Span; depth: number }[] {
   const walk = (parent: string | null, depth: number) => {
     for (const s of (byParent.get(parent) ?? []).sort(sortByStart)) {
       out.push({ span: s, depth });
-      walk(s.span_id, depth + 1);
+      walk(s.id, depth + 1);
     }
   };
   walk(null, 0);
@@ -108,7 +110,7 @@ function buildSpanTree(spans: Span[]): { span: Span; depth: number }[] {
 }
 
 interface Span {
-  span_id: string;
+  id: string;
   parentSpanId: string | null;
   op: string | null;
   description: string | null;
@@ -253,7 +255,8 @@ function TraceWaterfall({ traceId }: { traceId: string }) {
           <EmptyState title="No spans recorded" hint="Transactions arrive as `transaction` envelope items (FR-TRC-1)." />
         )
       ) : (
-        <div className={`grid gap-4 ${sel ? 'lg:grid-cols-[minmax(0,1fr)_320px]' : 'grid-cols-1'}`}>
+        <>
+        <div className="grid grid-cols-1 gap-4">
           <div className="min-w-0">
             {/* search + total duration */}
             <div className="mb-3 flex flex-wrap items-center gap-3">
@@ -278,11 +281,10 @@ function TraceWaterfall({ traceId }: { traceId: string }) {
                 const left = ((new Date(sp.startTs).getTime() - t0) / span) * 100;
                 const width = Math.max(((sp.durationMs ?? 1) / span) * 100, 0.6);
                 const err = !!(sp.status && sp.status !== 'ok');
-                const active = sel?.span_id === sp.span_id;
-                const labelLeft = Math.min(left + width, 88); // keep duration label on-screen
+                const active = sel?.id === sp.id;
                 return (
                   <button
-                    key={`${sp.span_id}-${i}`}
+                    key={`${sp.id}-${i}`}
                     onClick={() => setSel(active ? null : sp)}
                     className={`grid w-full grid-cols-[minmax(180px,34%)_1fr] items-center gap-3 border-b border-border px-4 py-2.5 text-left last:border-0 hover:bg-surface-2 ${
                       active ? 'bg-surface-2' : err ? 'bg-level-error/5' : ''
@@ -294,19 +296,18 @@ function TraceWaterfall({ traceId }: { traceId: string }) {
                       <span className={`shrink-0 font-mono text-mono ${err ? 'text-level-error' : 'text-accent'}`}>{sp.op ?? 'span'}</span>
                       {sp.description && <span className="truncate font-mono text-mono text-text-muted">{sp.description}</span>}
                     </div>
-                    {/* timeline */}
-                    <div className="relative h-5">
-                      <div
-                        className={`absolute top-1/2 h-2.5 -translate-y-1/2 rounded-full ${err ? 'bg-level-error' : 'bg-accent'}`}
-                        style={{ left: `${left}%`, width: `${width}%` }}
-                      />
-                      {err && (
-                        <div className="absolute top-1/2 h-4 w-0.5 -translate-y-1/2 bg-level-error" style={{ left: `${Math.min(left + width, 99)}%` }} aria-hidden />
-                      )}
-                      <span
-                        className="absolute top-1/2 -translate-y-1/2 whitespace-nowrap font-mono text-caption tabular-nums text-text-faint"
-                        style={{ left: `calc(${labelLeft}% + 8px)` }}
-                      >
+                    {/* timeline: bar track + reserved label column (no overlap) */}
+                    <div className="flex items-center gap-3">
+                      <div className="relative h-5 min-w-0 flex-1">
+                        <div
+                          className={`absolute top-1/2 h-2.5 -translate-y-1/2 rounded-full ${err ? 'bg-level-error' : 'bg-accent'}`}
+                          style={{ left: `${left}%`, width: `${width}%` }}
+                        />
+                        {err && (
+                          <div className="absolute top-1/2 h-4 w-0.5 -translate-y-1/2 bg-level-error" style={{ left: `${Math.min(left + width, 99)}%` }} aria-hidden />
+                        )}
+                      </div>
+                      <span className="w-16 shrink-0 text-right font-mono text-caption tabular-nums text-text-faint">
                         {Math.round(sp.durationMs ?? 0).toLocaleString()} ms
                       </span>
                     </div>
@@ -317,8 +318,9 @@ function TraceWaterfall({ traceId }: { traceId: string }) {
             </Card>
           </div>
 
-          {sel && <SpanPanel span={sel} avg={avgByOp.get(sel.op ?? 'span') ?? 0} onClose={() => setSel(null)} />}
         </div>
+        {sel && <SpanPanel span={sel} avg={avgByOp.get(sel.op ?? 'span') ?? 0} t0={t0} onClose={() => setSel(null)} />}
+        </>
       )}
 
       {(q.data?.issues.length ?? 0) > 0 && (
