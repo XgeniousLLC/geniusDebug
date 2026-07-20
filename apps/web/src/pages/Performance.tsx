@@ -1,9 +1,9 @@
 import * as React from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { Card, EmptyState, Skeleton, ErrorState } from '../components/ui';
 import { useUi } from '../store/ui';
+import { TraceSheet } from './Traces';
 
 interface OpAgg {
   op: string | null;
@@ -54,10 +54,10 @@ function band(ms: number): { text: string; bar: string } {
 const opLabel = (op: string | null) => op ?? 'span';
 
 export function Performance() {
-  const navigate = useNavigate();
   const currentProjectId = useUi((s) => s.currentProjectId);
   const [range, setRange] = React.useState<Range>('24h');
   const [showAllSpans, setShowAllSpans] = React.useState(false);
+  const [sheetTraceId, setSheetTraceId] = React.useState<string | null>(null);
 
   const projects = useQuery({ queryKey: ['projects'], queryFn: () => api<ProjectSummary[]>('/projects') });
   const projectName = projects.data?.find((p) => p.id === currentProjectId)?.name;
@@ -131,10 +131,12 @@ export function Performance() {
             total={d.slowestTotal}
             showingAll={showAllSpans}
             onToggleAll={() => setShowAllSpans((s) => !s)}
-            onOpen={(id) => navigate(`/traces/${id}`)}
+            onOpen={(id) => setSheetTraceId(id)}
           />
         </div>
       )}
+
+      {sheetTraceId && <TraceSheet traceId={sheetTraceId} onClose={() => setSheetTraceId(null)} />}
     </div>
   );
 }

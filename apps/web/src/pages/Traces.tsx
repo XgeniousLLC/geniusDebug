@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { Card, EmptyState, Skeleton, ErrorState } from '../components/ui';
@@ -89,6 +89,23 @@ function Attr({ k, v, mono, tone }: { k: string; v: string; mono?: boolean; tone
   );
 }
 
+/** Trace waterfall in a right-side sheet (opened from Performance — no navigation). */
+export function TraceSheet({ traceId, onClose }: { traceId: string; onClose: () => void }) {
+  return (
+    <>
+      <div className="fixed inset-0 z-30 bg-black/40" onClick={onClose} aria-hidden />
+      <aside className="fixed inset-y-0 right-0 z-40 w-full max-w-4xl overflow-y-auto border-l border-border bg-bg p-4 shadow-2xl sm:p-6">
+        <div className="mb-2 flex justify-end">
+          <button onClick={onClose} className="rounded-md border border-border bg-surface px-2.5 py-1 text-small text-text-muted hover:text-text" aria-label="Close">
+            ✕ Close
+          </button>
+        </div>
+        <TraceWaterfall traceId={traceId} embedded />
+      </aside>
+    </>
+  );
+}
+
 /** Flatten spans into a parent→child ordered tree with depth for indentation (GD-143). */
 function buildSpanTree(spans: Span[]): { span: Span; depth: number }[] {
   const byParent = new Map<string | null, Span[]>();
@@ -164,7 +181,8 @@ export function Traces() {
   return <TraceWaterfall traceId={traceId} />;
 }
 
-function TraceWaterfall({ traceId }: { traceId: string }) {
+export function TraceWaterfall({ traceId, embedded }: { traceId: string; embedded?: boolean }) {
+  const navigate = useNavigate();
   const q = useQuery({
     queryKey: ['trace', traceId],
     queryFn: () => api<TraceResponse>(`/traces/${traceId}`),
@@ -203,7 +221,12 @@ function TraceWaterfall({ traceId }: { traceId: string }) {
   const platformLabel = meta ? (PLATFORM_LABEL[meta.platform] ?? meta.platform) : null;
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-5 sm:px-6">
+    <div className={embedded ? 'px-1' : 'mx-auto max-w-6xl px-4 py-5 sm:px-6'}>
+      {!embedded && (
+        <button onClick={() => navigate(-1)} className="mb-2 text-caption text-text-muted hover:text-accent">
+          ← Back
+        </button>
+      )}
       {/* header */}
       <div className="mb-1 flex flex-wrap items-start justify-between gap-2">
         <h1 className="flex items-baseline gap-2 text-h1 font-semibold">
