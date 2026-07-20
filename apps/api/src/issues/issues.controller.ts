@@ -42,6 +42,13 @@ export class IssuesController {
     return this.issues.act(req.user!, shortId, req.user!.userId, parsed.data);
   }
 
+  @Post('bulk/delete')
+  async bulkDelete(@Req() req: Request & { user?: AuthPrincipal }, @Body() body: { shortIds?: string[] }) {
+    const shortIds = (body.shortIds ?? []).filter((s): s is string => typeof s === 'string');
+    if (shortIds.length === 0) throw new BadRequestException('shortIds required');
+    return this.issues.deleteMany(req.user!, shortIds);
+  }
+
   @Post(':shortId/merge')
   async merge(
     @Req() req: Request & { user?: AuthPrincipal },

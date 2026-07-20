@@ -286,6 +286,22 @@ export class IssuesService {
     return { ok: true };
   }
 
+  /** Permanently delete issues by shortId (GD-149). Events aren't FK-cascaded
+   *  (the table is partitioned) so remove them explicitly; the rest cascades. */
+  async deleteMany(user: AuthPrincipal, shortIds: string[]): Promise<{ deleted: number }> {
+    const projectIds = await accessibleProjectIds(user);
+    if (projectIds.length === 0 || shortIds.length === 0) return { deleted: 0 };
+    const rows = await db
+      .select({ id: issues.id })
+      .from(issues)
+      .where(and(inArray(issues.shortId, shortIds), inArray(issues.projectId, projectIds)));
+    const ids = rows.map((r) => r.id);
+    if (ids.length === 0) return { deleted: 0 };
+    await db.delete(events).where(inArray(events.issueId, ids));
+    await db.delete(issues).where(inArray(issues.id, ids));
+    return { deleted: ids.length };
+  }
+
   /** Merge `sourceShortId` into `targetShortId` (FR-GRP-6). */
   async merge(user: AuthPrincipal, sourceShortId: string, targetShortId: string, userId: string) {
     const projectIds = await accessibleProjectIds(user);

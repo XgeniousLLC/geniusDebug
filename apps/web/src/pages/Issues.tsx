@@ -6,7 +6,7 @@ import { api, errMsg } from '../lib/api';
 import { useUi, RANGE_LABELS, type IssueRange } from '../store/ui';
 import { toast, ACTION_PAST } from '../store/toast';
 import { timeAgo, compact } from '../lib/format';
-import { Button, LevelPill, Skeleton, EmptyState, ErrorState } from '../components/ui';
+import { LevelPill, Skeleton, EmptyState, ErrorState } from '../components/ui';
 import { NoProject } from '../components/NoProject';
 import { CheckIcon } from '../components/icons';
 
@@ -80,6 +80,28 @@ export function Issues() {
     },
     onError: (e: unknown, v) => toast.error(`Couldn't merge ${v.source}: ${errMsg(e)}`),
   });
+  const bulkDelete = useMutation({
+    mutationFn: (shortIds: string[]) => api('/issues/bulk/delete', { method: 'POST', body: JSON.stringify({ shortIds }) }),
+    onSuccess: (r: unknown) => {
+      const n = (r as { deleted?: number })?.deleted ?? 0;
+      setSelected(new Set());
+      qc.invalidateQueries({ queryKey: ['issues'] });
+      toast.success(`Deleted ${n} issue${n === 1 ? '' : 's'}`);
+    },
+    onError: (e: unknown) => toast.error(`Couldn't delete: ${errMsg(e)}`),
+  });
+
+  // Apply a status action to every selected issue.
+  function bulkAct(action: 'resolve' | 'archive') {
+    for (const shortId of selected) act.mutate({ shortId, action });
+    setSelected(new Set());
+  }
+  function doBulkDelete() {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    if (!window.confirm(`Permanently delete ${ids.length} issue${ids.length === 1 ? '' : 's'}? This removes all their events and cannot be undone.`)) return;
+    bulkDelete.mutate(ids);
+  }
 
   const allRows = issues.data ?? [];
   const total = allRows.length;
@@ -229,12 +251,36 @@ export function Issues() {
       </div>
 
       {selected.size > 0 && (
-        <div className="mb-2 flex items-center gap-3 rounded-lg border border-accent/40 bg-accent/10 px-3 py-2 text-small">
-          <span className="text-text">{selected.size} selected</span>
-          <Button size="sm" variant="secondary" disabled={selected.size < 2 || merge.isPending} onClick={doMerge}>
+        <div className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-accent/40 bg-accent/10 px-3 py-2 text-small">
+          <span className="mr-1 text-text">{selected.size} selected</span>
+          <button
+            onClick={() => bulkAct('resolve')}
+            className="rounded-md border border-status-resolved/40 px-2.5 py-1 text-caption font-medium text-status-resolved hover:bg-status-resolved/10"
+          >
+            Resolve
+          </button>
+          <button
+            onClick={() => bulkAct('archive')}
+            className="rounded-md border border-status-muted/40 px-2.5 py-1 text-caption font-medium text-text-muted hover:bg-surface-2"
+          >
+            Archive
+          </button>
+          <button
+            onClick={doBulkDelete}
+            disabled={bulkDelete.isPending}
+            className="rounded-md border border-level-error/40 px-2.5 py-1 text-caption font-medium text-level-error hover:bg-level-error/10 disabled:opacity-50"
+          >
+            Delete
+          </button>
+          <span className="mx-1 h-4 w-px bg-border" />
+          <button
+            onClick={doMerge}
+            disabled={selected.size < 2 || merge.isPending}
+            className="rounded-md px-2 py-1 text-caption text-text-muted hover:text-text disabled:opacity-40"
+          >
             Merge into first
-          </Button>
-          <button onClick={() => setSelected(new Set())} className="text-caption text-text-muted hover:text-text">
+          </button>
+          <button onClick={() => setSelected(new Set())} className="ml-auto text-caption text-text-muted hover:text-text">
             clear
           </button>
         </div>
