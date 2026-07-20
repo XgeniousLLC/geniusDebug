@@ -1,5 +1,5 @@
 import { db, sql, issues, events, projects, environments, releases, issueActivity, traces, spans, issueCounts, replays } from '@geniusdebug/db';
-import { and, eq, sql as dsql } from 'drizzle-orm';
+import { and, eq, isNull, sql as dsql } from 'drizzle-orm';
 import type { ParsedEnvelope, SentryEventPayload, SentryTransactionPayload } from '@geniusdebug/shared';
 import { normalizeEvent } from './normalize';
 import { computeFingerprint } from './fingerprint';
@@ -172,6 +172,13 @@ async function processEvent(projectId: string, payload: SentryEventPayload): Pro
     traceId: symbolicated.traceId,
     spanId: symbolicated.spanId,
   });
+
+  // First event ever received for this project (GD-072 onboarding) auto-completes
+  // setup — receiving an event is stronger proof than a manual checkbox.
+  await db
+    .update(projects)
+    .set({ setupCompletedAt: new Date() })
+    .where(and(eq(projects.id, projectId), isNull(projects.setupCompletedAt)));
 
   // Ensure a trace row exists so "Open trace waterfall" (FR-TRC-4) resolves even
   // when only an error — no `transaction` item — carried the trace context. A real

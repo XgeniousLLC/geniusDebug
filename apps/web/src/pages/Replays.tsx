@@ -1,3 +1,4 @@
+import * as React from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
@@ -5,6 +6,8 @@ import { Card, EmptyState, Skeleton, LevelPill } from '../components/ui';
 import { timeAgo } from '../lib/format';
 import { useUi } from '../store/ui';
 import { useRealtime } from '../lib/useRealtime';
+
+const PAGE_SIZE = 20;
 
 interface Replay {
   id: string;
@@ -40,13 +43,23 @@ const userLabel = (u: Record<string, unknown> | null) => {
 export function Replays() {
   const currentProjectId = useUi((s) => s.currentProjectId);
   useRealtime(currentProjectId);
+  const [page, setPage] = React.useState(0);
   const projects = useQuery({ queryKey: ['projects'], queryFn: () => api<ProjectSummary[]>('/projects') });
   const projectName = projects.data?.find((p) => p.id === currentProjectId)?.name;
   const q = useQuery({
-    queryKey: ['replays', currentProjectId],
-    queryFn: () => api<Replay[]>(`/replays${currentProjectId ? `?projectId=${currentProjectId}` : ''}`),
+    queryKey: ['replays', currentProjectId, page],
+    queryFn: () => {
+      const p = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(page * PAGE_SIZE) });
+      if (currentProjectId) p.set('projectId', currentProjectId);
+      return api<{ items: Replay[]; total: number }>(`/replays?${p.toString()}`);
+    },
+    placeholderData: (prev) => prev,
     refetchInterval: 30000, // fallback poll; realtime updates arrive via SSE (GD-147)
   });
+  const total = q.data?.total ?? 0;
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  React.useEffect(() => setPage(0), [currentProjectId]);
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-5 sm:px-6">
@@ -60,7 +73,7 @@ export function Replays() {
 
       {q.isLoading ? (
         <Skeleton className="h-32 w-full" />
-      ) : (q.data?.length ?? 0) === 0 ? (
+      ) : total === 0 ? (
         <EmptyState
           title="No replays yet"
           hint="Replay runs in on-error/buffered mode (FR-RPL-1) — the SDK only sends on error. Masked inputs render as blocks for privacy (FR-RPL-4)."
@@ -75,7 +88,7 @@ export function Replays() {
             <span className="text-right">Segments</span>
             <span className="text-right">When</span>
           </div>
-          {q.data!.map((r) => {
+          {(q.data?.items ?? []).map((r) => {
             const user = userLabel(r.user);
             return (
               <Link
@@ -115,6 +128,30 @@ export function Replays() {
             );
           })}
         </Card>
+      )}
+
+      {total > 0 && (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-caption text-text-faint">
+          <span>
+            Showing {page * PAGE_SIZE + 1}–{Math.min(total, page * PAGE_SIZE + PAGE_SIZE)} of {total} replays
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              disabled={page === 0}
+              className="rounded-md border border-border px-2.5 py-1 text-small text-text-muted hover:text-text disabled:opacity-40"
+            >
+              ‹ Prev
+            </button>
+            <button
+              onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+              disabled={page >= pageCount - 1}
+              className="rounded-md border border-border px-2.5 py-1 text-small text-text-muted hover:text-text disabled:opacity-40"
+            >
+              Next ›
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );

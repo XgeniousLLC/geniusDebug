@@ -770,4 +770,19 @@ GitHub advanced (GD-043/44/45) code-complete; live needs a GitHub App install.
 | GD-156 | Replay detail: Network waterfall + Activity + click-to-seek (Image #7) | DONE | MED | In the replay detail page: render the **Network** tab as a waterfall (per-request timing bars), improve the **Activity** tab layout, and make clicking a timestamped row **seek the rrweb player** to that time in the video. |
 
 ### Sprint Stats
-- Total: 10  /  TODO: 10  /  IN_PROGRESS: 0  /  DONE: 0  /  BLOCKED: 0
+- Total: 10  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 10  /  BLOCKED: 0
+
+## Sprint 32 — Pagination + onboarding auto-complete polish
+**Status:** COMPLETE
+**Started:** 2026-07-20
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-157 | Replays page pagination | DONE | MED | `GET /replays` now `{items,total}` w/ limit/offset; web Replays.tsx paged 20/page, Prev/Next footer |
+| GD-158 | Releases page pagination | DONE | MED | `GET /releases` now `{items,total}` w/ limit/offset; web Releases.tsx paged 20/page, Prev/Next footer |
+| GD-159 | Alerts notification history — load more | DONE | LOW | `GET /alerts/history` accepts limit/offset; web Alerts.tsx "Load more" button appends 20 at a time |
+| GD-160 | Setup guide: permanent complete state + auto-complete on first event | DONE | MED | `IntegrationGuide.tsx`: once complete, show "Completed" badge only (no toggle/incomplete button). Workers `processor.ts`: first persisted event for a project auto-sets `setupCompletedAt` (`isNull` guard, one-shot) |
+
+### Sprint Stats
+- Total: 4  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 4  /  BLOCKED: 0
+- api+web+workers typecheck clean; 14 tests green. Needs api+workers+web redeploy.

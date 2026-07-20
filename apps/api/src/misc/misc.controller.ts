@@ -74,10 +74,14 @@ export class MiscController {
   async replaysList(
     @Req() req: Request & { user?: AuthPrincipal },
     @Query('projectId') projectId?: string,
+    @Query('limit') limitQ?: string,
+    @Query('offset') offsetQ?: string,
   ) {
+    const limit = Math.min(200, Math.max(1, Number(limitQ) || 20));
+    const offset = Math.max(0, Number(offsetQ) || 0);
     const access = await accessibleProjectIds(req.user!);
     const pids = projectId && access.includes(projectId) ? [projectId] : access;
-    if (pids.length === 0) return [];
+    if (pids.length === 0) return { items: [], total: 0 };
     // Join the related issue (shortId/title/level) + project name so each replay
     // card can show what error it belongs to and where.
     const rows = await db
@@ -104,7 +108,7 @@ export class MiscController {
       .leftJoin(projects, eq(projects.id, replays.projectId))
       .where(inArray(replays.projectId, pids))
       .orderBy(desc(replays.createdAt))
-      .limit(200);
+      .limit(2000);
     // One card per session: collapse segments of a replayId to their earliest row
     // (segment 0) and sum sizes/segments. Legacy rows (no replayId) pass through.
     const seen = new Set<string>();
@@ -124,7 +128,7 @@ export class MiscController {
         size: segs.reduce((s, x) => s + (x.size ?? 0), 0),
       });
     }
-    return out.slice(0, 50);
+    return { items: out.slice(offset, offset + limit), total: out.length };
   }
 
   @Get('replays/:id')
@@ -332,9 +336,19 @@ export class MiscController {
 
   /** Releases across accessible projects with new-issue counts (GD-135). */
   @Get('releases')
-  async releasesList(@Req() req: Request & { user?: AuthPrincipal }) {
+  async releasesList(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Query('limit') limitQ?: string,
+    @Query('offset') offsetQ?: string,
+  ) {
+    const limit = Math.min(200, Math.max(1, Number(limitQ) || 20));
+    const offset = Math.max(0, Number(offsetQ) || 0);
     const pids = await accessibleProjectIds(req.user!);
-    if (pids.length === 0) return [];
+    if (pids.length === 0) return { items: [], total: 0 };
+    const totalRow = await db
+      .select({ c: sql<number>`count(*)::int` })
+      .from(releases)
+      .where(inArray(releases.projectId, pids));
     const rows = await db
       .select({
         id: releases.id,
@@ -351,8 +365,9 @@ export class MiscController {
       .where(inArray(releases.projectId, pids))
       .groupBy(releases.id, projects.name)
       .orderBy(desc(releases.createdAt))
-      .limit(50);
-    return rows;
+      .limit(limit)
+      .offset(offset);
+    return { items: rows, total: totalRow[0]?.c ?? 0 };
   }
 
   @Get('alerts')
@@ -370,10 +385,20 @@ export class MiscController {
   async alertsHistory(
     @Req() req: Request & { user?: AuthPrincipal },
     @Query('projectId') projectId?: string,
+    @Query('limit') limitQ?: string,
+    @Query('offset') offsetQ?: string,
   ) {
+    const limit = Math.min(200, Math.max(1, Number(limitQ) || 20));
+    const offset = Math.max(0, Number(offsetQ) || 0);
     const access = await accessibleProjectIds(req.user!);
     const pids = projectId && access.includes(projectId) ? [projectId] : access;
     if (pids.length === 0) return [];
-    return db.select().from(notifications).where(inArray(notifications.projectId, pids)).orderBy(desc(notifications.sentAt)).limit(50);
+    return db
+      .select()
+      .from(notifications)
+      .where(inArray(notifications.projectId, pids))
+      .orderBy(desc(notifications.sentAt))
+      .limit(limit)
+      .offset(offset);
   }
 }
