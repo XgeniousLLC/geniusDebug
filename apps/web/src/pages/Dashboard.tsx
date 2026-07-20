@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import { timeAgo, compact } from '../lib/format';
 import { Card, Skeleton, LevelPill, IdChip } from '../components/ui';
 import { NoProject } from '../components/NoProject';
+import { useUi } from '../store/ui';
 
 interface DashboardData {
   totals: { projects: number; members: number; unresolvedIssues: number; events7d: number; eventsTotal: number; activeUsers7d: number };
@@ -19,7 +20,13 @@ const hourLabel = (h: number) => `${String(h).padStart(2, '0')}:00`;
 
 export function Dashboard() {
   const navigate = useNavigate();
-  const q = useQuery({ queryKey: ['dashboard'], queryFn: () => api<DashboardData>('/dashboard'), refetchInterval: 15000 });
+  const currentProjectId = useUi((s) => s.currentProjectId);
+  const q = useQuery({
+    queryKey: ['dashboard', currentProjectId],
+    queryFn: () =>
+      api<DashboardData>(`/dashboard${currentProjectId ? `?projectId=${currentProjectId}` : ''}`),
+    refetchInterval: 15000,
+  });
 
   if (q.isLoading) {
     return (

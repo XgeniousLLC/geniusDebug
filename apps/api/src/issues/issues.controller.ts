@@ -31,6 +31,17 @@ export class IssuesController {
     return this.issues.similarIssues(req.user!, shortId);
   }
 
+  @Get(':shortId/source')
+  async source(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Param('shortId') shortId: string,
+    @Query('path') path: string,
+    @Query('line') line: string,
+  ) {
+    if (!path) throw new BadRequestException('path required');
+    return this.issues.sourceForFrame(req.user!, shortId, path, Number(line) || 1);
+  }
+
   @Post(':shortId/actions')
   async act(
     @Req() req: Request & { user?: AuthPrincipal },
@@ -40,6 +51,13 @@ export class IssuesController {
     const parsed = issueActionSchema.safeParse(body);
     if (!parsed.success) throw new BadRequestException(parsed.error.flatten());
     return this.issues.act(req.user!, shortId, req.user!.userId, parsed.data);
+  }
+
+  @Post('bulk/delete')
+  async bulkDelete(@Req() req: Request & { user?: AuthPrincipal }, @Body() body: { shortIds?: string[] }) {
+    const shortIds = (body.shortIds ?? []).filter((s): s is string => typeof s === 'string');
+    if (shortIds.length === 0) throw new BadRequestException('shortIds required');
+    return this.issues.deleteMany(req.user!, shortIds);
   }
 
   @Post(':shortId/merge')

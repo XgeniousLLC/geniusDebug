@@ -169,9 +169,10 @@ function ProjectSwitcher({ projects }: { projects: ProjectSummary[] }) {
 
 export function Shell({ children }: { children: React.ReactNode }) {
   const { user, signOut, theme, toggleTheme, environment, setEnvironment, range, setRange, currentProjectId } = useUi();
-  // The time range only filters the Issues feed — show it only there (FR-UI-2).
+  // The time range now lives in the Issues filter bar itself — don't duplicate it
+  // in the top bar (FR-UI-2).
   const pathname = useLocation().pathname;
-  const showRange = pathname === '/issues';
+  const showRange = false;
   const navigate = useNavigate();
 
   // Mobile: sidebar becomes an off-canvas drawer (GD-124). Close on route change.

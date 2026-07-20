@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { Button, Card, EmptyState, Skeleton } from '../components/ui';
 import { timeAgo } from '../lib/format';
+import { useUi } from '../store/ui';
 
 interface Rule {
   id: string;
@@ -15,11 +16,16 @@ interface Rule {
   mutedUntil: string | null;
 }
 interface Notif { id: string; dedupeKey: string; status: string; sentAt: string }
+interface ProjectSummary { id: string; name: string }
 
 export function Alerts() {
   const qc = useQueryClient();
-  const rules = useQuery({ queryKey: ['alerts'], queryFn: () => api<Rule[]>('/alerts') });
-  const history = useQuery({ queryKey: ['alert-history'], queryFn: () => api<Notif[]>('/alerts/history') });
+  const currentProjectId = useUi((s) => s.currentProjectId);
+  const qs = currentProjectId ? `?projectId=${currentProjectId}` : '';
+  const projects = useQuery({ queryKey: ['projects'], queryFn: () => api<ProjectSummary[]>('/projects') });
+  const projectName = projects.data?.find((p) => p.id === currentProjectId)?.name;
+  const rules = useQuery({ queryKey: ['alerts', currentProjectId], queryFn: () => api<Rule[]>(`/alerts${qs}`) });
+  const history = useQuery({ queryKey: ['alert-history', currentProjectId], queryFn: () => api<Notif[]>(`/alerts/history${qs}`) });
 
   const inval = () => qc.invalidateQueries({ queryKey: ['alerts'] });
   const patch = useMutation({ mutationFn: (v: { id: string; body: object }) => api(`/alerts/${v.id}`, { method: 'PATCH', body: JSON.stringify(v.body) }), onSuccess: inval });
@@ -28,7 +34,14 @@ export function Alerts() {
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-5 sm:px-6">
-      <h1 className="mb-4 text-h1 font-semibold">Alerts</h1>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <h1 className="text-h1 font-semibold">Alerts</h1>
+        {projectName && (
+          <span className="rounded-full bg-surface px-2.5 py-1 text-caption text-text-muted">
+            {projectName}
+          </span>
+        )}
+      </div>
 
       <div className="mb-4 flex items-center justify-between">
         <h2 className="text-h2 font-semibold">Rules</h2>
@@ -64,7 +77,7 @@ export function Alerts() {
         </Card>
       )}
 
-      <RuleEditor onCreated={inval} />
+      <RuleEditor onCreated={inval} projectId={currentProjectId} />
 
       <h2 className="mb-2 mt-6 text-h2 font-semibold">Notification history</h2>
       {history.isLoading ? (
@@ -86,7 +99,7 @@ export function Alerts() {
   );
 }
 
-function RuleEditor({ onCreated }: { onCreated: () => void }) {
+function RuleEditor({ onCreated, projectId }: { onCreated: () => void; projectId: string | null }) {
   const [name, setName] = React.useState('');
   const [onNew, setOnNew] = React.useState(true);
   const [onReg, setOnReg] = React.useState(true);
@@ -101,6 +114,7 @@ function RuleEditor({ onCreated }: { onCreated: () => void }) {
         method: 'POST',
         body: JSON.stringify({
           name,
+          ...(projectId ? { projectId } : {}),
           conditions: { new: onNew, regression: onReg, ...(freqOn ? { frequency: { count, windowMin } } : {}) },
           recipients: recipients.split(',').map((s) => s.trim()).filter(Boolean),
         }),

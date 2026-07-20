@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import type { IssueDto } from '@geniusdebug/shared';
+import type { IssueListResponse } from '@geniusdebug/shared';
 import { api } from '../lib/api';
 import { buildDsn } from '../lib/ingest';
 import { Card, Button, Skeleton } from '../components/ui';
@@ -18,13 +18,13 @@ export function Onboarding() {
   // Poll until the first event lands (flips to success).
   const issues = useQuery({
     queryKey: ['issues', 'onboard'],
-    queryFn: () => api<IssueDto[]>('/issues?status=all&limit=1'),
+    queryFn: () => api<IssueListResponse>('/issues?status=all&limit=1'),
     refetchInterval: 4000,
   });
 
   const dsn = keys.data?.[0]?.publicKey;
   const dsnUrl = dsn && projectId ? buildDsn(dsn, projectId) : '…';
-  const gotEvent = (issues.data?.length ?? 0) > 0;
+  const gotEvent = (issues.data?.total ?? 0) > 0;
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6">

@@ -15,6 +15,7 @@ import { MetricsController } from './metrics/metrics.controller';
 import { IntegrationsController } from './integrations/integrations.controller';
 import { DashboardController } from './dashboard/dashboard.controller';
 import { SuggestController } from './suggest/suggest.controller';
+import { RealtimeController } from './realtime/realtime.controller';
 import { SuggestService } from './suggest/suggest.service';
 import { RootController } from './http-pages';
 
@@ -48,6 +49,7 @@ class HealthController {
     IntegrationsController,
     DashboardController,
     SuggestController,
+    RealtimeController,
   ],
   providers: [AuthService, IssuesService, JwtGuard, GithubService, SuggestService],
 })

@@ -147,3 +147,45 @@ export const PartyIcon = (p: P) => (
     <path d="M14 6a3 3 0 0 0-3-3M18 10a3 3 0 0 0 3-3M15 3l.5 1M21 9l-1 .5" />
   </Svg>
 );
+export const ChevronDownIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M6 9l6 6 6-6" />
+  </Svg>
+);
+export const FlameIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M12 3c1 3-2 4-2 7a2 2 0 1 0 4 0c0-1 0-1 .3-1.7C15.7 11 17 13 17 15a5 5 0 0 1-10 0c0-4 4-6 5-12z" fill="currentColor" stroke="none" />
+  </Svg>
+);
+export const CursorClickIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M9 3v2M5 5l1.5 1.5M3 9h2M15 15l6 2-2 2-2 4-2-8z" />
+  </Svg>
+);
+export const GlobeIcon = (p: P) => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M3 12h18M12 3a15 15 0 0 1 0 18 15 15 0 0 1 0-18z" />
+  </Svg>
+);
+export const TerminalIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M5 7l4 4-4 4M12 17h7" />
+  </Svg>
+);
+export const ArrowUpRightIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M7 17L17 7M8 7h9v9" />
+  </Svg>
+);
+export const AlertTriangleIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M12 3l9 16H3l9-16z" />
+    <path d="M12 9v5M12 17h.01" />
+  </Svg>
+);
+export const DotIcon = (p: P) => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="3" fill="currentColor" stroke="none" />
+  </Svg>
+);

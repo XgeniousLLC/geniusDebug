@@ -8,8 +8,22 @@ import { toast, ACTION_PAST } from '../store/toast';
 import { timeAgo } from '../lib/format';
 import { Button, LevelPill, StatusChip, IdChip, Tag, Card, Skeleton, ErrorState } from '../components/ui';
 import { StackTrace } from '../components/StackTrace';
-import { CheckIcon, ArchiveIcon, BellOffIcon, PlayIcon } from '../components/icons';
+import {
+  CheckIcon,
+  ArchiveIcon,
+  BellOffIcon,
+  PlayIcon,
+  ChevronDownIcon,
+  FlameIcon,
+  CursorClickIcon,
+  GlobeIcon,
+  TerminalIcon,
+  ArrowUpRightIcon,
+  AlertTriangleIcon,
+  DotIcon,
+} from '../components/icons';
 import { ReplayViewer } from './ReplayPlayer';
+import { TraceSheet } from './Traces';
 import { buildAgentMarkdown } from '../lib/agentMarkdown';
 
 interface DetailResponse {
@@ -60,6 +74,7 @@ export function IssueDetail() {
   const isAdmin = useUi((s) => s.user?.role === 'admin');
   const [tab, setTab] = React.useState<Tab>('stack');
   const [eventIdx, setEventIdx] = React.useState(0);
+  const [traceSheet, setTraceSheet] = React.useState(false);
   const [editingHi, setEditingHi] = React.useState(false);
   const [pinned, setPinned] = React.useState<Set<string>>(() => {
     try {
@@ -180,7 +195,7 @@ export function IssueDetail() {
   const contexts = (event?.contexts ?? {}) as Record<string, { name?: string; version?: string; model?: string }>;
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-5 sm:px-6">
+    <div className="w-full px-4 py-5 sm:px-6">
       {/* Breadcrumb */}
       <div className="mb-3 flex items-center gap-1.5 font-mono text-caption text-text-faint">
         <Link to="/issues" className="hover:text-accent">Issues</Link>
@@ -206,6 +221,7 @@ export function IssueDetail() {
         </div>
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
           <Button
+            size="sm"
             title="Copy the full error as Markdown for an AI coding agent"
             onClick={() => {
               const md = buildAgentMarkdown(issue, event);
@@ -221,11 +237,11 @@ export function IssueDetail() {
           >
             Copy for AI
           </Button>
-          <Button onClick={() => setShareOpen(true)} title="Share issue">Share</Button>
+          <Button size="sm" onClick={() => setShareOpen(true)} title="Share issue">Share</Button>
           <select
             value={issue.assigneeUserId ?? ''}
             onChange={(e) => assign.mutate(e.target.value)}
-            className="h-9 rounded-md border border-border bg-surface px-2 text-small text-text"
+            className="h-7 rounded-md border border-border bg-surface px-2 text-caption text-text"
             title="Assign"
           >
             <option value="">Unassigned</option>
@@ -234,19 +250,19 @@ export function IssueDetail() {
             ))}
           </select>
           {issue.status === 'resolved' ? (
-            <Button onClick={() => act.mutate('unresolve')}><CheckIcon size={15} /> Unresolve</Button>
+            <Button size="sm" onClick={() => act.mutate('unresolve')}><CheckIcon size={13} /> Unresolve</Button>
           ) : issue.status === 'archived' ? (
-            <Button onClick={() => act.mutate('unarchive')}><ArchiveIcon size={15} /> Unarchive</Button>
+            <Button size="sm" onClick={() => act.mutate('unarchive')}><ArchiveIcon size={13} /> Unarchive</Button>
           ) : issue.status === 'muted' ? (
-            <Button onClick={() => act.mutate('unmute')}><BellOffIcon size={15} /> Unmute</Button>
+            <Button size="sm" onClick={() => act.mutate('unmute')}><BellOffIcon size={13} /> Unmute</Button>
           ) : (
-            <Button variant="primary" onClick={() => act.mutate('resolve')}><CheckIcon size={15} /> Resolve</Button>
+            <Button size="sm" variant="primary" onClick={() => act.mutate('resolve')}><CheckIcon size={13} /> Resolve</Button>
           )}
           {issue.status !== 'archived' && (
-            <Button onClick={() => act.mutate('archive')}><ArchiveIcon size={15} /> Archive</Button>
+            <Button size="sm" onClick={() => act.mutate('archive')}><ArchiveIcon size={13} /> Archive</Button>
           )}
           {issue.status !== 'muted' && (
-            <Button onClick={() => act.mutate('mute')}><BellOffIcon size={15} /> Mute</Button>
+            <Button size="sm" onClick={() => act.mutate('mute')}><BellOffIcon size={13} /> Mute</Button>
           )}
         </div>
       </div>
@@ -274,7 +290,10 @@ export function IssueDetail() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1fr_300px]">
+      {/* Suspect frame — which file + line caused the error, with the code (GD-153) */}
+      <SuspectFrame frames={frames} githubDefault={null} />
+
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
         {/* Left column */}
         <div className="min-w-0">
           {/* Events over time (FR-UI-2 / GD-132) */}
@@ -330,6 +349,11 @@ export function IssueDetail() {
             </div>
           </Card>
 
+          {/* Trace preview — errors in this trace on a mini timeline (GD-153) */}
+          {event?.traceId && (
+            <TracePreview traceId={event.traceId} currentIssueId={issue.id} onOpenFull={() => setTraceSheet(true)} />
+          )}
+
           {/* Tabs */}
           <div className="mb-3 flex flex-wrap gap-4 border-b border-border">
             {(['stack', 'breadcrumbs', 'tags', 'context', 'events', 'replay'] as Tab[]).map((t) => {
@@ -356,19 +380,9 @@ export function IssueDetail() {
             })}
           </div>
 
-          {tab === 'stack' && <StackTrace frames={frames} />}
+          {tab === 'stack' && <StackTrace frames={frames} shortId={issue.shortId} />}
 
-          {tab === 'breadcrumbs' && (
-            <div className="flex flex-col gap-1">
-              {(event?.breadcrumbs ?? []).length === 0 && <span className="text-small text-text-muted">No breadcrumbs.</span>}
-              {(event?.breadcrumbs ?? []).map((b, i) => (
-                <div key={i} className="flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-1.5 font-mono text-mono">
-                  <span className="rounded bg-surface-2 px-1.5 py-0.5 text-caption text-text-muted">{String(b.category ?? 'log')}</span>
-                  <span className="truncate text-text">{String(b.message ?? '')}</span>
-                </div>
-              ))}
-            </div>
-          )}
+          {tab === 'breadcrumbs' && <Breadcrumbs crumbs={event?.breadcrumbs ?? []} />}
 
           {tab === 'tags' &&
             (() => {
@@ -598,6 +612,8 @@ export function IssueDetail() {
           </Card>
         </div>
       </div>
+
+      {traceSheet && event?.traceId && <TraceSheet traceId={event.traceId} onClose={() => setTraceSheet(false)} />}
     </div>
   );
 }
@@ -771,14 +787,199 @@ function simColor(score: number): string {
 }
 
 /** Compact event-volume bar chart from issue count buckets (GD-132). */
+interface TracePreviewResp {
+  errors: { id: string; issueId: string; message: string | null; level: string; timestamp: string | null }[];
+  issues: { id: string; shortId: string; title: string }[];
+  spans: unknown[];
+}
+
+/** Trace preview (GD-153) — errors in this trace on a mini timeline (Image #13). */
+function TracePreview({ traceId, currentIssueId, onOpenFull }: { traceId: string; currentIssueId: string; onOpenFull: () => void }) {
+  const [open, setOpen] = React.useState(true);
+  const q = useQuery({ queryKey: ['trace-preview', traceId], queryFn: () => api<TracePreviewResp>(`/traces/${traceId}`) });
+  const errors = q.data?.errors ?? [];
+  if (errors.length === 0) return null;
+  const shortOf = new Map((q.data?.issues ?? []).map((i) => [i.id, i.shortId]));
+  const times = errors.map((e) => (e.timestamp ? Date.parse(e.timestamp) : NaN)).filter((n) => !Number.isNaN(n));
+  const t0 = times.length ? Math.min(...times) : 0;
+  const t1 = times.length ? Math.max(...times) : 1;
+  const span = t1 - t0 || 1;
+  const hiddenSpans = q.data?.spans?.length ?? 0;
+  return (
+    <Card className="mb-4 p-4">
+      <div className="mb-3 flex items-center justify-between">
+        <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-2 text-h2 font-semibold">
+          <ChevronDownIcon size={16} className={`text-text-faint transition-transform ${open ? '' : '-rotate-90'}`} />
+          Trace Preview
+        </button>
+        <button onClick={onOpenFull} className="rounded-md border border-border bg-surface px-2.5 py-1 text-caption text-text-muted hover:text-text">
+          View Full Trace →
+        </button>
+      </div>
+      {open && (
+        <div className="overflow-hidden rounded-lg border border-border">
+          {hiddenSpans > 0 && (
+            <div className="border-b border-border bg-surface px-3 py-1.5 text-caption text-text-faint">
+              {hiddenSpans} span{hiddenSpans === 1 ? '' : 's'} · {errors.length} error{errors.length === 1 ? '' : 's'} in trace
+            </div>
+          )}
+          {errors.map((e) => {
+            const isCurrent = e.issueId === currentIssueId;
+            const left = e.timestamp ? ((Date.parse(e.timestamp) - t0) / span) * 100 : 0;
+            return (
+              <div
+                key={e.id}
+                className={`grid grid-cols-[minmax(140px,34%)_1fr] items-center gap-3 border-b border-border px-3 py-2 last:border-0 ${isCurrent ? 'bg-level-error/5 ring-1 ring-inset ring-level-error/40' : ''}`}
+              >
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="shrink-0 text-caption font-semibold text-level-error">Error —</span>
+                  <span className="truncate text-small text-text">{e.message ?? shortOf.get(e.issueId) ?? 'error'}</span>
+                </div>
+                <div className="relative h-5">
+                  <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-border" aria-hidden />
+                  <span
+                    className={`absolute top-1/2 grid h-5 w-5 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full text-white ${isCurrent ? 'bg-level-error ring-2 ring-level-error/40' : 'bg-level-error/80'}`}
+                    style={{ left: `${Math.min(98, Math.max(2, left))}%` }}
+                    title={e.timestamp ? new Date(e.timestamp).toLocaleTimeString() : ''}
+                  >
+                    <FlameIcon size={11} />
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/** Breadcrumb timeline (GD-153) — level-dotted rail, category badge, message, data, time. */
+function Breadcrumbs({ crumbs }: { crumbs: Array<Record<string, unknown>> }) {
+  if (!crumbs || crumbs.length === 0) return <span className="text-small text-text-muted">No breadcrumbs.</span>;
+  const dot = (level?: string, category?: string) => {
+    if (level === 'error' || level === 'fatal') return 'bg-level-error';
+    if (level === 'warning') return 'bg-level-warning';
+    if (category?.startsWith('ui')) return 'bg-status-resolved';
+    if (category?.startsWith('navigation')) return 'bg-level-info';
+    if (category === 'console') return 'bg-text-faint';
+    return 'bg-accent';
+  };
+  const icon = (category?: string, type?: string) => {
+    const c = category ?? type ?? '';
+    const sz = 10;
+    if (c.startsWith('navigation')) return <ArrowUpRightIcon size={sz} />;
+    if (c.startsWith('ui')) return <CursorClickIcon size={sz} />;
+    if (c === 'console') return <TerminalIcon size={sz} />;
+    if (c.startsWith('http') || c === 'fetch' || c === 'xhr') return <GlobeIcon size={sz} />;
+    if (c === 'error' || type === 'error') return <AlertTriangleIcon size={sz} />;
+    return <DotIcon size={sz} />;
+  };
+  return (
+    <div className="relative flex flex-col">
+      {/* vertical rail */}
+      <div className="absolute bottom-2 left-[7px] top-2 w-px bg-border" aria-hidden />
+      {crumbs.map((b, i) => {
+        const level = b.level as string | undefined;
+        const category = (b.category as string | undefined) ?? (b.type as string | undefined);
+        const message = (b.message as string | undefined) ?? (b.data && typeof b.data === 'object' ? JSON.stringify(b.data) : '');
+        const ts = b.timestamp ? new Date(typeof b.timestamp === 'number' ? b.timestamp * 1000 : String(b.timestamp)) : null;
+        return (
+          <div key={i} className="relative flex items-start gap-3 py-1.5 pl-0">
+            <span className={`z-10 mt-1 grid h-4 w-4 shrink-0 place-items-center rounded-full ${dot(level, category)} text-[8px] text-white`}>
+              {icon(category, b.type as string | undefined)}
+            </span>
+            <div className="min-w-0 flex-1 border-b border-border pb-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 font-mono text-caption text-text-muted">{category ?? 'log'}</span>
+                  <span className="truncate text-small text-text">{message}</span>
+                </div>
+                {ts && !Number.isNaN(ts.getTime()) && (
+                  <span className="shrink-0 font-mono text-caption text-text-faint">{ts.toLocaleTimeString()}</span>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** The frame that most likely caused the error, shown prominently with its code (GD-153). */
+function SuspectFrame({ frames, githubDefault }: { frames: NormalizedFrame[]; githubDefault: string | null }) {
+  void githubDefault;
+  if (!frames || frames.length === 0) return null;
+  const ordered = [...frames].reverse(); // crashing frame first
+  const suspect =
+    ordered.find((f) => f.inApp && f.contextLine != null) ??
+    ordered.find((f) => f.contextLine != null) ??
+    ordered.find((f) => f.inApp) ??
+    ordered[0];
+  const path = suspect.absPath ?? suspect.filename ?? '<anonymous>';
+  const base = path.replace(/^webpack-internal:\/\/\/(\(.*?\)\/)?/, '').replace(/^\.\//, '');
+  const hasCode = suspect.contextLine != null || (suspect.preContext?.length ?? 0) > 0;
+  return (
+    <Card className="mb-4 overflow-hidden border-l-2 border-l-level-error p-0">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
+        <div className="flex min-w-0 items-baseline gap-2 font-mono text-small">
+          <span className="shrink-0 rounded bg-level-error/15 px-1.5 py-0.5 text-caption font-medium text-level-error">Suspect</span>
+          {suspect.function && <span className="shrink-0 text-accent">{suspect.function}</span>}
+          <span className="min-w-0 truncate text-text">{base}</span>
+          {suspect.lineno != null && (
+            <span className="shrink-0 text-text-faint">
+              :{suspect.lineno}
+              {suspect.colno != null ? `:${suspect.colno}` : ''}
+            </span>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {suspect.githubUrl && (
+            <a href={suspect.githubUrl} target="_blank" rel="noreferrer" className="text-caption text-accent hover:underline">
+              Open in GitHub ↗
+            </a>
+          )}
+          {suspect.inApp && <span className="rounded bg-accent/15 px-1.5 py-0.5 text-caption text-accent">in-app</span>}
+        </div>
+      </div>
+      {hasCode ? (
+        <pre className="overflow-x-auto border-t border-border bg-bg px-0 py-1.5 font-mono text-mono leading-6">
+          {(suspect.preContext ?? []).map((l, i) => (
+            <SuspectLine key={`pre-${i}`} n={suspect.lineno != null ? suspect.lineno - (suspect.preContext!.length - i) : null} text={l} />
+          ))}
+          {suspect.contextLine != null && <SuspectLine n={suspect.lineno ?? null} text={suspect.contextLine} crash />}
+          {(suspect.postContext ?? []).map((l, i) => (
+            <SuspectLine key={`post-${i}`} n={suspect.lineno != null ? suspect.lineno + i + 1 : null} text={l} />
+          ))}
+        </pre>
+      ) : (
+        <div className="border-t border-border bg-bg px-4 py-2 text-caption text-text-faint">
+          {suspect.inApp ? 'No source context — upload source maps to see the crashing line here.' : 'System / minified frame — no source available.'}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function SuspectLine({ n, text, crash }: { n: number | null; text: string; crash?: boolean }) {
+  return (
+    <div className={`flex ${crash ? 'bg-level-error/10' : ''}`}>
+      <span className={`inline-block w-12 shrink-0 select-none px-3 text-right ${crash ? 'text-level-error' : 'text-text-faint'}`}>{n ?? ''}</span>
+      <span className={`w-3 shrink-0 ${crash ? 'text-level-error' : 'text-transparent'}`}>▸</span>
+      <span className={`whitespace-pre pr-4 ${crash ? 'text-text' : 'text-text-muted'}`}>{text}</span>
+    </div>
+  );
+}
+
 function EventsChart({ counts }: { counts: { bucket: string; count: number }[] }) {
   const max = Math.max(1, ...counts.map((c) => c.count));
   return (
-    <div className="flex h-20 items-end gap-0.5" title="Events over time">
+    <div className="flex h-20 items-end justify-start gap-1" title="Events over time">
       {counts.map((c, i) => (
         <div
           key={i}
-          className="min-w-0 flex-1 rounded-sm bg-accent/70 transition hover:bg-accent"
+          className="w-full max-w-[36px] flex-1 rounded-sm bg-accent transition hover:bg-accent-strong"
           style={{ height: `${Math.max(3, (c.count / max) * 100)}%` }}
           title={`${new Date(c.bucket).toLocaleString()} · ${c.count}`}
         />

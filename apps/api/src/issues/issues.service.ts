@@ -1,13 +1,60 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
-import { db, issues, events, environments, issueActivity, users, issueCounts, replays } from '@geniusdebug/db';
-import { and, eq, ne, desc, asc, ilike, or, inArray, gte } from 'drizzle-orm';
-import type { IssueDto, EventDto, IssueListQuery, IssueActionInput } from '@geniusdebug/shared';
+import { db, issues, events, environments, issueActivity, users, issueCounts, replays, repositories, releases } from '@geniusdebug/db';
+import { and, eq, ne, desc, asc, ilike, or, inArray, gte, sql } from 'drizzle-orm';
+import type { IssueDto, EventDto, IssueListQuery, IssueListResponse, IssueActionInput } from '@geniusdebug/shared';
 import type { AuthPrincipal } from '../auth/jwt.guard';
 import { accessibleProjectIds } from '../access';
+import { GithubService } from '../github/github.service';
 
 @Injectable()
 export class IssuesService {
+  constructor(private readonly gh: GithubService) {}
+
+  /** Fetch a frame's source from the linked GitHub repo (FR-MAP-6) so the crashing
+   *  line can be shown even when the event carried no embedded source context. */
+  async sourceForFrame(user: AuthPrincipal, shortId: string, rawPath: string, line: number) {
+    const projectIds = await accessibleProjectIds(user);
+    if (projectIds.length === 0) throw new NotFoundException('issue not found');
+    const rows = await db
+      .select({ projectId: issues.projectId, firstReleaseId: issues.firstReleaseId })
+      .from(issues)
+      .where(and(eq(issues.shortId, shortId), inArray(issues.projectId, projectIds)))
+      .limit(1);
+    if (rows.length === 0) throw new NotFoundException('issue not found');
+    const issue = rows[0];
+
+    const repo = (await db.select().from(repositories).where(eq(repositories.projectId, issue.projectId)).limit(1))[0];
+    if (!repo || !repo.installationId) return { available: false, reason: 'no GitHub repo linked' as const };
+    const token = await this.gh.installationTokenForOrg(user.orgId, repo.installationId);
+    if (!token) return { available: false, reason: 'GitHub auth unavailable' as const };
+
+    let ref = repo.defaultBranch;
+    if (issue.firstReleaseId) {
+      const rel = (await db.select({ sha: releases.commitSha }).from(releases).where(eq(releases.id, issue.firstReleaseId)).limit(1))[0];
+      if (rel?.sha) ref = rel.sha;
+    }
+
+    const path = rawPath
+      .replace(/^webpack-internal:\/\/\/(\(.*?\)\/)?/, '')
+      .replace(/^(https?:\/\/[^/]+\/)?_next\/(app|src)\//, '$2/')
+      .replace(/^webpack:\/+/, '')
+      .replace(/^\.\//, '')
+      .replace(/^\/+/, '');
+    if (!path || path.includes('node_modules/')) return { available: false, reason: 'not a repo source file' as const };
+
+    const content = await this.gh.getFileContent(token, repo.owner, repo.name, path, ref);
+    if (content == null) return { available: false, reason: 'file not found in repo' as const };
+
+    const all = content.split('\n');
+    const start = Math.max(1, line - 8);
+    const end = Math.min(all.length, line + 8);
+    const lines = [];
+    for (let n = start; n <= end; n++) lines.push({ n, text: all[n - 1] ?? '', crash: n === line });
+    const githubUrl = `https://github.com/${repo.owner}/${repo.name}/blob/${ref}/${path}${line ? `#L${line}` : ''}`;
+    return { available: true as const, path, lines, githubUrl };
+  }
+
   /** Resolve the target project among those the caller can access (default = first). */
   private async resolveProject(user: AuthPrincipal, projectId?: string): Promise<string | null> {
     const ids = await accessibleProjectIds(user);
@@ -15,9 +62,10 @@ export class IssuesService {
     return ids[0] ?? null;
   }
 
-  async list(user: AuthPrincipal, q: IssueListQuery & { projectId?: string }): Promise<IssueDto[]> {
+  async list(user: AuthPrincipal, q: IssueListQuery & { projectId?: string }): Promise<IssueListResponse> {
+    const empty = { items: [], total: 0 };
     const projectId = await this.resolveProject(user, q.projectId);
-    if (!projectId) return [];
+    if (!projectId) return empty;
 
     const conds = [eq(issues.projectId, projectId)];
     const status = q.status ?? 'unresolved';
@@ -39,15 +87,18 @@ export class IssuesService {
         .from(environments)
         .where(and(eq(environments.projectId, projectId), eq(environments.name, q.environment)))
         .limit(1);
-      if (envRows.length === 0) return [];
+      if (envRows.length === 0) return empty;
       const evRows = await db
         .selectDistinct({ issueId: events.issueId })
         .from(events)
         .where(and(eq(events.projectId, projectId), eq(events.environmentId, envRows[0].id)));
       const ids = evRows.map((r) => r.issueId);
-      if (ids.length === 0) return [];
+      if (ids.length === 0) return empty;
       conds.push(inArray(issues.id, ids));
     }
+
+    const totalRow = await db.select({ c: sql<number>`count(*)::int` }).from(issues).where(and(...conds));
+    const total = totalRow[0]?.c ?? 0;
 
     const order =
       q.sort === 'firstSeen'
@@ -63,9 +114,44 @@ export class IssuesService {
       .from(issues)
       .where(and(...conds))
       .orderBy(order)
-      .limit(q.limit ?? 50);
+      .limit(q.limit ?? 25)
+      .offset(q.offset ?? 0);
 
-    return rows.map(this.toDto);
+    if (rows.length === 0) return { items: [], total };
+    const issueIds = rows.map((r) => r.id);
+
+    // Sparkline: dense, zero-filled hourly series over the last 24h so the feed
+    // graph renders as a proper line chart (not a single dot for sparse issues).
+    const SPARK_HOURS = 24;
+    const hourMs = 3600_000;
+    const nowHour = Math.floor(Date.now() / hourMs);
+    const since = new Date((nowHour - (SPARK_HOURS - 1)) * hourMs);
+    const countRows = await db
+      .select({ issueId: issueCounts.issueId, bucket: issueCounts.bucket, count: issueCounts.count })
+      .from(issueCounts)
+      .where(and(inArray(issueCounts.issueId, issueIds), gte(issueCounts.bucket, since)))
+      .orderBy(asc(issueCounts.bucket));
+    const sparkOf = new Map<string, number[]>();
+    for (const id of issueIds) sparkOf.set(id, Array(SPARK_HOURS).fill(0));
+    for (const c of countRows) {
+      const slot = SPARK_HOURS - 1 - (nowHour - Math.floor(new Date(c.bucket).getTime() / hourMs));
+      if (slot >= 0 && slot < SPARK_HOURS) sparkOf.get(c.issueId)![slot] += c.count;
+    }
+
+    // Assignee display names for the avatars.
+    const assigneeIds = [...new Set(rows.map((r) => r.assigneeUserId).filter((x): x is string => !!x))];
+    const nameOf = new Map<string, string>();
+    if (assigneeIds.length) {
+      const us = await db.select({ id: users.id, name: users.name }).from(users).where(inArray(users.id, assigneeIds));
+      for (const u of us) nameOf.set(u.id, u.name);
+    }
+
+    const items = rows.map((r) => ({
+      ...this.toDto(r),
+      spark: sparkOf.get(r.id) ?? [],
+      assigneeName: r.assigneeUserId ? (nameOf.get(r.assigneeUserId) ?? null) : null,
+    }));
+    return { items, total };
   }
 
   async detail(user: AuthPrincipal, shortId: string) {
@@ -256,6 +342,22 @@ export class IssuesService {
     await db.update(issues).set(patch).where(eq(issues.id, issueId));
     await db.insert(issueActivity).values({ issueId, userId, action: input.action, payload: input as Record<string, unknown> });
     return { ok: true };
+  }
+
+  /** Permanently delete issues by shortId (GD-149). Events aren't FK-cascaded
+   *  (the table is partitioned) so remove them explicitly; the rest cascades. */
+  async deleteMany(user: AuthPrincipal, shortIds: string[]): Promise<{ deleted: number }> {
+    const projectIds = await accessibleProjectIds(user);
+    if (projectIds.length === 0 || shortIds.length === 0) return { deleted: 0 };
+    const rows = await db
+      .select({ id: issues.id })
+      .from(issues)
+      .where(and(inArray(issues.shortId, shortIds), inArray(issues.projectId, projectIds)));
+    const ids = rows.map((r) => r.id);
+    if (ids.length === 0) return { deleted: 0 };
+    await db.delete(events).where(inArray(events.issueId, ids));
+    await db.delete(issues).where(inArray(issues.id, ids));
+    return { deleted: ids.length };
   }
 
   /** Merge `sourceShortId` into `targetShortId` (FR-GRP-6). */

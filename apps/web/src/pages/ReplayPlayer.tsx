@@ -29,6 +29,7 @@ interface Recording {
  */
 export function ReplayPlayer() {
   const { replayId = '' } = useParams();
+  const seekRef = React.useRef<((ms: number) => void) | undefined>(undefined);
 
   const q = useQuery({ queryKey: ['replay', replayId], queryFn: () => api<Replay | null>(`/replays/${replayId}`) });
   const rec = useQuery({
@@ -68,13 +69,13 @@ export function ReplayPlayer() {
           {rec.isLoading ? (
             <Card className="aspect-video"><Skeleton className="h-full w-full" /></Card>
           ) : canPlay ? (
-            <RrwebCanvas events={events} durationMs={r.durationMs} />
+            <RrwebCanvas events={events} durationMs={r.durationMs} seekRef={seekRef} />
           ) : (
             <PlaceholderCanvas reason={rec.data?.reason} />
           )}
 
-          {/* Console / Network / Errors breakdown (GD-145) */}
-          {canPlay && <ActivityPanel events={events} />}
+          {/* Console / Network / Errors breakdown + click-to-seek (GD-145/156) */}
+          {canPlay && <ActivityPanel events={events} onSeek={(ms) => seekRef.current?.(ms)} />}
         </div>
 
         {/* Right rail: AI summary + meta */}
@@ -189,14 +190,23 @@ function AISummary({ events }: { events: unknown[] }) {
   );
 }
 
-/** Console/Network/Errors breakdown for a replay — Sentry-style tabs (GD-145). */
-function ActivityPanel({ events }: { events: unknown[] }) {
+const fmtActT = (ms: number) => `${Math.floor(ms / 1000)}:${String(Math.floor((ms % 1000) / 10)).padStart(2, '0')}`;
+function statusColor(code?: number): string {
+  if (code == null) return 'text-text-muted';
+  if (code >= 500) return 'text-level-error';
+  if (code >= 400) return 'text-level-warning';
+  if (code >= 300) return 'text-level-info';
+  return 'text-status-resolved';
+}
+const fmtDur = (ms?: number) => (ms == null ? '' : ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${Math.round(ms)}ms`);
+
+/** Console/Network/Errors breakdown — Sentry-style tabs, click-to-seek (GD-145/156). */
+function ActivityPanel({ events, onSeek }: { events: unknown[]; onSeek?: (ms: number) => void }) {
   const acts = React.useMemo(() => extractActivity(events), [events]);
   const [tab, setTab] = React.useState<'all' | ActKind>('all');
   if (acts.length === 0) return null;
   const shown = tab === 'all' ? acts : acts.filter((a) => a.kind === tab);
   const count = (k: 'all' | ActKind) => (k === 'all' ? acts.length : acts.filter((a) => a.kind === k).length);
-  const fmtT = (ms: number) => `${Math.floor(ms / 1000)}:${String(Math.floor((ms % 1000) / 10)).padStart(2, '0')}`;
   return (
     <Card className="mt-4 overflow-hidden p-0">
       <div className="flex gap-4 border-b border-border px-4 pt-2">
@@ -213,18 +223,71 @@ function ActivityPanel({ events }: { events: unknown[] }) {
           </button>
         ))}
       </div>
-      <div className="max-h-80 overflow-y-auto">
+      <div className="max-h-96 overflow-y-auto">
         {shown.length === 0 && <div className="px-4 py-3 text-small text-text-faint">Nothing here.</div>}
-        {shown.map((a, i) => (
-          <div key={i} className="flex items-start gap-3 border-b border-border px-4 py-1.5 text-small last:border-0">
-            <span className="mt-1 h-2 w-2 shrink-0 rounded-full" style={{ background: ACT_COLOR[a.kind] }} />
-            <span className="w-10 shrink-0 font-mono text-caption text-text-faint">{fmtT(a.t)}</span>
-            <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 font-mono text-caption text-text-muted">{a.category}</span>
-            <span className="min-w-0 truncate font-mono text-mono text-text">{a.message}</span>
-          </div>
-        ))}
+        {tab === 'network' ? (
+          <NetworkWaterfall items={shown} onSeek={onSeek} />
+        ) : (
+          shown.map((a, i) => (
+            <button
+              key={i}
+              onClick={() => onSeek?.(a.t)}
+              title="Jump to this moment in the replay"
+              className="flex w-full items-start gap-3 border-b border-border px-4 py-1.5 text-left text-small last:border-0 hover:bg-surface-2"
+            >
+              <span className="mt-1 h-2 w-2 shrink-0 rounded-full" style={{ background: ACT_COLOR[a.kind] }} />
+              <span className="w-10 shrink-0 font-mono text-caption text-accent">{fmtActT(a.t)}</span>
+              {a.method && <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 font-mono text-caption text-text-muted">{a.method}</span>}
+              <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 font-mono text-caption text-text-muted">{a.category}</span>
+              <span className="min-w-0 flex-1 truncate font-mono text-mono text-text">{a.message}</span>
+              {a.statusCode != null && <span className={`shrink-0 font-mono text-caption ${statusColor(a.statusCode)}`}>{a.statusCode}</span>}
+              {a.durationMs != null && <span className="shrink-0 font-mono text-caption text-text-faint">{fmtDur(a.durationMs)}</span>}
+            </button>
+          ))
+        )}
       </div>
     </Card>
+  );
+}
+
+/** Network requests as a timing waterfall (GD-156) — bar positioned/scaled by time. */
+function NetworkWaterfall({ items, onSeek }: { items: Activity[]; onSeek?: (ms: number) => void }) {
+  if (items.length === 0) return <div className="px-4 py-3 text-small text-text-faint">No network activity.</div>;
+  const minT = Math.min(...items.map((a) => a.t));
+  const maxEnd = Math.max(...items.map((a) => a.t + (a.durationMs ?? 0)));
+  const span = Math.max(1, maxEnd - minT);
+  return (
+    <div>
+      <div className="grid grid-cols-[minmax(0,1fr)_1fr] items-center gap-3 border-b border-border bg-surface px-4 py-1.5 text-caption uppercase tracking-wide text-text-faint">
+        <span>Request</span>
+        <span>Timeline ({fmtDur(span)})</span>
+      </div>
+      {items.map((a, i) => {
+        const left = ((a.t - minT) / span) * 100;
+        const width = Math.max(1.5, ((a.durationMs ?? 0) / span) * 100);
+        return (
+          <button
+            key={i}
+            onClick={() => onSeek?.(a.t)}
+            title="Jump to this request in the replay"
+            className="grid w-full grid-cols-[minmax(0,1fr)_1fr] items-center gap-3 border-b border-border px-4 py-2 text-left text-small last:border-0 hover:bg-surface-2"
+          >
+            <div className="flex min-w-0 items-center gap-2">
+              {a.method && <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 font-mono text-caption text-text-muted">{a.method}</span>}
+              <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 font-mono text-caption text-accent">{a.category}</span>
+              <span className="min-w-0 truncate font-mono text-mono text-text-muted">{a.message}</span>
+            </div>
+            <div className="relative h-5">
+              <div className="absolute top-1/2 h-2.5 -translate-y-1/2 rounded-full bg-status-resolved" style={{ left: `${left}%`, width: `${width}%` }} />
+              <span className="absolute top-1/2 -translate-y-1/2 whitespace-nowrap font-mono text-caption text-text-faint" style={{ left: `calc(${Math.min(left + width, 82)}% + 6px)` }}>
+                {a.statusCode != null && <span className={statusColor(a.statusCode)}>{a.statusCode} </span>}
+                {fmtDur(a.durationMs)}
+              </span>
+            </div>
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -280,6 +343,9 @@ interface Activity {
   category: string;
   message: string;
   level?: string;
+  durationMs?: number; // network spans
+  statusCode?: number; // network requests
+  method?: string; // network requests
 }
 
 /** Extract Console / Network / Navigation / Clicks / Errors from the replay's breadcrumb events (GD-145). */
@@ -302,17 +368,37 @@ function extractActivity(rawEvents: unknown[]): Activity[] {
       else if (/navigation|route|pageload/.test(cat)) kind = 'navigation';
       else if (level === 'error' || level === 'fatal' || /error|exception/.test(cat)) kind = 'error';
       else if (/click|ui\.|input|press/.test(cat)) kind = 'click';
-      const msg = String(p.message ?? (p.data ? JSON.stringify(p.data) : ''));
-      out.push({ t, kind, category: cat || kind, message: msg, level });
+      const data = (p.data ?? {}) as Record<string, unknown>;
+      const method = typeof data.method === 'string' ? data.method : undefined;
+      const statusCode = typeof data.status_code === 'number' ? data.status_code : undefined;
+      const url = typeof data.url === 'string' ? data.url : undefined;
+      const msg = String(p.message ?? url ?? (p.data ? JSON.stringify(p.data) : ''));
+      out.push({ t, kind, category: cat || kind, message: msg, level, method, statusCode });
     } else if (d.tag === 'performanceSpan') {
       const p = (d.payload ?? {}) as Record<string, unknown>;
-      out.push({ t, kind: 'network', category: String(p.op ?? 'resource'), message: String(p.description ?? '') });
+      const startS = Number(p.startTimestamp);
+      const endS = Number(p.endTimestamp);
+      const durationMs = Number.isFinite(startS) && Number.isFinite(endS) ? Math.max(0, (endS - startS) * 1000) : undefined;
+      const op = String(p.op ?? 'resource');
+      const data = (p.data ?? {}) as Record<string, unknown>;
+      const statusCode = typeof data['http.response.status_code'] === 'number' ? (data['http.response.status_code'] as number) : undefined;
+      // Only true resource/http spans belong on the Network waterfall.
+      const kind: ActKind = /resource|http|fetch|xhr/.test(op) ? 'network' : 'other';
+      out.push({ t, kind, category: op, message: String(p.description ?? ''), durationMs, statusCode });
     }
   }
   return out.sort((a, b) => a.t - b.t);
 }
 
-function RrwebCanvas({ events: rawEvents, durationMs }: { events: unknown[]; durationMs: number | null }) {
+function RrwebCanvas({
+  events: rawEvents,
+  durationMs,
+  seekRef,
+}: {
+  events: unknown[];
+  durationMs: number | null;
+  seekRef?: React.MutableRefObject<((ms: number) => void) | undefined>;
+}) {
   const events = React.useMemo(() => normalizeEvents(rawEvents), [rawEvents]);
   const stageRef = React.useRef<HTMLDivElement | null>(null);
   const shellRef = React.useRef<HTMLDivElement | null>(null);
@@ -512,6 +598,27 @@ function RrwebCanvas({ events: rawEvents, durationMs }: { events: unknown[]; dur
     setPlaying(true);
     startTick();
   };
+
+  // Seek to an absolute ms offset — used by the Activity panel's click-to-seek (GD-156).
+  const seekMs = React.useCallback(
+    (ms: number) => {
+      const r = replayer.current;
+      if (!r || total <= 0) return;
+      const at = Math.min(total, Math.max(0, ms));
+      r.play(at);
+      setCur(at);
+      setPlaying(true);
+      startTick();
+    },
+    [total, startTick],
+  );
+  React.useEffect(() => {
+    if (!seekRef) return;
+    seekRef.current = seekMs;
+    return () => {
+      seekRef.current = undefined;
+    };
+  }, [seekRef, seekMs]);
 
   const onBarPointerDown = (e: React.PointerEvent) => {
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);

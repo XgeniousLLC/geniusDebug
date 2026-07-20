@@ -10,14 +10,22 @@ import { decrypt } from './crypto';
 interface SesConfig {
   region: string;
   from: string;
+  fromName?: string;
   accessKeyId: string;
   secretAccessKey: string;
 }
 
+/** Format the SES Source with a professional display name ("Name <addr>"). */
+function formatSource(cfg: SesConfig): string {
+  if (cfg.from.includes('<')) return cfg.from;
+  const name = (cfg.fromName ?? 'geniusDebug').replace(/["<>]/g, '').trim();
+  return name ? `"${name}" <${cfg.from}>` : cfg.from;
+}
+
 function fromEnv(): SesConfig | null {
-  const { SES_ACCESS_KEY_ID, SES_SECRET_ACCESS_KEY, SES_FROM, SES_REGION } = process.env;
+  const { SES_ACCESS_KEY_ID, SES_SECRET_ACCESS_KEY, SES_FROM, SES_FROM_NAME, SES_REGION } = process.env;
   if (SES_ACCESS_KEY_ID && SES_SECRET_ACCESS_KEY && SES_FROM) {
-    return { region: SES_REGION ?? 'us-east-1', from: SES_FROM, accessKeyId: SES_ACCESS_KEY_ID, secretAccessKey: SES_SECRET_ACCESS_KEY };
+    return { region: SES_REGION ?? 'us-east-1', from: SES_FROM, fromName: SES_FROM_NAME, accessKeyId: SES_ACCESS_KEY_ID, secretAccessKey: SES_SECRET_ACCESS_KEY };
   }
   return null;
 }
@@ -29,9 +37,9 @@ async function resolveConfig(orgId?: string): Promise<SesConfig | null> {
     const row = await getActiveIntegration('ses', orgId);
     if (row?.secretEnc) {
       const sec = JSON.parse(decrypt(row.secretEnc)) as { accessKeyId?: string; secretAccessKey?: string };
-      const c = row.config as { region?: string; from?: string };
+      const c = row.config as { region?: string; from?: string; fromName?: string };
       if (c.from && sec.accessKeyId && sec.secretAccessKey) {
-        return { region: c.region ?? 'us-east-1', from: c.from, accessKeyId: sec.accessKeyId, secretAccessKey: sec.secretAccessKey };
+        return { region: c.region ?? 'us-east-1', from: c.from, fromName: c.fromName, accessKeyId: sec.accessKeyId, secretAccessKey: sec.secretAccessKey };
       }
     }
   } catch {
@@ -64,7 +72,7 @@ export async function sendEmail(
     });
     await client.send(
       new SendEmailCommand({
-        Source: cfg.from,
+        Source: formatSource(cfg),
         Destination: { ToAddresses: to },
         Message: { Subject: { Data: subject }, Body: { Html: { Data: html } } },
       }),
