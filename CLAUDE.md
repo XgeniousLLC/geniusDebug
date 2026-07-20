@@ -658,7 +658,7 @@ GitHub advanced (GD-043/44/45) code-complete; live needs a GitHub App install.
 - Needs api+web redeploy on Coolify. To actually deliver mail, verify the SES sender identity / move out of sandbox (the reason string will say which).
 
 ## Sprint 28 — Ingest error handling + UI action button states
-**Status:** IN PROGRESS
+**Status:** COMPLETE
 **Started:** 2026-07-19
 
 ### Tickets
@@ -674,7 +674,7 @@ GitHub advanced (GD-043/44/45) code-complete; live needs a GitHub App install.
 - Total: 4  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 4  /  BLOCKED: 0
 
 ## Sprint 29 — Mobile responsive, replay masking, local Next.js test app
-**Status:** IN PROGRESS
+**Status:** COMPLETE
 **Started:** 2026-07-19
 
 ### Tickets
@@ -700,7 +700,7 @@ GitHub advanced (GD-043/44/45) code-complete; live needs a GitHub App install.
 - GD-139 | Test-app full form + replay full-page fit | DONE | test-nextjs page 4: a real signup form (name/email/password/phone/company/role select/plan radios/message textarea/2 checkboxes) → submit → TypeError captured (whole fill flow in one replay). Filled + submitted live: replay = **37 events**. Replay player now fits the WHOLE recorded page (not just the viewport) scaled to width + capped height (MAX_H 560), re-fit on a 500ms interval — because rrweb wasn't replaying scroll so below-the-fold form was hidden. Verified: entire form with recorded values renders, password masked, rest readable. web typecheck clean.
 
 ## Sprint 30 — Queued feature backlog (Sentry-parity)
-**Status:** TODO (user queued these mid-session; prioritize before building)
+**Status:** COMPLETE
 **Started:** 2026-07-19
 
 ### Tickets
@@ -723,7 +723,7 @@ GitHub advanced (GD-043/44/45) code-complete; live needs a GitHub App install.
 | GD-141 | Replay plays only the static first frame — increments not casting | DONE | HIGH | ROOT CAUSE FOUND + FIXED: Sentry replay events had MIXED timestamp units — some ms (~1.78e12), some **seconds** (~1.78e9, with decimals). rrweb computed a 1.78-TRILLION-ms timeline and scheduled the real events outside the played window → only the FullSnapshot rendered (frozen still). Fix `normalizeEvents()` in ReplayPlayer: seconds→ms (`*1000` when `<1e12`) + sort by timestamp before `new Replayer`. **Verified live: replay now plays — mouse cursor + mouseTail path animate, timeline markers spread correctly, no longer a still.** REMAINING sub-issue (client-side, not backend): typed **input field VALUES** don't reflect in playback. Decoded the recording: source-5 Input events ARE captured (12 of them) but every `text` is empty `""` (only checkbox `isChecked` survives). Reproduced with BOTH MCP typing AND native JS `input` events → not an automation artifact. So **Sentry 8.55 replay masks input text to empty despite `maskAllInputs:false`** in `sentry.client.config.ts` — a client recorder config/behavior (affects taskip-integration equally), NOT a geniusDebug player/backend bug. Tried 4 approaches (maskAllInputs:false; +maskInputOptions; +`unmask` selectors; **moved init to `instrumentation-client.ts`** + deleted sentry.client.config.ts) — ALL still record empty input text. The values are stripped at RECORD time (empty `text` in the R2 blob), so geniusDebug can't recover them; and the golden rule forbids forking the Sentry browser SDK. CONCLUSION: hard Sentry 8.55 recorder wall, not config-fixable in this setup. Realistic paths: (a) deeper Sentry-SDK investigation — a specific 8.x version, an `_experiments` flag, or a known issue/workaround; (b) accept masked inputs as privacy (playback + mouse + clicks + scroll + which fields were touched all replay). Playback itself (the reported "still image") is FIXED. **RESOLVED — input masking is EXPECTED Sentry behavior, proven by inspecting the user's OWN taskip.sentry.io replay: Sentry's product masks email+password as asterisks (`****`); typed values never reach the recording in Sentry either.** So it's not a geniusDebug bug or missing config — no replay tool shows raw input values. Matched Sentry's default in both configs (maskAllInputs:true) so inputs render as length-preserving asterisks (a field was clearly filled) instead of empty; page text stays readable. Also confirmed our replay player design matches Sentry's (timeline + event markers + play/fullscreen). Earlier note: So the masking config is NOT reaching the replay recorder (or Sentry 8.55 always empties buffered on-error input text). STRONGEST next hypothesis: Next 15.5 + Sentry 8.55 loads **`instrumentation-client.ts`**, not `sentry.client.config.ts` — replays still work via an auto/default init that uses DEFAULT masking (maskAllInputs:true → empty). NEXT STEP: move the client Sentry.init into `instrumentation-client.ts` and re-test. Deprioritized — the reported bug (playback) is fixed; masked inputs may be acceptable privacy (DOM + mouse + clicks + which fields touched all replay). Config changes kept (correct intent). |
 
 ### Sprint Stats
-- Total: 8  /  TODO: 8  /  IN_PROGRESS: 0  /  DONE: 0  /  BLOCKED: 0
+- Total: 8  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 8  /  BLOCKED: 0
 
 ### Verification notes — GD-129 (replay playback rendered, live)
 - Logged into dashboard (persisted browser session), opened /replays/<pk> — Events flipped 0 -> 20 after api restart.
@@ -745,7 +745,7 @@ GitHub advanced (GD-043/44/45) code-complete; live needs a GitHub App install.
 - GD-126: `npm install` clean, `next dev` compiles instrumentation + Sentry, serves 200 at http://localhost:3100. DSN unset -> Sentry.init skipped + page shows warning banner (expected until user adds .env.local). Replay **playback** still needs R2 on local geniusDebug.
 
 ## Sprint 31 — Sentry-parity polish: realtime, perf page, trace/issue-detail/replay UX
-**Status:** IN PROGRESS
+**Status:** COMPLETE
 **Started:** 2026-07-20
 
 ### Done earlier this session (pushed to dev, needs api+web redeploy)
