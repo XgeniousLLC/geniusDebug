@@ -4,6 +4,7 @@ import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import type { IssueDto, IssueListResponse } from '@geniusdebug/shared';
 import { api, errMsg } from '../lib/api';
 import { useUi, RANGE_LABELS, type IssueRange } from '../store/ui';
+import { useRealtime } from '../lib/useRealtime';
 import { toast, ACTION_PAST } from '../store/toast';
 import { timeAgo, compact } from '../lib/format';
 import { LevelPill, Skeleton, EmptyState, ErrorState } from '../components/ui';
@@ -28,6 +29,7 @@ export function Issues() {
   const range = useUi((s) => s.range);
   const setRange = useUi((s) => s.setRange);
   const currentProjectId = useUi((s) => s.currentProjectId);
+  useRealtime(currentProjectId);
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const [status, setStatus] = React.useState<StatusFilter>('unresolved');
@@ -59,7 +61,7 @@ export function Issues() {
       return api<IssueListResponse>(`/issues?${p.toString()}`);
     },
     placeholderData: (prev) => prev, // keep the current page visible while the next loads
-    refetchInterval: 5000, // subtle real-time feel (brief §14)
+    refetchInterval: 30000, // fallback poll; realtime updates arrive via SSE (GD-147)
   });
 
   const act = useMutation({

@@ -1,4 +1,5 @@
-const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:4002';
+export const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:4002';
+const BASE = API_BASE;
 
 const TOKEN_KEY = 'gd_token';
 

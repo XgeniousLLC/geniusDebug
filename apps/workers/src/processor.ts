@@ -8,6 +8,7 @@ import { buildShortId } from './short-id';
 import { classifyCategory } from './category';
 import { evaluateAlerts } from './alerts';
 import { countDrop } from './metrics';
+import { publishRealtime } from './realtime';
 
 /**
  * Route each envelope item by type (FR-WRK-5). Unknown types ignored safely.
@@ -244,6 +245,7 @@ async function upsertIssue(a: UpsertArgs): Promise<{ issueId: string; regressed:
         isRegressed: regressed ? true : undefined,
       })
       .where(eq(issues.id, found[0].id));
+    publishRealtime({ type: 'issue', projectId: a.projectId });
     return { issueId: found[0].id, regressed };
   }
 
@@ -285,6 +287,7 @@ async function upsertIssue(a: UpsertArgs): Promise<{ issueId: string; regressed:
 
   if (inserted[0]) {
     await evaluateAlerts({ projectId: a.projectId, issueId: inserted[0].id, title: a.title, isNew: true, regressed: false });
+    publishRealtime({ type: 'issue', projectId: a.projectId });
     return { issueId: inserted[0].id, regressed: false };
   }
 
@@ -343,6 +346,7 @@ async function processReplay(
       size: recBlob?.size ?? 0,
     })
     .onConflictDoNothing({ target: [replays.replayId, replays.segmentId] });
+  publishRealtime({ type: 'replay', projectId });
 }
 
 async function processTransaction(projectId: string, payload: SentryTransactionPayload): Promise<void> {

@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import { Card, EmptyState, Skeleton, LevelPill } from '../components/ui';
 import { timeAgo } from '../lib/format';
 import { useUi } from '../store/ui';
+import { useRealtime } from '../lib/useRealtime';
 
 interface Replay {
   id: string;
@@ -38,12 +39,13 @@ const userLabel = (u: Record<string, unknown> | null) => {
 
 export function Replays() {
   const currentProjectId = useUi((s) => s.currentProjectId);
+  useRealtime(currentProjectId);
   const projects = useQuery({ queryKey: ['projects'], queryFn: () => api<ProjectSummary[]>('/projects') });
   const projectName = projects.data?.find((p) => p.id === currentProjectId)?.name;
   const q = useQuery({
     queryKey: ['replays', currentProjectId],
     queryFn: () => api<Replay[]>(`/replays${currentProjectId ? `?projectId=${currentProjectId}` : ''}`),
-    refetchInterval: 5000, // new replays surface automatically (GD-147)
+    refetchInterval: 30000, // fallback poll; realtime updates arrive via SSE (GD-147)
   });
 
   return (
