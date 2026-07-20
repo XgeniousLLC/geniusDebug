@@ -75,14 +75,15 @@ Sentry.init({
             <span className="text-text-muted">Wire the SDK below, then mark this project complete.</span>
           )}
         </div>
-        <Button
-          size="sm"
-          variant={project.setupCompletedAt ? 'secondary' : 'primary'}
-          disabled={setup.isPending}
-          onClick={() => setup.mutate(!project.setupCompletedAt)}
-        >
-          {setup.isPending ? '…' : project.setupCompletedAt ? 'Mark as incomplete' : 'Mark as complete'}
-        </Button>
+        {project.setupCompletedAt ? (
+          <span className="rounded-full border border-status-resolved/40 px-2.5 py-1 text-caption text-status-resolved">
+            Completed
+          </span>
+        ) : (
+          <Button size="sm" variant="primary" disabled={setup.isPending} onClick={() => setup.mutate(true)}>
+            {setup.isPending ? '…' : 'Mark as complete'}
+          </Button>
+        )}
       </div>
 
       {/* Steps */}

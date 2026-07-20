@@ -1,8 +1,11 @@
+import * as React from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { Card, EmptyState, Skeleton, ErrorState } from '../components/ui';
 import { timeAgo } from '../lib/format';
+
+const PAGE_SIZE = 20;
 
 interface Release {
   id: string;
@@ -20,7 +23,14 @@ interface Release {
  * so those are intentionally omitted rather than shown as fake numbers.
  */
 export function Releases() {
-  const q = useQuery({ queryKey: ['releases'], queryFn: () => api<Release[]>('/releases') });
+  const [page, setPage] = React.useState(0);
+  const q = useQuery({
+    queryKey: ['releases', page],
+    queryFn: () => api<{ items: Release[]; total: number }>(`/releases?limit=${PAGE_SIZE}&offset=${page * PAGE_SIZE}`),
+    placeholderData: (prev) => prev,
+  });
+  const total = q.data?.total ?? 0;
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-5 sm:px-6">
@@ -33,7 +43,7 @@ export function Releases() {
         <Skeleton className="h-40 w-full" />
       ) : q.isError ? (
         <ErrorState message="Couldn't load releases." />
-      ) : (q.data?.length ?? 0) === 0 ? (
+      ) : total === 0 ? (
         <EmptyState title="No releases yet" hint="Releases are registered by the source-map uploader or stamped on the first event carrying a `release`." />
       ) : (
         <Card className="overflow-hidden">
@@ -43,7 +53,7 @@ export function Releases() {
             <span className="text-right">New issues</span>
             <span className="text-right">Age</span>
           </div>
-          {q.data!.map((r) => (
+          {(q.data?.items ?? []).map((r) => (
             <div
               key={r.id}
               className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-4 border-b border-border px-4 py-3 last:border-0 hover:bg-surface-2"
@@ -66,6 +76,30 @@ export function Releases() {
             </div>
           ))}
         </Card>
+      )}
+
+      {total > 0 && (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-caption text-text-faint">
+          <span>
+            Showing {page * PAGE_SIZE + 1}–{Math.min(total, page * PAGE_SIZE + PAGE_SIZE)} of {total} releases
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              disabled={page === 0}
+              className="rounded-md border border-border px-2.5 py-1 text-small text-text-muted hover:text-text disabled:opacity-40"
+            >
+              ‹ Prev
+            </button>
+            <button
+              onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+              disabled={page >= pageCount - 1}
+              className="rounded-md border border-border px-2.5 py-1 text-small text-text-muted hover:text-text disabled:opacity-40"
+            >
+              Next ›
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -25,7 +25,14 @@ export function Alerts() {
   const projects = useQuery({ queryKey: ['projects'], queryFn: () => api<ProjectSummary[]>('/projects') });
   const projectName = projects.data?.find((p) => p.id === currentProjectId)?.name;
   const rules = useQuery({ queryKey: ['alerts', currentProjectId], queryFn: () => api<Rule[]>(`/alerts${qs}`) });
-  const history = useQuery({ queryKey: ['alert-history', currentProjectId], queryFn: () => api<Notif[]>(`/alerts/history${qs}`) });
+  const HIST_PAGE = 20;
+  const [histLimit, setHistLimit] = React.useState(HIST_PAGE);
+  const history = useQuery({
+    queryKey: ['alert-history', currentProjectId, histLimit],
+    queryFn: () => api<Notif[]>(`/alerts/history${qs}${qs ? '&' : '?'}limit=${histLimit}`),
+    placeholderData: (prev) => prev,
+  });
+  React.useEffect(() => setHistLimit(HIST_PAGE), [currentProjectId]);
 
   const inval = () => qc.invalidateQueries({ queryKey: ['alerts'] });
   const patch = useMutation({ mutationFn: (v: { id: string; body: object }) => api(`/alerts/${v.id}`, { method: 'PATCH', body: JSON.stringify(v.body) }), onSuccess: inval });
@@ -94,6 +101,17 @@ export function Alerts() {
             </div>
           ))}
         </Card>
+      )}
+      {(history.data?.length ?? 0) >= histLimit && (
+        <div className="mt-2 flex justify-center">
+          <button
+            onClick={() => setHistLimit((n) => n + HIST_PAGE)}
+            disabled={history.isFetching}
+            className="rounded-md border border-border px-3 py-1.5 text-small text-text-muted hover:text-text disabled:opacity-40"
+          >
+            {history.isFetching ? 'Loading…' : 'Load more'}
+          </button>
+        </div>
       )}
     </div>
   );
