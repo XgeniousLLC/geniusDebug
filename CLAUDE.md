@@ -767,7 +767,7 @@ GitHub advanced (GD-043/44/45) code-complete; live needs a GitHub App install.
 | GD-153 | Issue Detail page — full redesign to match mock (Image #5/#6) | DONE | HIGH | Rebuild the Issue Detail page UI to match the provided design exactly (verify by screenshot when done). Includes layout, highlights, sections ordering. Pairs with GD-154 (full width) + GD-155 (stack trace). |
 | GD-154 | Full-width layout (remove max-w constraint) (Image #5) | DONE | MED | Trace + Issue Detail (and likely all content pages) are constrained to `max-w-6xl`; the design wants full width. Remove/relax the container max-width so pages use the full viewport. |
 | GD-155 | Issue Detail stack-trace redesign (Image #5/#6) | DONE | HIGH | Redesign the stack-trace component (`StackTrace.tsx`) to match the screenshots — frame rows, in-app emphasis, source context, monospace, expand/collapse. |
-| GD-156 | Replay detail: Network waterfall + Activity + click-to-seek (Image #7) | TODO | MED | In the replay detail page: render the **Network** tab as a waterfall (per-request timing bars), improve the **Activity** tab layout, and make clicking a timestamped row **seek the rrweb player** to that time in the video. |
+| GD-156 | Replay detail: Network waterfall + Activity + click-to-seek (Image #7) | DONE | MED | In the replay detail page: render the **Network** tab as a waterfall (per-request timing bars), improve the **Activity** tab layout, and make clicking a timestamped row **seek the rrweb player** to that time in the video. |
 
 ### Sprint Stats
 - Total: 10  /  TODO: 10  /  IN_PROGRESS: 0  /  DONE: 0  /  BLOCKED: 0
