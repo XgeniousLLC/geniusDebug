@@ -68,17 +68,22 @@ export class IssuesService {
     if (rows.length === 0) return [];
     const issueIds = rows.map((r) => r.id);
 
-    // Sparkline data: recent per-bucket counts for each listed issue.
+    // Sparkline: dense, zero-filled hourly series over the last 24h so the feed
+    // graph renders as a proper line chart (not a single dot for sparse issues).
+    const SPARK_HOURS = 24;
+    const hourMs = 3600_000;
+    const nowHour = Math.floor(Date.now() / hourMs);
+    const since = new Date((nowHour - (SPARK_HOURS - 1)) * hourMs);
     const countRows = await db
       .select({ issueId: issueCounts.issueId, bucket: issueCounts.bucket, count: issueCounts.count })
       .from(issueCounts)
-      .where(inArray(issueCounts.issueId, issueIds))
+      .where(and(inArray(issueCounts.issueId, issueIds), gte(issueCounts.bucket, since)))
       .orderBy(asc(issueCounts.bucket));
     const sparkOf = new Map<string, number[]>();
+    for (const id of issueIds) sparkOf.set(id, Array(SPARK_HOURS).fill(0));
     for (const c of countRows) {
-      const arr = sparkOf.get(c.issueId) ?? [];
-      arr.push(c.count);
-      sparkOf.set(c.issueId, arr);
+      const slot = SPARK_HOURS - 1 - (nowHour - Math.floor(new Date(c.bucket).getTime() / hourMs));
+      if (slot >= 0 && slot < SPARK_HOURS) sparkOf.get(c.issueId)![slot] += c.count;
     }
 
     // Assignee display names for the avatars.
@@ -91,7 +96,7 @@ export class IssuesService {
 
     return rows.map((r) => ({
       ...this.toDto(r),
-      spark: (sparkOf.get(r.id) ?? []).slice(-14),
+      spark: sparkOf.get(r.id) ?? [],
       assigneeName: r.assigneeUserId ? (nameOf.get(r.assigneeUserId) ?? null) : null,
     }));
   }

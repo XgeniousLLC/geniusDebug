@@ -423,24 +423,27 @@ export function Issues() {
 
 /* ------------------------------- pieces ---------------------------------- */
 
-/** Sentry-style event-count mini bar chart, colored by issue level. Sparse data
- *  (1–2 buckets) still renders as bars, right-aligned into fixed columns. */
+/** Event-count mini area chart over the last 24h, colored by issue level. */
 function Sparkline({ data, color }: { data: number[]; color: string }) {
-  const BUCKETS = 14;
-  const vals = (data ?? []).slice(-BUCKETS);
-  if (vals.length === 0) return <div className="h-8 w-full" aria-hidden />;
-  const padded = [...Array(Math.max(0, BUCKETS - vals.length)).fill(0), ...vals];
-  const max = Math.max(1, ...padded);
+  const w = 120;
+  const h = 32;
+  if (!data || data.length < 2) return <div className="h-8 w-full" aria-hidden />;
+  const max = Math.max(1, ...data);
+  const pts = data.map((v, i) => [(i / (data.length - 1)) * w, h - 2 - (v / max) * (h - 4)] as const);
+  const line = pts.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
+  const area = `0,${h} ${line} ${w},${h}`;
+  const gid = `spk-${color.replace('#', '')}`;
   return (
-    <div className="flex h-8 w-full items-end gap-px" aria-hidden>
-      {padded.map((v, i) => (
-        <div
-          key={i}
-          className="flex-1 rounded-[1px]"
-          style={{ height: v > 0 ? `${Math.max(14, (v / max) * 100)}%` : '0%', background: v > 0 ? color : 'transparent' }}
-        />
-      ))}
-    </div>
+    <svg viewBox={`0 0 ${w} ${h}`} className="h-8 w-full" preserveAspectRatio="none" aria-hidden>
+      <defs>
+        <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.35" />
+          <stop offset="100%" stopColor={color} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <polygon points={area} fill={`url(#${gid})`} />
+      <polyline points={line} fill="none" stroke={color} strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+    </svg>
   );
 }
 

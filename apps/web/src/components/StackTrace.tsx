@@ -86,18 +86,40 @@ function Frame({ f, defaultOpen, last }: { f: NormalizedFrame; defaultOpen: bool
           )}
         </div>
       </button>
-      {open && hasContext && (
-        <pre className="overflow-x-auto border-t border-border bg-bg px-0 py-1 font-mono text-mono leading-6">
-          {(f.preContext ?? []).map((l, i) => (
-            <CodeLine key={`pre-${i}`} n={f.lineno != null ? f.lineno - (f.preContext!.length - i) : null} text={l} />
-          ))}
-          {f.contextLine != null && <CodeLine n={f.lineno ?? null} text={f.contextLine} crash />}
-          {(f.postContext ?? []).map((l, i) => (
-            <CodeLine key={`post-${i}`} n={f.lineno != null ? f.lineno + i + 1 : null} text={l} />
-          ))}
-        </pre>
-      )}
+      {open &&
+        (hasContext ? (
+          <pre className="overflow-x-auto border-t border-border bg-bg px-0 py-1 font-mono text-mono leading-6">
+            {(f.preContext ?? []).map((l, i) => (
+              <CodeLine key={`pre-${i}`} n={f.lineno != null ? f.lineno - (f.preContext!.length - i) : null} text={l} />
+            ))}
+            {f.contextLine != null && <CodeLine n={f.lineno ?? null} text={f.contextLine} crash />}
+            {(f.postContext ?? []).map((l, i) => (
+              <CodeLine key={`post-${i}`} n={f.lineno != null ? f.lineno + i + 1 : null} text={l} />
+            ))}
+          </pre>
+        ) : (
+          // No source context (minified / system frame) — still show the frame details.
+          <div className="border-t border-border bg-bg px-3 py-2 font-mono text-mono">
+            <div className="flex flex-wrap gap-x-6 gap-y-1">
+              {f.function && <Detail k="function" v={f.function} />}
+              <Detail k="file" v={f.absPath ?? f.filename ?? '<anonymous>'} />
+              {f.lineno != null && <Detail k="line" v={`${f.lineno}${f.colno != null ? `:${f.colno}` : ''}`} />}
+            </div>
+            <div className="mt-1.5 text-caption text-text-faint">
+              {f.inApp ? 'No source context — upload source maps to see the code here.' : 'System / minified frame — no source available.'}
+            </div>
+          </div>
+        ))}
     </div>
+  );
+}
+
+function Detail({ k, v }: { k: string; v: string }) {
+  return (
+    <span className="flex min-w-0 items-baseline gap-1.5">
+      <span className="text-text-faint">{k}</span>
+      <span className="truncate text-text-muted">{v}</span>
+    </span>
   );
 }
 
