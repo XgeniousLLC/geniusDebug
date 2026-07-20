@@ -33,22 +33,47 @@ export class MiscController {
   }
 
   @Get('replays')
-  async replaysList(@Req() req: Request & { user?: AuthPrincipal }) {
-    const pids = await accessibleProjectIds(req.user!);
+  async replaysList(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Query('projectId') projectId?: string,
+  ) {
+    const access = await accessibleProjectIds(req.user!);
+    const pids = projectId && access.includes(projectId) ? [projectId] : access;
     if (pids.length === 0) return [];
+    // Join the related issue (shortId/title/level) + project name so each replay
+    // card can show what error it belongs to and where.
     const rows = await db
-      .select()
+      .select({
+        id: replays.id,
+        projectId: replays.projectId,
+        issueId: replays.issueId,
+        replayId: replays.replayId,
+        segmentId: replays.segmentId,
+        traceId: replays.traceId,
+        user: replays.user,
+        startedAt: replays.startedAt,
+        durationMs: replays.durationMs,
+        size: replays.size,
+        createdAt: replays.createdAt,
+        projectName: projects.name,
+        issueShortId: issues.shortId,
+        issueTitle: issues.title,
+        issueLevel: issues.level,
+        issueCulprit: issues.culprit,
+      })
       .from(replays)
+      .leftJoin(issues, eq(issues.id, replays.issueId))
+      .leftJoin(projects, eq(projects.id, replays.projectId))
       .where(inArray(replays.projectId, pids))
       .orderBy(desc(replays.createdAt))
       .limit(200);
     // One card per session: collapse segments of a replayId to their earliest row
     // (segment 0) and sum sizes/segments. Legacy rows (no replayId) pass through.
     const seen = new Set<string>();
-    const out: (typeof rows)[number][] = [];
+    const out: ((typeof rows)[number] & { segmentCount: number })[] = [];
     for (const r of rows) {
       if (!r.replayId) {
-        out.push(r);
+        out.push({ ...r, segmentCount: 1 });
         continue;
       }
       if (seen.has(r.replayId)) continue;
@@ -215,15 +240,23 @@ export class MiscController {
   }
 
   @Get('alerts')
-  async alertsList(@Req() req: Request & { user?: AuthPrincipal }) {
-    const pids = await accessibleProjectIds(req.user!);
+  async alertsList(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Query('projectId') projectId?: string,
+  ) {
+    const access = await accessibleProjectIds(req.user!);
+    const pids = projectId && access.includes(projectId) ? [projectId] : access;
     if (pids.length === 0) return [];
     return db.select().from(alertRules).where(inArray(alertRules.projectId, pids));
   }
 
   @Get('alerts/history')
-  async alertsHistory(@Req() req: Request & { user?: AuthPrincipal }) {
-    const pids = await accessibleProjectIds(req.user!);
+  async alertsHistory(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Query('projectId') projectId?: string,
+  ) {
+    const access = await accessibleProjectIds(req.user!);
+    const pids = projectId && access.includes(projectId) ? [projectId] : access;
     if (pids.length === 0) return [];
     return db.select().from(notifications).where(inArray(notifications.projectId, pids)).orderBy(desc(notifications.sentAt)).limit(50);
   }

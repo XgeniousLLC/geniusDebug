@@ -26,89 +26,158 @@ interface PerfResponse {
   samples: Sample[];
   byOp: OpAgg[];
 }
+interface ProjectSummary {
+  id: string;
+  name: string;
+}
 
-/**
- * Performance explorer (GD-136) — worst spans + per-op p75, from the traces/spans
- * tables. Web-vitals charts (LCP p75 over time) light up once browser pageload
- * transactions with `measurements` are ingested (GD-146).
- */
+/** Duration → severity band (Sentry-style thresholds). */
+function band(ms: number): { label: string; text: string; bar: string } {
+  if (ms >= 1000) return { label: 'poor', text: 'text-level-error', bar: 'bg-level-error' };
+  if (ms >= 300) return { label: 'meh', text: 'text-level-warning', bar: 'bg-level-warning' };
+  return { label: 'good', text: 'text-status-resolved', bar: 'bg-status-resolved' };
+}
+
+const fmtMs = (ms: number | null | undefined) => {
+  const n = ms ?? 0;
+  return n >= 1000 ? `${(n / 1000).toFixed(2)}s` : `${n}ms`;
+};
+
 export function Performance() {
   const currentProjectId = useUi((s) => s.currentProjectId);
+  const projects = useQuery({ queryKey: ['projects'], queryFn: () => api<ProjectSummary[]>('/projects') });
+  const projectName = projects.data?.find((p) => p.id === currentProjectId)?.name;
+
   const q = useQuery({
     queryKey: ['performance', currentProjectId],
     queryFn: () =>
       api<PerfResponse>(`/performance${currentProjectId ? `?projectId=${currentProjectId}` : ''}`),
   });
 
+  const samples = q.data?.samples ?? [];
+  const byOp = q.data?.byOp ?? [];
+
+  // Summary metrics.
+  const slowest = samples[0]?.durationMs ?? 0;
+  const worstOp = byOp[0];
+  const maxP75 = Math.max(1, ...byOp.map((o) => o.p75Ms ?? 0)); // bar scale
+  const maxSample = Math.max(1, ...samples.map((s) => s.durationMs ?? 0));
+
   return (
     <div className="mx-auto max-w-6xl px-4 py-5 sm:px-6">
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-h1 font-semibold">Performance</h1>
-        <span className="text-caption text-text-faint">worst spans by p75 duration</span>
+        {projectName && (
+          <span className="rounded-full bg-surface px-2.5 py-1 text-caption text-text-muted">
+            {projectName}
+          </span>
+        )}
       </div>
+      <p className="mb-4 text-small text-text-muted">
+        Slowest spans and per-operation latency from your transaction traces.{' '}
+        <span className="text-text-faint">p75 = 75% of spans were faster than this.</span>
+      </p>
 
       {q.isLoading ? (
         <Skeleton className="h-64 w-full" />
       ) : q.isError ? (
         <ErrorState message="Couldn't load performance data." />
-      ) : (q.data?.samples.length ?? 0) === 0 ? (
-        <EmptyState title="No span data yet" hint="Send `transaction` envelopes (tracesSampleRate > 0) to populate the performance explorer." />
+      ) : samples.length === 0 ? (
+        <EmptyState
+          title="No span data yet"
+          hint="Send `transaction` envelopes (set tracesSampleRate > 0 in your SDK) to populate the performance explorer."
+        />
       ) : (
         <div className="flex flex-col gap-6">
-          {/* Per-op aggregates */}
+          {/* Summary tiles */}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <StatTile label="Spans sampled" value={samples.length.toString()} />
+            <StatTile label="Operations" value={byOp.length.toString()} />
+            <StatTile label="Slowest span" value={fmtMs(slowest)} tone={band(slowest).text} />
+            <StatTile label="Worst op (p75)" value={fmtMs(worstOp?.p75Ms)} sub={worstOp?.op ?? '—'} tone={band(worstOp?.p75Ms ?? 0).text} />
+          </div>
+
+          {/* Per-op latency — visual bars */}
           <div>
-            <h2 className="mb-2 text-h2 font-semibold">By operation</h2>
+            <h2 className="mb-1 text-h2 font-semibold">Latency by operation</h2>
+            <p className="mb-2 text-caption text-text-faint">Bar = p75 duration, relative to the slowest op. Color grades good / meh / poor.</p>
             <Card className="overflow-hidden">
-              <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-4 border-b border-border bg-surface px-4 py-2 text-caption uppercase tracking-wide text-text-faint">
-                <span>Operation</span>
-                <span className="w-16 text-right">Count</span>
-                <span className="w-16 text-right">Avg</span>
-                <span className="w-16 text-right">p75</span>
-                <span className="w-16 text-right">Max</span>
+              <div className="hidden grid-cols-[minmax(0,1fr)_5rem_4rem_4rem] gap-4 border-b border-border bg-surface px-4 py-2 text-caption uppercase tracking-wide text-text-faint sm:grid">
+                <span>Operation · p75</span>
+                <span className="text-right">Count</span>
+                <span className="text-right">Avg</span>
+                <span className="text-right">Max</span>
               </div>
-              {q.data!.byOp.map((o, i) => (
-                <div key={i} className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-4 border-b border-border px-4 py-2 text-small last:border-0">
-                  <span className="truncate font-mono text-accent">{o.op ?? 'span'}</span>
-                  <span className="w-16 text-right font-mono text-text-muted">{o.count}</span>
-                  <span className="w-16 text-right font-mono text-text-muted">{o.avgMs ?? 0}ms</span>
-                  <span className="w-16 text-right font-mono text-text">{o.p75Ms ?? 0}ms</span>
-                  <span className="w-16 text-right font-mono text-text-faint">{o.maxMs ?? 0}ms</span>
-                </div>
-              ))}
+              {byOp.map((o, i) => {
+                const p75 = o.p75Ms ?? 0;
+                const b = band(p75);
+                return (
+                  <div key={i} className="grid grid-cols-[minmax(0,1fr)_5rem_4rem_4rem] items-center gap-4 border-b border-border px-4 py-2.5 last:border-0">
+                    <div className="min-w-0">
+                      <div className="mb-1 flex items-center justify-between gap-2">
+                        <span className="truncate font-mono text-small text-accent">{o.op ?? 'span'}</span>
+                        <span className={`shrink-0 font-mono text-small font-medium ${b.text}`}>{fmtMs(p75)}</span>
+                      </div>
+                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-2">
+                        <div className={`h-full rounded-full ${b.bar}`} style={{ width: `${Math.max(3, (p75 / maxP75) * 100)}%` }} />
+                      </div>
+                    </div>
+                    <span className="text-right font-mono text-small text-text-muted">{o.count}</span>
+                    <span className="text-right font-mono text-small text-text-faint">{fmtMs(o.avgMs)}</span>
+                    <span className="text-right font-mono text-small text-text-faint">{fmtMs(o.maxMs)}</span>
+                  </div>
+                );
+              })}
             </Card>
           </div>
 
           {/* Slowest span samples */}
           <div>
-            <h2 className="mb-2 text-h2 font-semibold">Slowest spans</h2>
+            <h2 className="mb-1 text-h2 font-semibold">Slowest spans</h2>
+            <p className="mb-2 text-caption text-text-faint">Individual worst spans — click to open the full trace waterfall.</p>
             <Card className="overflow-hidden">
-              <div className="grid grid-cols-[auto_1fr_auto_auto] gap-4 border-b border-border bg-surface px-4 py-2 text-caption uppercase tracking-wide text-text-faint">
-                <span className="w-32">Op</span>
-                <span>Description · Transaction</span>
-                <span className="hidden w-20 text-right sm:block">When</span>
-                <span className="w-20 text-right">Duration</span>
-              </div>
-              {q.data!.samples.map((s) => (
-                <Link
-                  key={s.spanId}
-                  to={`/traces/${s.traceId}`}
-                  className="grid grid-cols-[auto_1fr_auto_auto] items-center gap-4 border-b border-border px-4 py-2 text-small last:border-0 hover:bg-surface-2"
-                >
-                  <span className="w-32 truncate font-mono text-accent">{s.op ?? 'span'}</span>
-                  <span className="min-w-0 truncate">
-                    <span className="text-text">{s.description ?? '—'}</span>
-                    {s.transaction && <span className="text-text-faint"> · {s.transaction}</span>}
-                  </span>
-                  <span className="hidden w-20 text-right font-mono text-caption text-text-faint sm:block">
-                    {s.startTs ? `${timeAgo(s.startTs)} ago` : '—'}
-                  </span>
-                  <span className="w-20 text-right font-mono text-text">{(s.durationMs ?? 0).toLocaleString()}ms</span>
-                </Link>
-              ))}
+              {samples.map((s) => {
+                const d = s.durationMs ?? 0;
+                const b = band(d);
+                return (
+                  <Link
+                    key={s.spanId}
+                    to={`/traces/${s.traceId}`}
+                    className="block border-b border-border px-4 py-2.5 last:border-0 hover:bg-surface-2"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="shrink-0 rounded bg-surface px-1.5 py-0.5 font-mono text-caption text-accent">{s.op ?? 'span'}</span>
+                        <span className="truncate text-small text-text">{s.description ?? s.transaction ?? '—'}</span>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-3">
+                        <span className="hidden font-mono text-caption text-text-faint sm:inline">{s.startTs ? `${timeAgo(s.startTs)} ago` : ''}</span>
+                        <span className={`font-mono text-small font-medium ${b.text}`}>{fmtMs(d)}</span>
+                      </div>
+                    </div>
+                    <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-surface-2">
+                      <div className={`h-full rounded-full ${b.bar}`} style={{ width: `${Math.max(2, (d / maxSample) * 100)}%` }} />
+                    </div>
+                    {s.transaction && s.description && (
+                      <div className="mt-1 truncate text-caption text-text-faint">{s.transaction}</div>
+                    )}
+                  </Link>
+                );
+              })}
             </Card>
           </div>
         </div>
       )}
     </div>
+  );
+}
+
+function StatTile({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: string }) {
+  return (
+    <Card className="px-4 py-3">
+      <div className="text-caption uppercase tracking-wide text-text-faint">{label}</div>
+      <div className={`mt-1 font-mono text-h2 font-semibold ${tone ?? 'text-text'}`}>{value}</div>
+      {sub && <div className="mt-0.5 truncate font-mono text-caption text-text-muted">{sub}</div>}
+    </Card>
   );
 }
