@@ -743,3 +743,31 @@ GitHub advanced (GD-043/44/45) code-complete; live needs a GitHub App install.
 - GD-124: web `tsc --noEmit` clean. Shell = fixed off-canvas drawer (`-translate-x-full` -> `translate-x-0`, `md:static md:translate-x-0`) + hamburger (`md:hidden`) + backdrop + in-drawer close; nav closes on route change. Grids: `grid-cols-1 (sm|lg):grid-cols-[...]`. Live browser check at 375px NOT run (needs dashboard login).
 - GD-125: only-password masking; server-side beforeSend still scrubs auth header + cookies.
 - GD-126: `npm install` clean, `next dev` compiles instrumentation + Sentry, serves 200 at http://localhost:3100. DSN unset -> Sentry.init skipped + page shows warning banner (expected until user adds .env.local). Replay **playback** still needs R2 on local geniusDebug.
+
+## Sprint 31 — Sentry-parity polish: realtime, perf page, trace/issue-detail/replay UX
+**Status:** IN PROGRESS
+**Started:** 2026-07-20
+
+### Done earlier this session (pushed to dev, needs api+web redeploy)
+- Dashboard/Performance/Alerts/Replays now **project-scoped** to the switcher (`?projectId=`), members can't widen past grant.
+- **Issues feed rebuilt** to Sentry-parity (search box w/ `is:<status>` token + Save, status/range/sort + category menu, columns checkbox/issue/**graph**/events/users/**assignee**, sparklines from `issue_counts`, NEW/REGRESSED badges, cursor accent bar, hover triage toolbar, footer + Prev/Next). `IssueDto` gained `spark[]`+`assigneeName`. **Verified live locally (browser)**: page matches the reference mock; sparkline renders for issues with ≥2 buckets. The "graph not showing" in prod = prod api not yet redeployed (no `spark` field) — fixed on redeploy.
+- **Trace page rebuilt** (header meta Platform/Browser/OS/Env/Age/errors from the lead error event; Sentry-style waterfall). Trace API returns a `meta` block.
+- Replay prod-playback: client config already correct; documented R2 + matching `APP_ENCRYPTION_KEY` + redeploy requirement in `taskip-integration/README.md`.
+
+### Tickets
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-147 | Realtime issues + replays feed (auto-prepend, no reload) | TODO | HIGH | New issue / new replay appears at the top automatically without a page reload. Currently the feed uses `refetchInterval` polling but the user still perceives a reload. Prefer a lightweight push (SSE/WebSocket from api, or a short-poll that prepends new rows with a subtle highlight animation). Applies to Issues feed + Replays list. |
+| GD-148 | Real backend pagination for Issues (+ confirm graph in prod) | TODO | HIGH | Issues list currently fetches ≤50 and paginates client-side. Add real server pagination: `limit`+`offset` (or cursor) + a `total` count, wire Prev/Next to it. Also: the sparkline "graph not showing" is because prod api lacks the `spark` field — resolved by redeploy (verified working locally); confirm after deploy. |
+| GD-149 | Bulk actions: Resolve / Archive / Delete (Image #8) | TODO | HIGH | The selection toolbar should offer **Resolve, Archive, Delete** bulk actions (screenshot de-emphasizes "Merge into first"). Wire bulk resolve/archive over selected shortIds; add a bulk **Delete** issues endpoint (admin, cascade events/counts/activity) — new API. Confirm dialog on Delete. |
+| GD-150 | Performance page — exact Sentry-parity rebuild (Image #9) | TODO | HIGH | Rebuild `/performance` to match the mock exactly: **1h/24h/7d** range toggle; **P50/P75/P95/Slowest span** stat tiles; **"p75 latency over time"** bar chart (24 buckets, +N% vs prior period, last bars highlighted); **"Where time is spent"** table (operation + total-time bar + % of total, P50/P75/P90/P95/Count, sorted by total time, "+N under 1ms not shown"); **"Slowest spans"** waterfall (op chip + colored bar + ms, top 10, "Showing 10 of N", **Open in Explore**); floating **Edit** FAB. Needs backend: time-bucketed p75, per-op percentiles (p50/p75/p90/p95)+count+total-time, span samples with range filter. |
+| GD-151 | Trace waterfall: fix ms-label / column overlap (Image #5) | TODO | MED | The trailing duration `ms` label overlaps the next column / the span-name column when the bar is near full width. Add a gap / reserve label space (or clamp label inside timeline cell) so nothing overlaps. |
+| GD-152 | Trace span color: show normal color, not only on hover (Image #6) | TODO | MED | Span bar/dot color currently reads as only appearing on hover — it should show its normal (op/level) color at rest too. Match the span **detail side panel** design in Image #6 (op label, description, Duration/Status/Start rows). |
+| GD-153 | Issue Detail page — full redesign to match mock (Image #5/#6) | TODO | HIGH | Rebuild the Issue Detail page UI to match the provided design exactly (verify by screenshot when done). Includes layout, highlights, sections ordering. Pairs with GD-154 (full width) + GD-155 (stack trace). |
+| GD-154 | Full-width layout (remove max-w constraint) (Image #5) | TODO | MED | Trace + Issue Detail (and likely all content pages) are constrained to `max-w-6xl`; the design wants full width. Remove/relax the container max-width so pages use the full viewport. |
+| GD-155 | Issue Detail stack-trace redesign (Image #5/#6) | TODO | HIGH | Redesign the stack-trace component (`StackTrace.tsx`) to match the screenshots — frame rows, in-app emphasis, source context, monospace, expand/collapse. |
+| GD-156 | Replay detail: Network waterfall + Activity + click-to-seek (Image #7) | TODO | MED | In the replay detail page: render the **Network** tab as a waterfall (per-request timing bars), improve the **Activity** tab layout, and make clicking a timestamped row **seek the rrweb player** to that time in the video. |
+
+### Sprint Stats
+- Total: 10  /  TODO: 10  /  IN_PROGRESS: 0  /  DONE: 0  /  BLOCKED: 0
