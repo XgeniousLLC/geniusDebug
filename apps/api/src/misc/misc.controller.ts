@@ -35,7 +35,14 @@ export class MiscController {
       .from(events)
       .where(and(eq(events.traceId, traceId), inArray(events.projectId, pids.length ? pids : [''])))
       .orderBy(desc(events.timestamp));
-    const errs = errRows.map((e) => ({ id: e.id, issueId: e.issueId, message: e.message, level: e.level }));
+    const errs = errRows.map((e) => ({
+      id: e.id,
+      issueId: e.issueId,
+      message: e.message,
+      level: e.level,
+      timestamp: e.timestamp?.toISOString() ?? null,
+      transaction: e.transaction ?? null,
+    }));
     const issueIds = [...new Set(errs.map((e) => e.issueId))];
     const relatedIssues = issueIds.length
       ? await db.select({ id: issues.id, shortId: issues.shortId, title: issues.title }).from(issues).where(inArray(issues.id, issueIds))

@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { NormalizedFrame } from '@geniusdebug/shared';
+import { ChevronDownIcon } from './icons';
 
 /**
  * Stack frame block (brief §4 / FR-MAP-3/5/6, FR-GH-3): monospace, in-app frames
@@ -52,9 +53,7 @@ function Frame({ f, defaultOpen, last }: { f: NormalizedFrame; defaultOpen: bool
         className={`flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left hover:bg-surface-2 ${f.inApp ? 'bg-surface' : 'bg-surface/30'}`}
       >
         <div className="flex min-w-0 items-baseline gap-2 font-mono text-mono">
-          <span className={`text-text-faint transition-transform ${open ? 'rotate-90' : ''}`} aria-hidden>
-            ▸
-          </span>
+          <ChevronDownIcon size={14} className={`shrink-0 text-text-faint transition-transform ${open ? '' : '-rotate-90'}`} />
           {f.function && <span className="shrink-0 text-accent">{f.function}</span>}
           <span className="min-w-0 truncate">
             {dir && <span className="text-text-faint">{dir}</span>}
