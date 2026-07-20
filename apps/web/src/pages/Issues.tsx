@@ -423,24 +423,24 @@ export function Issues() {
 
 /* ------------------------------- pieces ---------------------------------- */
 
+/** Sentry-style event-count mini bar chart, colored by issue level. Sparse data
+ *  (1–2 buckets) still renders as bars, right-aligned into fixed columns. */
 function Sparkline({ data, color }: { data: number[]; color: string }) {
-  const w = 120;
-  const h = 32;
-  if (!data || data.length < 2) return <div className="h-8 w-full" aria-hidden />;
-  const max = Math.max(...data);
-  const min = Math.min(...data);
-  const range = max - min || 1;
-  const pts = data
-    .map((v, i) => {
-      const x = (i / (data.length - 1)) * w;
-      const y = h - 3 - ((v - min) / range) * (h - 6);
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(' ');
+  const BUCKETS = 14;
+  const vals = (data ?? []).slice(-BUCKETS);
+  if (vals.length === 0) return <div className="h-8 w-full" aria-hidden />;
+  const padded = [...Array(Math.max(0, BUCKETS - vals.length)).fill(0), ...vals];
+  const max = Math.max(1, ...padded);
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} className="h-8 w-full" preserveAspectRatio="none">
-      <polyline points={pts} fill="none" stroke={color} strokeWidth={1.75} strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
-    </svg>
+    <div className="flex h-8 w-full items-end gap-px" aria-hidden>
+      {padded.map((v, i) => (
+        <div
+          key={i}
+          className="flex-1 rounded-[1px]"
+          style={{ height: v > 0 ? `${Math.max(14, (v / max) * 100)}%` : '0%', background: v > 0 ? color : 'transparent' }}
+        />
+      ))}
+    </div>
   );
 }
 
