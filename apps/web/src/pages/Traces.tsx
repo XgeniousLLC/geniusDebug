@@ -209,13 +209,6 @@ function TraceWaterfall({ traceId }: { traceId: string }) {
         <h1 className="flex items-baseline gap-2 text-h1 font-semibold">
           Trace <span className="font-mono text-body font-normal text-text-faint">{traceId.slice(0, 12)}</span>
         </h1>
-        <button
-          onClick={() => navigator.clipboard?.writeText(traceId).then(() => {}, () => {})}
-          className="rounded-lg border border-border bg-surface px-3 py-1.5 text-small text-text-muted hover:text-text"
-          title="Copy trace ID"
-        >
-          Open in Explore
-        </button>
       </div>
       {meta?.leadMessage && <p className="mb-2 truncate text-body text-level-error">{meta.leadMessage}</p>}
       <div className="mb-4 flex flex-wrap items-center gap-x-6 gap-y-1 border-b border-border pb-4 text-small text-text-muted">

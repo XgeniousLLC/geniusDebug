@@ -206,7 +206,9 @@ export class MiscController {
     @Req() req: Request & { user?: AuthPrincipal },
     @Query('projectId') projectId?: string,
     @Query('range') range?: string,
+    @Query('slowLimit') slowLimit?: string,
   ) {
+    const slowN = Math.min(1000, Math.max(10, Number(slowLimit) || 10));
     const access = await accessibleProjectIds(req.user!);
     // Narrow to the switcher-selected project when the caller can access it.
     const pids = projectId && access.includes(projectId) ? [projectId] : access;
@@ -273,7 +275,7 @@ export class MiscController {
         .innerJoin(traces, eq(traces.traceId, spans.traceId))
         .where(inWindow)
         .orderBy(desc(spans.durationMs))
-        .limit(10),
+        .limit(slowN),
       db.select({ c: sql<number>`count(*)::int` }).from(spans).innerJoin(traces, eq(traces.traceId, spans.traceId)).where(inWindow),
       db
         .select({ b: sql<number>`floor(extract(epoch from ${spans.startTs}) * 1000 / ${bucketMs})`, p75: pct(0.75) })

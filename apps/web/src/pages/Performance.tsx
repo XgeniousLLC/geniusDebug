@@ -57,15 +57,17 @@ export function Performance() {
   const navigate = useNavigate();
   const currentProjectId = useUi((s) => s.currentProjectId);
   const [range, setRange] = React.useState<Range>('24h');
+  const [showAllSpans, setShowAllSpans] = React.useState(false);
 
   const projects = useQuery({ queryKey: ['projects'], queryFn: () => api<ProjectSummary[]>('/projects') });
   const projectName = projects.data?.find((p) => p.id === currentProjectId)?.name;
 
   const q = useQuery({
-    queryKey: ['performance', currentProjectId, range],
+    queryKey: ['performance', currentProjectId, range, showAllSpans],
     queryFn: () => {
       const p = new URLSearchParams({ range });
       if (currentProjectId) p.set('projectId', currentProjectId);
+      if (showAllSpans) p.set('slowLimit', '1000');
       return api<PerfResponse>(`/performance?${p}`);
     },
   });
@@ -124,7 +126,13 @@ export function Performance() {
           <WhereTimeSpent byOp={d.byOp} hiddenOps={d.hiddenOps} />
 
           {/* slowest spans */}
-          <SlowestSpans slowest={d.slowest} total={d.slowestTotal} onOpen={(id) => navigate(`/traces/${id}`)} />
+          <SlowestSpans
+            slowest={d.slowest}
+            total={d.slowestTotal}
+            showingAll={showAllSpans}
+            onToggleAll={() => setShowAllSpans((s) => !s)}
+            onOpen={(id) => navigate(`/traces/${id}`)}
+          />
         </div>
       )}
     </div>
@@ -180,9 +188,9 @@ function LatencyChart({ data, deltaPct, range }: { data: { t: string; p75: numbe
               const h = (b.p75 / axisMax) * 100;
               const recent = i >= n - 3;
               return (
-                <div key={i} className="group relative flex-1" title={`${label(i)} · ${fmtMs(b.p75)}`}>
+                <div key={i} className="flex h-full flex-1 items-end" title={`${label(i)} · ${fmtMs(b.p75)}`}>
                   <div
-                    className={`w-full rounded-t ${recent ? 'bg-level-warning' : 'bg-accent/70'}`}
+                    className={`w-full rounded-t ${recent ? 'bg-level-warning' : 'bg-accent'}`}
                     style={{ height: `${Math.max(b.p75 > 0 ? 4 : 0, h)}%` }}
                   />
                 </div>
@@ -251,19 +259,34 @@ function WhereTimeSpent({ byOp, hiddenOps }: { byOp: OpAgg[]; hiddenOps: number 
   );
 }
 
-function SlowestSpans({ slowest, total, onOpen }: { slowest: SlowSpan[]; total: number; onOpen: (traceId: string) => void }) {
+function SlowestSpans({
+  slowest,
+  total,
+  showingAll,
+  onToggleAll,
+  onOpen,
+}: {
+  slowest: SlowSpan[];
+  total: number;
+  showingAll: boolean;
+  onToggleAll: () => void;
+  onOpen: (traceId: string) => void;
+}) {
   const max = Math.max(1, ...slowest.map((s) => s.durationMs ?? 0));
   return (
     <div>
       <div className="mb-2 flex items-baseline gap-2">
         <h2 className="text-h2 font-semibold">Slowest spans</h2>
-        <span className="text-caption text-text-faint">Top {slowest.length} · click a span to open its full trace waterfall</span>
+        <span className="text-caption text-text-faint">
+          {showingAll ? `All ${slowest.length}` : `Top ${slowest.length}`} · click a span to open its full trace waterfall
+        </span>
       </div>
       <Card className="overflow-hidden">
         <div className="grid grid-cols-[minmax(180px,40%)_1fr] items-center gap-3 border-b border-border bg-surface px-4 py-2 text-caption uppercase tracking-wide text-text-faint">
           <span>Span</span>
           <span>Timeline (0 – {fmtMs(max)})</span>
         </div>
+        <div className={showingAll ? 'max-h-[32rem] overflow-y-auto' : ''}>
         {slowest.map((s) => {
           const dms = s.durationMs ?? 0;
           const b = band(dms);
@@ -287,9 +310,14 @@ function SlowestSpans({ slowest, total, onOpen }: { slowest: SlowSpan[]; total: 
             </button>
           );
         })}
-        <div className="flex items-center justify-between px-4 py-2 text-caption text-text-faint">
+        </div>
+        <div className="flex items-center justify-between border-t border-border px-4 py-2 text-caption text-text-faint">
           <span>Showing {slowest.length} of {total} slow spans</span>
-          <span className="text-accent">Open in Explore →</span>
+          {total > 10 && (
+            <button onClick={onToggleAll} className="text-accent hover:underline">
+              {showingAll ? 'Show top 10' : `Show all ${total} →`}
+            </button>
+          )}
         </div>
       </Card>
     </div>
