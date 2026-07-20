@@ -32,9 +32,11 @@ export async function symbolicate(e: NormalizedEvent, projectId: string): Promis
     }
   }
 
+  // Deep-link any project source file to GitHub (FR-MAP-6) when a repo is linked —
+  // not only strict in-app frames, so app/ files the SDK flagged non-app still link.
   frames = frames.map((f) => ({
     ...f,
-    githubUrl: f.inApp && gh ? buildGithubUrl(gh, f) : undefined,
+    githubUrl: gh ? buildGithubUrl(gh, f) : undefined,
   }));
 
   return { ...e, frames };
@@ -81,8 +83,15 @@ async function resolveGithub(projectId: string, release?: string): Promise<GhCtx
 }
 
 function buildGithubUrl(gh: GhCtx, f: NormalizedFrame): string | undefined {
-  const path = (f.absPath ?? f.filename ?? '').replace(/^\.\//, '');
+  // Normalize to a repo-relative source path.
+  const path = (f.absPath ?? f.filename ?? '')
+    .replace(/^webpack-internal:\/\/\/(\(.*?\)\/)?/, '') // Next.js dev prefix
+    .replace(/^(https?:\/\/[^/]+\/)?_next\/(app|src)\//, '$2/') // built asset → src path
+    .replace(/^\.\//, '');
   if (!path) return undefined;
+  if (/^https?:\/\//.test(path)) return undefined; // remote asset, not a repo file
+  if (path.includes('node_modules/')) return undefined; // dependency, not our source
+  if (!/\.(mjs|cjs|jsx?|tsx?|vue|svelte)$/.test(path)) return undefined; // source files only
   const line = f.lineno ? `#L${f.lineno}` : '';
   return `https://github.com/${gh.owner}/${gh.name}/blob/${gh.ref}/${path}${line}`;
 }

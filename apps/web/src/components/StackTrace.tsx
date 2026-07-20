@@ -29,11 +29,24 @@ export function StackTrace({ frames }: { frames: NormalizedFrame[] }) {
   return (
     <div>
       {/* Crashed-in summary */}
-      <div className="mb-2 rounded-md border border-border bg-surface px-3 py-2 text-caption text-text-muted">
-        Crashed in {crash.inApp ? '' : 'non-app: '}
-        <span className="font-mono text-text">{shortFile(crash.absPath ?? crash.filename)}
-          {crash.lineno != null ? `:${crash.lineno}${crash.colno != null ? `:${crash.colno}` : ''}` : ''}</span>
-        {crash.function && <span> in <span className="font-mono text-text">{crash.function}</span></span>}
+      <div className="mb-2 flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-caption text-text-muted">
+        <span className="min-w-0 truncate">
+          Crashed in {crash.inApp ? '' : 'non-app: '}
+          <span className="font-mono text-text">
+            {shortFile(crash.absPath ?? crash.filename)}
+            {crash.lineno != null ? `:${crash.lineno}${crash.colno != null ? `:${crash.colno}` : ''}` : ''}
+          </span>
+          {crash.function && (
+            <span>
+              {' '}in <span className="font-mono text-text">{crash.function}</span>
+            </span>
+          )}
+        </span>
+        {crash.githubUrl && (
+          <a href={crash.githubUrl} target="_blank" rel="noreferrer" className="ml-auto shrink-0 text-text-faint hover:text-text" title="Open this line in GitHub">
+            <GithubGlyph />
+          </a>
+        )}
       </div>
       <div className="mb-2 text-caption text-text-faint">
         {ordered.length} frame{ordered.length === 1 ? '' : 's'}
