@@ -57,7 +57,6 @@ export function Performance() {
   const navigate = useNavigate();
   const currentProjectId = useUi((s) => s.currentProjectId);
   const [range, setRange] = React.useState<Range>('24h');
-  const [showAllOps, setShowAllOps] = React.useState(false);
 
   const projects = useQuery({ queryKey: ['projects'], queryFn: () => api<ProjectSummary[]>('/projects') });
   const projectName = projects.data?.find((p) => p.id === currentProjectId)?.name;
@@ -122,21 +121,11 @@ export function Performance() {
           <LatencyChart data={d.overTime} deltaPct={d.overTimeDeltaPct} range={range} />
 
           {/* where time is spent */}
-          <WhereTimeSpent byOp={d.byOp} hiddenOps={d.hiddenOps} showAll={showAllOps} />
+          <WhereTimeSpent byOp={d.byOp} hiddenOps={d.hiddenOps} />
 
           {/* slowest spans */}
           <SlowestSpans slowest={d.slowest} total={d.slowestTotal} onOpen={(id) => navigate(`/traces/${id}`)} />
         </div>
-      )}
-
-      {/* Edit FAB — toggle showing every operation row */}
-      {d && d.totals.samples > 0 && (
-        <button
-          onClick={() => setShowAllOps((s) => !s)}
-          className="fixed bottom-5 right-5 z-20 rounded-full border border-accent/40 bg-accent/15 px-4 py-2 text-small text-accent shadow-lg hover:bg-accent/25"
-        >
-          {showAllOps ? '✕ Collapse' : '✎ Edit'}
-        </button>
       )}
     </div>
   );
@@ -212,10 +201,10 @@ function LatencyChart({ data, deltaPct, range }: { data: { t: string; p75: numbe
   );
 }
 
-function WhereTimeSpent({ byOp, hiddenOps, showAll }: { byOp: OpAgg[]; hiddenOps: number; showAll: boolean }) {
+function WhereTimeSpent({ byOp, hiddenOps }: { byOp: OpAgg[]; hiddenOps: number }) {
   const maxTotal = Math.max(1, ...byOp.map((o) => o.totalMs));
-  const rows = showAll ? byOp : byOp.slice(0, 10);
-  const hidden = showAll ? 0 : hiddenOps;
+  const rows = byOp.slice(0, 10);
+  const hidden = hiddenOps;
   return (
     <div>
       <div className="mb-2 flex items-baseline gap-2">
@@ -255,7 +244,7 @@ function WhereTimeSpent({ byOp, hiddenOps, showAll }: { byOp: OpAgg[]; hiddenOps
           );
         })}
         {hidden > 0 && (
-          <div className="px-4 py-2 text-caption text-text-faint">+ {hidden} operations not shown — tap Edit to expand</div>
+          <div className="px-4 py-2 text-caption text-text-faint">+ {hidden} operations under 1 ms total not shown</div>
         )}
       </Card>
     </div>
