@@ -151,6 +151,31 @@ export function Login() {
               Register mode only appears on a fresh install (firstRun) to bootstrap
               the first admin. */}
         </form>
+
+        {/* import.meta.env.DEV is a Vite build-time flag — false (and this
+            whole block dead-code-eliminated) in any production build, so this
+            never ships to Coolify/Vercel. Local-only convenience: seed via
+            `npm run -w @geniusdebug/db seed:dev-user`. */}
+        {import.meta.env.DEV && mode === 'login' && (
+          <div className="mt-4 rounded-lg border border-dashed border-border bg-surface/50 p-3 text-caption text-text-muted">
+            <div className="mb-1 font-semibold text-text">Dev test login</div>
+            <div className="mb-2">
+              <code className="font-mono text-text">admin@geniusdebug.test</code> /{' '}
+              <code className="font-mono text-text">DevPass123!</code>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setEmail('admin@geniusdebug.test');
+                setPassword('DevPass123!');
+              }}
+              className="text-caption text-accent hover:underline"
+            >
+              Fill in
+            </button>
+            <span className="text-text-faint"> — seed with <code className="font-mono">npm run -w @geniusdebug/db seed:dev-user</code> if login fails.</span>
+          </div>
+        )}
       </div>
     </div>
   );

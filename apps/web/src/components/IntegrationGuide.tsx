@@ -1,9 +1,10 @@
 import * as React from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, API_BASE } from '../lib/api';
 import { Button, Skeleton } from './ui';
 import { GithubConnect } from './GithubConnect';
 import { buildDsn } from '../lib/ingest';
+import { useUi } from '../store/ui';
 
 export interface GuideProject {
   id: string;
@@ -167,6 +168,8 @@ Sentry.init({
         </div>
       )}
 
+      {!isPhp && <SourceMapCallout project={project} />}
+
       {/* Email a developer */}
       <div className="rounded-md border border-border bg-surface/50 p-3">
         <div className="mb-2 text-small font-semibold text-text">Send setup instructions to a developer</div>
@@ -241,4 +244,79 @@ function buildMailto(to: string, projectName: string, dsn: string, isPhp: boolea
     `DSN is public + write-only — safe to commit.`,
   ].join('\n');
   return `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+
+/**
+ * JS/Next.js-only callout (GD-171): production builds minify JS, so without
+ * uploading source maps to geniusDebug, stack traces show mangled variable
+ * names and no real file/line — exactly the "Minified React error #422, no
+ * source context" symptom this project hit in prod. Explains why + gets the
+ * upload token right here instead of sending the user hunting through Settings.
+ */
+function SourceMapCallout({ project }: { project: GuideProject }) {
+  const isAdmin = useUi((s) => s.user?.role === 'admin');
+  const [token, setToken] = React.useState<string | null>(null);
+  const issue = useMutation({
+    mutationFn: () => api<{ token: string }>(`/projects/${project.id}/upload-token`, { method: 'POST' }),
+    onSuccess: (r) => setToken(r.token),
+  });
+  const [copied, setCopied] = React.useState(false);
+  function copy(text: string) {
+    navigator.clipboard?.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }
+  // Per-project vars only. R2_* is org-level (Settings → Integrations →
+  // Cloudflare R2, connected once for the whole platform, not per project) —
+  // the uploader picks it up server-side, so it's not shown here. GENIUSDEBUG_ORG_TOKEN
+  // is a secret, shown once below. RELEASE is intentionally omitted (auto falls
+  // back to Vercel's own VERCEL_GIT_COMMIT_SHA).
+  const sourceMapEnvBlock = `GENIUSDEBUG_API=${API_BASE}
+GENIUSDEBUG_PROJECT_ID=${project.id}
+GENIUSDEBUG_ORG_TOKEN=<paste the token issued below>`;
+  return (
+    <div className="rounded-md border border-level-warning/30 bg-level-warning/5 p-3 text-caption text-text-muted">
+      <div className="mb-1 font-semibold text-text">Set up source maps — or production errors stay minified</div>
+      <p className="mb-2">
+        Deployed JS is minified. Without this step, errors here look like{' '}
+        <code className="font-mono text-text">Minified React error #422</code> with no real file, line, or
+        variable names — undebuggable. Sentry's own SaaS upload is deliberately disabled for this project;
+        geniusDebug uploads maps straight to your own R2 with a separate post-build step.
+      </p>
+      <ol className="ml-4 list-decimal space-y-1">
+        <li>Add a post-build step in your Vercel project: <code className="font-mono text-text">node scripts/upload-sourcemaps.mjs</code></li>
+        <li>
+          Set these env vars in Vercel (Project → Settings → Environment Variables):
+          <div className="mb-1 mt-1 flex items-center justify-between">
+            <span className="text-caption uppercase text-text-faint">Vercel env vars</span>
+            <button onClick={() => copy(sourceMapEnvBlock)} className="text-caption text-accent hover:underline">{copied ? 'copied ✓' : 'copy'}</button>
+          </div>
+          <pre className="overflow-x-auto rounded-md border border-border bg-bg px-3 py-2 font-mono text-mono text-text">{sourceMapEnvBlock}</pre>
+          <div className="mt-1 text-text-faint">
+            R2_* values are the same ones you connected under Settings → Integrations → Cloudflare R2 (server-side secrets — never returned to the client, so re-enter them here). <code className="font-mono text-text">RELEASE</code> doesn't need to be set — Vercel auto-provides <code className="font-mono text-text">VERCEL_GIT_COMMIT_SHA</code> and the script falls back to it automatically.
+          </div>
+        </li>
+        <li>
+          Issue <code className="font-mono text-text">GENIUSDEBUG_ORG_TOKEN</code> (shown once) — never Sentry's own auth token:
+          {isAdmin ? (
+            token ? (
+              <pre className="mt-1 overflow-x-auto rounded-md border border-border bg-bg px-3 py-2 font-mono text-mono text-text">{token}</pre>
+            ) : (
+              <div className="mt-1">
+                <Button size="sm" variant="secondary" disabled={issue.isPending} onClick={() => issue.mutate()}>
+                  {issue.isPending ? 'Issuing…' : 'Issue upload token'}
+                </Button>
+              </div>
+            )
+          ) : (
+            <span className="text-text-muted"> ask an admin (Settings → General → Source Maps).</span>
+          )}
+          {issue.isError && (
+            <div className="mt-1 text-level-error">{issue.error instanceof ApiError ? issue.error.message : 'Failed to issue token'}</div>
+          )}
+        </li>
+      </ol>
+    </div>
+  );
 }

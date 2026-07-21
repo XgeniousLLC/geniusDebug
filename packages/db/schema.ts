@@ -340,6 +340,10 @@ export const replays = pgTable(
     segmentId: integer('segment_id').notNull().default(0),
     traceId: varchar('trace_id', { length: 64 }),
     user: jsonb('user').$type<Record<string, unknown>>(),
+    // Session context (GD-170 top metadata bar) — same shape as events.contexts,
+    // sourced from the replay_event item payload (browser/os/device).
+    contexts: jsonb('contexts').$type<Record<string, unknown>>(),
+    url: text('url'),
     startedAt: timestamp('started_at', { withTimezone: true }),
     durationMs: integer('duration_ms'),
     segmentCount: integer('segment_count').notNull().default(0),
