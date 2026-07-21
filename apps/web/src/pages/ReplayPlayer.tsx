@@ -4,7 +4,7 @@ import { useQuery, useMutation } from '@tanstack/react-query';
 import 'rrweb/dist/style.css';
 import { api } from '../lib/api';
 import { Card, Skeleton, ErrorState } from '../components/ui';
-import { PlayIcon, PauseIcon, FullscreenIcon } from '../components/icons';
+import { PlayIcon, PauseIcon, FullscreenIcon, ActivityIcon, TerminalIcon, GlobeIcon, AlertTriangleIcon } from '../components/icons';
 import { timeAgo } from '../lib/format';
 
 // Warm the rrweb chunk as soon as this module evaluates (app load), not on
@@ -174,11 +174,13 @@ interface Marker {
   label: string;
 }
 
-const ACT_TABS: { key: 'all' | ActKind; label: string }[] = [
-  { key: 'all', label: 'Activity' },
-  { key: 'console', label: 'Console' },
-  { key: 'network', label: 'Network' },
-  { key: 'error', label: 'Errors' },
+// Icon-only tabs (label kept for the title/aria tooltip) — the right rail is
+// narrow (75/25 split, GD-170) and text labels clipped ("Errors" → "E").
+const ACT_TABS: { key: 'all' | ActKind; label: string; icon: React.ComponentType<{ size?: number }> }[] = [
+  { key: 'all', label: 'Activity', icon: ActivityIcon },
+  { key: 'console', label: 'Console', icon: TerminalIcon },
+  { key: 'network', label: 'Network', icon: GlobeIcon },
+  { key: 'error', label: 'Errors', icon: AlertTriangleIcon },
 ];
 const ACT_COLOR: Record<ActKind, string> = {
   console: '#7c6cff',
@@ -273,16 +275,18 @@ function ActivityPanel({
   }
   return (
     <Card className={`${className} flex min-h-0 flex-1 flex-col overflow-hidden p-0`}>
-      <div className="flex gap-4 overflow-x-auto border-b border-border px-4 pt-2">
+      <div className="flex gap-1 border-b border-border px-2 pt-2">
         {ACT_TABS.map((t) => (
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
-            className={`-mb-px flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 pb-2 text-small ${
-              tab === t.key ? 'border-accent text-text' : 'border-transparent text-text-muted hover:text-text'
+            title={t.label}
+            aria-label={t.label}
+            className={`-mb-px flex shrink-0 items-center gap-1 rounded-t-md px-2 pb-2 text-small ${
+              tab === t.key ? 'border-b-2 border-accent text-text' : 'border-b-2 border-transparent text-text-muted hover:text-text'
             }`}
           >
-            {t.label}
+            <t.icon size={15} />
             <span className="rounded-full bg-surface-2 px-1.5 text-caption text-text-muted">{count(t.key)}</span>
           </button>
         ))}

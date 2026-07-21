@@ -184,6 +184,11 @@ export const AlertTriangleIcon = (p: P) => (
     <path d="M12 9v5M12 17h.01" />
   </Svg>
 );
+export const ActivityIcon = (p: P) => (
+  <Svg {...p}>
+    <path d="M3 12h4l2 8 4-16 2 8h6" />
+  </Svg>
+);
 export const DotIcon = (p: P) => (
   <Svg {...p}>
     <circle cx="12" cy="12" r="3" fill="currentColor" stroke="none" />
