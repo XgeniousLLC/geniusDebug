@@ -50,10 +50,12 @@ test('php event groups deterministically like any other platform (FR-WRK-7)', ()
   assert.equal(a, b, 'same php stack → same fingerprint');
 });
 
-test('symbolication is a no-op for non-JS platforms (FR-MAP-10)', async () => {
-  // symbolicate() early-returns for platform !== javascript without touching R2/DB.
+test('map-based symbolication is skipped for non-JS platforms (FR-MAP-10), GitHub deep-link still attempted', async () => {
+  // symbolicate() skips the R2/debug-id map lookup for platform !== javascript, but
+  // still tries a GitHub deep-link per frame (FR-MAP-6) when a repo is linked — with
+  // no repo linked here, that resolves to undefined, leaving frame content untouched.
   const { symbolicate } = await import('./symbolicate');
   const n = normalizeEvent(phpEvent);
   const out = await symbolicate(n, '00000000-0000-0000-0000-000000000000');
-  assert.deepEqual(out.frames, n.frames, 'frames unchanged — symbolication skipped');
+  assert.deepEqual(out.frames, n.frames.map((f) => ({ ...f, githubUrl: undefined })), 'frame content unchanged — no repo linked');
 });

@@ -11,7 +11,8 @@ interface FrameSource {
   githubUrl?: string;
   reason?: string;
 }
-const SOURCE_EXT = /\.(mjs|cjs|jsx?|tsx?|vue|svelte)$/;
+const SOURCE_EXT = /\.(mjs|cjs|jsx?|tsx?|vue|svelte|php)$/;
+const MAPPABLE_EXT = /\.(mjs|cjs|jsx?|tsx?|vue|svelte)$/; // source-map-eligible (JS only)
 
 /**
  * Sentry-style stack trace (brief §4 / FR-MAP-3/5/6, FR-GH-3): crashing frame
@@ -108,6 +109,7 @@ function Frame({ f, defaultOpen, last, shortId }: { f: NormalizedFrame; defaultO
   const hasContext = f.contextLine != null || (f.preContext?.length ?? 0) > 0;
   const rawPath = f.absPath ?? f.filename ?? '';
   const canFetch = !!shortId && !hasContext && SOURCE_EXT.test(shortFile(rawPath)) && !shortFile(rawPath).includes('node_modules/');
+  const mappable = MAPPABLE_EXT.test(shortFile(rawPath));
   // Lazily pull the file from the linked GitHub repo when the event carried no source.
   const src = useQuery({
     queryKey: ['frame-source', shortId, rawPath, f.lineno],
@@ -190,7 +192,9 @@ function Frame({ f, defaultOpen, last, shortId }: { f: NormalizedFrame; defaultO
                 : canFetch && src.data && !src.data.available
                   ? `No source: ${src.data.reason ?? 'unavailable'}.`
                   : f.inApp
-                    ? 'No source context — link a GitHub repo or upload source maps to see the code here.'
+                    ? mappable
+                      ? 'No source context — link a GitHub repo or upload source maps to see the code here.'
+                      : 'No source context — link a GitHub repo to see the code here.'
                     : 'System / minified frame — no source available.'}
             </div>
           </div>

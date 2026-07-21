@@ -8,11 +8,14 @@ import { buildDsn } from '../lib/ingest';
 export interface GuideProject {
   id: string;
   name: string;
+  platform?: string;
   setupCompletedAt: string | null;
 }
 
 /** Per-project SDK setup guide: DSN snippet, mark-complete, email-to-developer. */
 export function IntegrationGuide({ project, onChanged }: { project: GuideProject; onChanged: () => void }) {
+  const isPhp = (project.platform ?? '').startsWith('php');
+
   const keys = useQuery({
     queryKey: ['keys', project.id],
     queryFn: () => api<{ publicKey: string; isActive: boolean }[]>(`/projects/${project.id}/keys`),
@@ -20,7 +23,37 @@ export function IntegrationGuide({ project, onChanged }: { project: GuideProject
   const dsnKey = keys.data?.find((k) => k.isActive) ?? keys.data?.[0];
   const dsn = dsnKey ? buildDsn(dsnKey.publicKey, project.id) : '…';
 
-  const snippet = `// sentry.client.config.ts
+  const snippet = isPhp
+    ? `# .env
+SENTRY_LARAVEL_DSN="${dsn}"
+SENTRY_TRACES_SAMPLE_RATE=0.2
+SENTRY_ENVIRONMENT=production
+SENTRY_RELEASE=\${GIT_COMMIT_SHA}
+
+# bootstrap/app.php (Laravel 11+) — report exceptions to Sentry
+use Sentry\\Laravel\\Integration;
+
+->withExceptions(function (Exceptions $exceptions) {
+    Integration::handles($exceptions);
+})
+
+# app/Exceptions/Handler.php (Laravel 8–10) — inside register()
+use Sentry\\Laravel\\Integration;
+Integration::handles($this);
+
+# config/sentry.php → 'tracing' (published by artisan sentry:publish)
+# — this is what feeds the Trace waterfall, incl. DB query spans:
+'tracing' => [
+    'queue_job_transactions' => true,   // queue jobs as spans
+    'sql_queries'            => true,   // every DB query as a timed span (the "query waterfall")
+    'sql_bindings'           => false,  // true = show bound params in span desc (may leak PII)
+    'sql_origin'             => true,   // tag the calling file:line per query
+    'http_client_requests'   => true,   // outbound Http::/Guzzle calls as spans
+    'cache'                  => true,   // cache get/put/hit/miss as spans
+    'views'                  => true,   // Blade view render as spans
+    'missing_routes'         => false,  // trace 404s too
+],`
+    : `// sentry.client.config.ts
 import * as Sentry from "@sentry/nextjs";
 
 Sentry.init({
@@ -57,7 +90,7 @@ Sentry.init({
     }),
     onSuccess: (r) => {
       if (r.sent) setEmailMsg({ ok: true, text: `Sent to ${r.to}.` });
-      else setEmailMsg({ ok: false, text: `Couldn't send (${r.reason ?? 'email not configured'}). Use the mail-client link instead.`, mailto: buildMailto(devEmail, project.name, dsn, note) });
+      else setEmailMsg({ ok: false, text: `Couldn't send (${r.reason ?? 'email not configured'}). Use the mail-client link instead.`, mailto: buildMailto(devEmail, project.name, dsn, isPhp, note) });
     },
     onError: (e) => setEmailMsg({ ok: false, text: e instanceof ApiError ? e.message : 'send failed' }),
   });
@@ -88,16 +121,30 @@ Sentry.init({
 
       {/* Steps */}
       <ol className="ml-4 list-decimal space-y-1 text-small text-text-muted">
-        <li>Install the SDK: <code className="font-mono text-text">npm i @sentry/nextjs</code></li>
-        <li>Add the config below to <code className="font-mono text-text">sentry.client.config.ts</code> (and server/edge).</li>
-        <li>Wrap <code className="font-mono text-text">next.config.js</code> with <code className="font-mono text-text">withSentryConfig</code> + tunnel route.</li>
-        <li>Deploy — events appear here within seconds.</li>
+        {isPhp ? (
+          <>
+            <li>Install the SDK: <code className="font-mono text-text">composer require sentry/sentry-laravel</code></li>
+            <li>Publish config + stub .env: <code className="font-mono text-text">php artisan sentry:publish --dsn="{dsn}"</code> (creates <code className="font-mono text-text">config/sentry.php</code>).</li>
+            <li>Register the handler in <code className="font-mono text-text">bootstrap/app.php</code> (Laravel 11+) or <code className="font-mono text-text">app/Exceptions/Handler.php</code> (Laravel ≤10) — see below.</li>
+            <li>Set <code className="font-mono text-text">.env</code> and (optionally) the <code className="font-mono text-text">tracing</code> toggles in <code className="font-mono text-text">config/sentry.php</code> below.</li>
+            <li>Set <code className="font-mono text-text">SENTRY_TRACES_SAMPLE_RATE</code> above 0 to get performance traces — this is what populates the query waterfall.</li>
+            <li>Verify locally: <code className="font-mono text-text">php artisan sentry:test</code>.</li>
+            <li>Deploy — events appear here within seconds.</li>
+          </>
+        ) : (
+          <>
+            <li>Install the SDK: <code className="font-mono text-text">npm i @sentry/nextjs</code></li>
+            <li>Add the config below to <code className="font-mono text-text">sentry.client.config.ts</code> (and server/edge).</li>
+            <li>Wrap <code className="font-mono text-text">next.config.js</code> with <code className="font-mono text-text">withSentryConfig</code> + tunnel route.</li>
+            <li>Deploy — events appear here within seconds.</li>
+          </>
+        )}
       </ol>
 
       {/* DSN + snippet */}
       <div>
         <div className="mb-1 flex items-center justify-between">
-          <span className="text-caption uppercase text-text-faint">Sentry.init</span>
+          <span className="text-caption uppercase text-text-faint">{isPhp ? '.env / config' : 'Sentry.init'}</span>
           <button onClick={() => copy(snippet)} className="text-caption text-accent hover:underline">
             {copied ? 'copied ✓' : 'copy'}
           </button>
@@ -108,6 +155,17 @@ Sentry.init({
           <pre className="overflow-x-auto rounded-md border border-border bg-bg px-3 py-2 font-mono text-mono text-text">{snippet}</pre>
         )}
       </div>
+
+      {isPhp && (
+        <div className="rounded-md border border-accent/30 bg-accent/5 p-3 text-caption text-text-muted">
+          <div className="mb-1 font-semibold text-text">What you get on an API-only Laravel project</div>
+          <ul className="ml-4 list-disc space-y-1">
+            <li><span className="text-text">Query waterfall, yes</span> — with <code className="font-mono">sql_queries: true</code> the SDK auto-wraps every DB query as a span (SQL text, duration, source file:line via <code className="font-mono">sql_origin</code>). It shows in the Trace waterfall the same as JS spans, sorted by start time with per-span duration bars. Bound parameter values are hidden by default (<code className="font-mono">sql_bindings: false</code>) — flip on only if you're OK with that data reaching geniusDebug.</li>
+            <li>Also auto-instrumented as spans: cache ops, outbound HTTP client calls, queue jobs, Blade view renders — all timed and nested under the request transaction.</li>
+            <li><span className="text-text">No session replay</span> — replay is a browser/DOM (rrweb) recording feature; a server-side API has no DOM to record. You still get: error + stack trace, breadcrumbs, request context (method/url/headers/user), and the full trace/query waterfall above.</li>
+          </ul>
+        </div>
+      )}
 
       {/* Email a developer */}
       <div className="rounded-md border border-border bg-surface/50 p-3">
@@ -149,16 +207,36 @@ Sentry.init({
   );
 }
 
-function buildMailto(to: string, projectName: string, dsn: string, note?: string): string {
+function buildMailto(to: string, projectName: string, dsn: string, isPhp: boolean, note?: string): string {
   const subject = `Set up error monitoring for ${projectName}`;
+  const steps = isPhp
+    ? [
+        `1. composer require sentry/sentry-laravel`,
+        `2. php artisan sentry:publish --dsn="${dsn}"`,
+        `3. Register the handler:`,
+        `   - Laravel 11+ (bootstrap/app.php): Integration::handles($exceptions) inside ->withExceptions(...)`,
+        `   - Laravel <=10 (app/Exceptions/Handler.php): Integration::handles($this) inside register()`,
+        `4. Set SENTRY_TRACES_SAMPLE_RATE > 0 in .env to get performance traces + the DB query waterfall.`,
+        `5. Verify: php artisan sentry:test`,
+        ``,
+        `.env:`,
+        `SENTRY_LARAVEL_DSN="${dsn}"`,
+        `SENTRY_TRACES_SAMPLE_RATE=0.2`,
+        ``,
+        `Note: this is an API-only project — no session replay (that's browser-only). You do get errors, stack`,
+        `traces, and a full performance/query waterfall (every DB query timed as a span) once tracing is on.`,
+      ]
+    : [
+        `1. npm i @sentry/nextjs`,
+        `2. sentry.client.config.ts:`,
+        ``,
+        `Sentry.init({ dsn: "${dsn}", tunnelRoute: "/monitoring" });`,
+      ];
   const body = [
     note ? `${note}\n` : '',
     `Please wire ${projectName} to geniusDebug (Sentry-SDK compatible):`,
     ``,
-    `1. npm i @sentry/nextjs`,
-    `2. sentry.client.config.ts:`,
-    ``,
-    `Sentry.init({ dsn: "${dsn}", tunnelRoute: "/monitoring" });`,
+    ...steps,
     ``,
     `DSN is public + write-only — safe to commit.`,
   ].join('\n');

@@ -39,6 +39,17 @@ function WebVitals({ measurements }: { measurements?: Record<string, { value: nu
   );
 }
 
+/** Op-aware color per span category (GD-163) — db/cache/http/queue/view spans read distinctly, not generic gray. */
+function opTone(op?: string | null): { dot: string; text: string; bar: string } {
+  const o = op ?? '';
+  if (/^db[.:]/.test(o)) return { dot: 'bg-level-warning', text: 'text-level-warning', bar: 'bg-level-warning' };
+  if (/^cache[.:]/.test(o)) return { dot: 'bg-level-info', text: 'text-level-info', bar: 'bg-level-info' };
+  if (/^http\.client|^http[.:]/.test(o)) return { dot: 'bg-status-resolved', text: 'text-status-resolved', bar: 'bg-status-resolved' };
+  if (/^queue[.:]/.test(o)) return { dot: 'bg-level-fatal', text: 'text-level-fatal', bar: 'bg-level-fatal' };
+  if (/^view[.:]|^template[.:]/.test(o)) return { dot: 'bg-level-debug', text: 'text-level-debug', bar: 'bg-level-debug' };
+  return { dot: 'bg-accent', text: 'text-accent', bar: 'bg-accent' };
+}
+
 /** Span detail drawer (GD-143/152) — op, description, Duration/Status/Start (Image #6). */
 function SpanPanel({ span, avg, t0, onClose }: { span: Span; avg: number; t0: number; onClose: () => void }) {
   const dur = span.durationMs ?? 0;
@@ -46,13 +57,14 @@ function SpanPanel({ span, avg, t0, onClose }: { span: Span; avg: number; t0: nu
   const faster = delta < 0;
   const err = span.status && span.status !== 'ok';
   const startOffset = Math.round(new Date(span.startTs).getTime() - t0);
+  const tone = opTone(span.op);
   return (
     <>
       {/* click-catcher (transparent) so clicking the waterfall closes the drawer */}
       <div className="fixed inset-0 z-30" onClick={onClose} aria-hidden />
       <aside className="fixed inset-y-0 right-0 z-40 w-full max-w-md overflow-y-auto border-l border-border bg-surface p-5 shadow-2xl">
         <div className="mb-1 flex items-center justify-between">
-          <span className={`font-mono text-small ${err ? 'text-level-error' : 'text-text-muted'}`}>{span.op ?? 'span'}</span>
+          <span className={`font-mono text-small ${err ? 'text-level-error' : tone.text}`}>{span.op ?? 'span'}</span>
           <button onClick={onClose} className="text-text-faint hover:text-text" aria-label="Close">✕</button>
         </div>
         <div className="mb-4 break-words font-mono text-h2 font-semibold text-text">{span.description ?? span.op ?? 'span'}</div>
@@ -163,8 +175,10 @@ interface TraceResponse {
 const PLATFORM_LABEL: Record<string, string> = {
   javascript: 'Frontend (JavaScript)',
   'javascript-nextjs': 'Frontend (Next.js)',
+  'javascript-react': 'Frontend (React)',
   node: 'Backend (Node.js)',
   php: 'Backend (PHP)',
+  'php-laravel': 'Backend (Laravel)',
   python: 'Backend (Python)',
 };
 
@@ -298,6 +312,7 @@ export function TraceWaterfall({ traceId, embedded }: { traceId: string; embedde
                 const width = Math.max(((sp.durationMs ?? 1) / span) * 100, 0.6);
                 const err = !!(sp.status && sp.status !== 'ok');
                 const active = sel?.id === sp.id;
+                const tone = opTone(sp.op);
                 return (
                   <button
                     key={`${sp.id}-${i}`}
@@ -308,15 +323,15 @@ export function TraceWaterfall({ traceId, embedded }: { traceId: string; embedde
                   >
                     {/* span label */}
                     <div className="flex min-w-0 items-center gap-2" style={{ paddingLeft: depth * 18 }}>
-                      <span className={`h-2 w-2 shrink-0 rounded-full ${err ? 'bg-level-error' : 'bg-accent'}`} aria-hidden />
-                      <span className={`shrink-0 font-mono text-mono ${err ? 'text-level-error' : 'text-accent'}`}>{sp.op ?? 'span'}</span>
+                      <span className={`h-2 w-2 shrink-0 rounded-full ${err ? 'bg-level-error' : tone.dot}`} aria-hidden />
+                      <span className={`shrink-0 font-mono text-mono ${err ? 'text-level-error' : tone.text}`}>{sp.op ?? 'span'}</span>
                       {sp.description && <span className="truncate font-mono text-mono text-text-muted">{sp.description}</span>}
                     </div>
                     {/* timeline: bar track + reserved label column (no overlap) */}
                     <div className="flex items-center gap-3">
                       <div className="relative h-5 min-w-0 flex-1">
                         <div
-                          className={`absolute top-1/2 h-2.5 -translate-y-1/2 rounded-full ${err ? 'bg-level-error' : 'bg-accent'}`}
+                          className={`absolute top-1/2 h-2.5 -translate-y-1/2 rounded-full ${err ? 'bg-level-error' : tone.bar}`}
                           style={{ left: `${left}%`, width: `${width}%` }}
                         />
                         {err && (

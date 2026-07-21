@@ -5,32 +5,34 @@ import { getObject, r2Configured } from './r2';
 import { symbolicateWithMap } from './apply-map';
 
 /**
- * Symbolication step (FR-MAP-3..10). SKIPS entirely when platform !== javascript
- * (FR-MAP-10 — PHP/Laravel frames are already resolved). For JS: looks up the
- * event's Debug IDs → source_map_artifacts; if a map exists it would be applied
- * (maps live in R2). If none is found we gracefully keep the raw frame (FR-MAP-8)
- * and, when the project is linked to GitHub, attach a deep link per in-app frame
- * (FR-MAP-6 / FR-GH-3).
+ * Symbolication step (FR-MAP-3..10). Map-based symbolication SKIPS when
+ * platform !== javascript (FR-MAP-10 — PHP/Laravel frames are already
+ * resolved, no minified source to un-map). For JS: looks up the event's
+ * Debug IDs → source_map_artifacts; if a map exists it's applied (maps live
+ * in R2). If none is found we gracefully keep the raw frame (FR-MAP-8).
+ * GitHub deep-linking (FR-MAP-6 / FR-GH-3) runs for EVERY platform — a
+ * linked repo should deep-link PHP frames just as much as JS ones.
  */
 export async function symbolicate(e: NormalizedEvent, projectId: string): Promise<NormalizedEvent> {
-  if (e.platform !== 'javascript') return e; // FR-MAP-10
-
   // GitHub deep-link context: repo + release commit (FR-GH-3).
   const gh = await resolveGithub(projectId, e.release);
 
-  // Debug-ID lookup → fetch the map from R2 → apply it (FR-MAP-3/4). Falls back
-  // to the raw frames with a warning when no map is found/available (FR-MAP-8).
   let frames: NormalizedFrame[] = e.frames;
-  const r2Key = await findMapR2Key(projectId, e.debugIds);
-  if (r2Key && (await r2Configured())) {
-    try {
-      const bytes = await getObject(r2Key);
-      if (bytes) frames = await symbolicateWithMap(frames, bytes.toString('utf8'));
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.warn(`[symbolicate] map apply failed for ${r2Key}, using raw frames:`, (err as Error).message);
+
+  if (e.platform === 'javascript') {
+    // Debug-ID lookup → fetch the map from R2 → apply it (FR-MAP-3/4). Falls back
+    // to the raw frames with a warning when no map is found/available (FR-MAP-8).
+    const r2Key = await findMapR2Key(projectId, e.debugIds);
+    if (r2Key && (await r2Configured())) {
+      try {
+        const bytes = await getObject(r2Key);
+        if (bytes) frames = await symbolicateWithMap(frames, bytes.toString('utf8'));
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn(`[symbolicate] map apply failed for ${r2Key}, using raw frames:`, (err as Error).message);
+      }
     }
-  }
+  } // FR-MAP-10
 
   // Deep-link any project source file to GitHub (FR-MAP-6) when a repo is linked —
   // not only strict in-app frames, so app/ files the SDK flagged non-app still link.
@@ -91,7 +93,7 @@ function buildGithubUrl(gh: GhCtx, f: NormalizedFrame): string | undefined {
   if (!path) return undefined;
   if (/^https?:\/\//.test(path)) return undefined; // remote asset, not a repo file
   if (path.includes('node_modules/')) return undefined; // dependency, not our source
-  if (!/\.(mjs|cjs|jsx?|tsx?|vue|svelte)$/.test(path)) return undefined; // source files only
+  if (!/\.(mjs|cjs|jsx?|tsx?|vue|svelte|php)$/.test(path)) return undefined; // source files only
   const line = f.lineno ? `#L${f.lineno}` : '';
   return `https://github.com/${gh.owner}/${gh.name}/blob/${gh.ref}/${path}${line}`;
 }
