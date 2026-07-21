@@ -7,11 +7,18 @@ import { Card, Skeleton, ErrorState } from '../components/ui';
 import { PlayIcon, PauseIcon, FullscreenIcon } from '../components/icons';
 import { timeAgo } from '../lib/format';
 
+// Warm the rrweb chunk as soon as this module evaluates (app load), not on
+// first mount — avoids the brief white flash while `import('rrweb')` resolves
+// the first time a user opens a replay (GD-170).
+void import('rrweb');
+
 interface Replay {
   id: string;
   issueId: string | null;
   traceId: string | null;
   user: Record<string, unknown> | null;
+  contexts: { browser?: { name?: string; version?: string }; os?: { name?: string; version?: string }; device?: { family?: string; model?: string; brand?: string } } | null;
+  url: string | null;
   startedAt: string | null;
   durationMs: number | null;
   segmentCount: number;
@@ -30,6 +37,7 @@ interface Recording {
 export function ReplayPlayer() {
   const { replayId = '' } = useParams();
   const seekRef = React.useRef<((ms: number) => void) | undefined>(undefined);
+  const [currentMs, setCurrentMs] = React.useState(0);
 
   const q = useQuery({ queryKey: ['replay', replayId], queryFn: () => api<Replay | null>(`/replays/${replayId}`) });
   const rec = useQuery({
@@ -38,12 +46,19 @@ export function ReplayPlayer() {
     enabled: !!q.data,
     retry: false,
   });
+  const events = rec.data?.events ?? [];
+  // First navigation breadcrumb captured in the recording is the most reliable
+  // "page URL" — request.url on the replay_event only reflects the URL at the
+  // moment that segment fired, not necessarily the session's start page. Hook
+  // must run unconditionally (before the loading/error early-returns below) —
+  // calling it after them broke rules-of-hooks (hook count changed once q.data
+  // resolved) and crashed the whole page blank.
+  const firstNav = React.useMemo(() => extractActivity(events).find((a) => a.kind === 'navigation'), [events]);
 
   if (q.isLoading) return <div className="p-6"><Skeleton className="h-64 w-full" /></div>;
   if (q.isError || !q.data) return <div className="p-6"><ErrorState message="Replay not found." /></div>;
 
   const r = q.data;
-  const events = rec.data?.events ?? [];
   const canPlay = events.length >= 2; // rrweb needs a full snapshot + ≥1 increment
   // Dead-click / rage-click counts from Sentry's slow/multi-click breadcrumbs (GD-145).
   const clickStats = extractActivity(events).reduce(
@@ -54,52 +69,82 @@ export function ReplayPlayer() {
     },
     { dead: 0, rage: 0 },
   );
+  const pageUrl = r.url ?? firstNav?.message ?? null;
+  const browser = r.contexts?.browser;
+  const os = r.contexts?.os;
+  const device = r.contexts?.device;
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-5 sm:px-6">
+    <div className="w-full px-4 py-5 sm:px-6">
       <div className="mb-3 flex items-center gap-1.5 font-mono text-caption text-text-faint">
         <Link to="/replays" className="hover:text-accent">Replays</Link>
         <span>/</span>
         <span className="text-text-muted">{r.id.slice(0, 12)}…</span>
       </div>
-      <h1 className="mb-4 text-h1 font-semibold">Session Replay</h1>
+      <h1 className="mb-3 text-h1 font-semibold">Session Replay</h1>
 
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_260px]">
+      {/* Top metadata bar — stays visible during playback (GD-170). */}
+      <Card className="mb-4 flex flex-wrap items-center gap-x-6 gap-y-2 p-3 text-small">
+        {pageUrl && (
+          <span className="max-w-md truncate font-mono text-caption text-text" title={pageUrl}>{pageUrl}</span>
+        )}
+        <MetaChip label="User" value={String((r.user as { username?: string; id?: string })?.username ?? 'anonymous')} />
+        {browser?.name && <MetaChip label="Browser" value={`${browser.name}${browser.version ? ` ${browser.version}` : ''}`} />}
+        {os?.name && <MetaChip label="OS" value={`${os.name}${os.version ? ` ${os.version}` : ''}`} />}
+        {(device?.family || device?.model) && <MetaChip label="Device" value={device.family ?? device.model ?? ''} />}
+        <MetaChip label="Started" value={`${timeAgo(r.startedAt ?? r.createdAt)} ago`} />
+        <MetaChip label="Duration" value={`${((r.durationMs ?? 0) / 1000).toFixed(1)}s`} />
+        {r.traceId && (
+          <Link to={`/traces/${r.traceId}`} className="ml-auto text-caption text-accent hover:underline">
+            Open trace →
+          </Link>
+        )}
+      </Card>
+
+      {/* Left 75% — stable player only. Right 25% — synced chronological activity (GD-170). */}
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,3fr)_minmax(300px,1fr)] lg:items-start">
         <div className="min-w-0">
           {rec.isLoading ? (
             <Card className="aspect-video"><Skeleton className="h-full w-full" /></Card>
           ) : canPlay ? (
-            <RrwebCanvas events={events} durationMs={r.durationMs} seekRef={seekRef} />
+            <RrwebCanvas events={events} durationMs={r.durationMs} seekRef={seekRef} onTime={setCurrentMs} />
           ) : (
             <PlaceholderCanvas reason={rec.data?.reason} />
           )}
-
-          {/* Console / Network / Errors breakdown + click-to-seek (GD-145/156) */}
-          {canPlay && <ActivityPanel events={events} onSeek={(ms) => seekRef.current?.(ms)} />}
         </div>
 
-        {/* Right rail: AI summary + meta */}
-        <div className="flex flex-col gap-4">
+        {/* Right rail: AI summary + meta + synced activity timeline */}
+        <div className="flex min-w-0 flex-col gap-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-180px)]">
           {canPlay && <AISummary events={events} />}
           <Card className="h-fit p-4">
-          <div className="mb-2 text-h2 font-semibold">Meta</div>
-          <Row k="User" v={String((r.user as { username?: string; id?: string })?.username ?? 'anonymous')} />
-          <Row k="SDK" v="javascript-nextjs" />
-          <Row k="Duration" v={`${((r.durationMs ?? 0) / 1000).toFixed(1)}s`} />
-          <Row k="Segments" v={String(r.segmentCount)} />
-          <Row k="Events" v={String(events.length)} />
-          {clickStats.dead > 0 && <Row k="Dead clicks" v={String(clickStats.dead)} />}
-          {clickStats.rage > 0 && <Row k="Rage clicks" v={String(clickStats.rage)} />}
-          <Row k="Captured" v={`${timeAgo(r.createdAt)} ago`} />
-          {r.traceId && (
-            <Link to={`/traces/${r.traceId}`} className="mt-2 block text-caption text-accent hover:underline">
-              Open trace →
-            </Link>
-          )}
+            <div className="mb-2 text-h2 font-semibold">Meta</div>
+            <Row k="Segments" v={String(r.segmentCount)} />
+            <Row k="Events" v={String(events.length)} />
+            {clickStats.dead > 0 && <Row k="Dead clicks" v={String(clickStats.dead)} />}
+            {clickStats.rage > 0 && <Row k="Rage clicks" v={String(clickStats.rage)} />}
+            <Row k="Captured" v={`${timeAgo(r.createdAt)} ago`} />
           </Card>
+          {/* Console / Network / Errors breakdown, click-to-seek + synced highlight (GD-145/156/170) */}
+          {canPlay && (
+            <ActivityPanel
+              events={events}
+              onSeek={(ms) => seekRef.current?.(ms)}
+              activeT={currentMs}
+              className="mt-0 lg:min-h-0 lg:flex-1"
+            />
+          )}
         </div>
       </div>
     </div>
+  );
+}
+
+function MetaChip({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="flex items-center gap-1.5 text-caption text-text-muted">
+      <span className="text-text-faint">{label}</span>
+      <span className="font-mono text-text">{value}</span>
+    </span>
   );
 }
 
@@ -201,20 +246,39 @@ function statusColor(code?: number): string {
 const fmtDur = (ms?: number) => (ms == null ? '' : ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${Math.round(ms)}ms`);
 
 /** Console/Network/Errors breakdown — Sentry-style tabs, click-to-seek (GD-145/156). */
-function ActivityPanel({ events, onSeek }: { events: unknown[]; onSeek?: (ms: number) => void }) {
+function ActivityPanel({
+  events,
+  onSeek,
+  activeT,
+  className = 'mt-4',
+}: {
+  events: unknown[];
+  onSeek?: (ms: number) => void;
+  activeT?: number;
+  className?: string;
+}) {
   const acts = React.useMemo(() => extractActivity(events), [events]);
   const [tab, setTab] = React.useState<'all' | ActKind>('all');
   if (acts.length === 0) return null;
   const shown = tab === 'all' ? acts : acts.filter((a) => a.kind === tab);
   const count = (k: 'all' | ActKind) => (k === 'all' ? acts.length : acts.filter((a) => a.kind === k).length);
+  // The most recent activity at-or-before the current playhead — highlighted
+  // in sync with playback (GD-170: "related events should automatically highlight").
+  let activeIdx = -1;
+  if (activeT != null) {
+    for (let i = 0; i < shown.length; i++) {
+      if (shown[i].t <= activeT) activeIdx = i;
+      else break;
+    }
+  }
   return (
-    <Card className="mt-4 overflow-hidden p-0">
-      <div className="flex gap-4 border-b border-border px-4 pt-2">
+    <Card className={`${className} flex min-h-0 flex-1 flex-col overflow-hidden p-0`}>
+      <div className="flex gap-4 overflow-x-auto border-b border-border px-4 pt-2">
         {ACT_TABS.map((t) => (
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
-            className={`-mb-px flex items-center gap-1.5 border-b-2 pb-2 text-small ${
+            className={`-mb-px flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 pb-2 text-small ${
               tab === t.key ? 'border-accent text-text' : 'border-transparent text-text-muted hover:text-text'
             }`}
           >
@@ -223,7 +287,7 @@ function ActivityPanel({ events, onSeek }: { events: unknown[]; onSeek?: (ms: nu
           </button>
         ))}
       </div>
-      <div className="max-h-96 overflow-y-auto">
+      <div className="min-h-0 flex-1 overflow-y-auto">
         {shown.length === 0 && <div className="px-4 py-3 text-small text-text-faint">Nothing here.</div>}
         {tab === 'network' ? (
           <NetworkWaterfall items={shown} onSeek={onSeek} />
@@ -233,7 +297,9 @@ function ActivityPanel({ events, onSeek }: { events: unknown[]; onSeek?: (ms: nu
               key={i}
               onClick={() => onSeek?.(a.t)}
               title="Jump to this moment in the replay"
-              className="flex w-full items-start gap-3 border-b border-border px-4 py-1.5 text-left text-small last:border-0 hover:bg-surface-2"
+              className={`flex w-full items-start gap-3 border-b border-border px-4 py-1.5 text-left text-small last:border-0 hover:bg-surface-2 ${
+                i === activeIdx ? 'bg-accent/10 ring-1 ring-inset ring-accent/40' : ''
+              }`}
             >
               <span className="mt-1 h-2 w-2 shrink-0 rounded-full" style={{ background: ACT_COLOR[a.kind] }} />
               <span className="w-10 shrink-0 font-mono text-caption text-accent">{fmtActT(a.t)}</span>
@@ -394,10 +460,12 @@ function RrwebCanvas({
   events: rawEvents,
   durationMs,
   seekRef,
+  onTime,
 }: {
   events: unknown[];
   durationMs: number | null;
   seekRef?: React.MutableRefObject<((ms: number) => void) | undefined>;
+  onTime?: (ms: number) => void;
 }) {
   const events = React.useMemo(() => normalizeEvents(rawEvents), [rawEvents]);
   const stageRef = React.useRef<HTMLDivElement | null>(null);
@@ -443,6 +511,7 @@ function RrwebCanvas({
     return out;
   }, [events, baseline, duration]);
 
+  const lastFitH = React.useRef(0);
   const fit = React.useCallback(() => {
     const root = stageRef.current;
     if (!root) return;
@@ -458,6 +527,14 @@ function RrwebCanvas({
     // on rrweb to replay scroll, which it doesn't always do (GD-133). Size the
     // iframe/wrapper to the full document height, then scale to fit our width.
     const contentH = Math.max(iframe?.contentDocument?.documentElement?.scrollHeight ?? 0, recH);
+    // Skip re-applying transform/height for negligible height churn. The
+    // replayed page's scrollHeight settles over several ticks as fonts/images
+    // load and rrweb replays mutation events, and each re-scale was visibly
+    // jumping/blinking the whole player (GD-170) — worse, writing root.style
+    // re-triggers the ResizeObserver watching that same element, which could
+    // re-fire fit() again. A dead-band breaks that loop.
+    if (Math.abs(contentH - lastFitH.current) < 4) return;
+    lastFitH.current = contentH;
     if (iframe) iframe.style.height = `${contentH}px`;
     wrap.style.height = `${contentH}px`;
     // Fit within the container width AND a max stage height so the whole page is
@@ -619,6 +696,12 @@ function RrwebCanvas({
       seekRef.current = undefined;
     };
   }, [seekRef, seekMs]);
+
+  // Report playhead position so a sidebar activity list can highlight the
+  // event in sync with playback (GD-170).
+  React.useEffect(() => {
+    onTime?.(cur);
+  }, [cur, onTime]);
 
   const onBarPointerDown = (e: React.PointerEvent) => {
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);

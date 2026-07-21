@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, API_BASE } from '../lib/api';
 import { buildDsn } from '../lib/ingest';
 import { useUi } from '../store/ui';
 import { Button, Card, IdChip, Skeleton } from '../components/ui';
@@ -134,6 +134,20 @@ export function Settings() {
 
           <Section title="Remote config / Kill switch" hint="Throttle or disable geniusDebug in Taskip without a redeploy (FR-SDK-8, NFR-PERF-4).">
             {project ? <KillSwitch projectId={project.id} enabled={project.ingestEnabled} /> : null}
+          </Section>
+
+          <Section
+            title="Source Maps (deploy-time uploader)"
+            hint="Env vars for scripts/upload-sourcemaps.mjs as a Vercel post-build step (FR-BLD-2/3). Not Sentry's org/project/authToken — those are unused/disabled here."
+          >
+            <Row k="GENIUSDEBUG_API" v={API_BASE} />
+            <Row k="GENIUSDEBUG_PROJECT_ID" v={project?.id ?? '—'} />
+            <Row k="RELEASE" v="$VERCEL_GIT_COMMIT_SHA" />
+            {isAdmin ? (
+              <UploadToken projectId={project!.id} />
+            ) : (
+              <div className="mt-2 text-caption text-text-muted">Ask an admin to issue GENIUSDEBUG_ORG_TOKEN.</div>
+            )}
           </Section>
 
           <Section title="Retention & Usage" hint="Purge ages out old data to control cost (FR-RET-1/3).">
@@ -459,6 +473,31 @@ function KillSwitch({ projectId, enabled }: { projectId: string; enabled: boolea
       >
         {enabled ? 'Disable ingest' : 'Enable ingest'}
       </Button>
+    </div>
+  );
+}
+
+function UploadToken({ projectId }: { projectId: string }) {
+  const [token, setToken] = React.useState<string | null>(null);
+  const issue = useMutation({
+    mutationFn: () => api<{ token: string }>(`/projects/${projectId}/upload-token`, { method: 'POST' }),
+    onSuccess: (r) => setToken(r.token),
+  });
+  return (
+    <div className="mt-2">
+      {token ? (
+        <div className="flex flex-col gap-1">
+          <div className="text-caption uppercase text-text-faint">GENIUSDEBUG_ORG_TOKEN — shown once, copy now</div>
+          <pre className="overflow-x-auto rounded-md border border-border bg-bg px-3 py-2 font-mono text-mono text-text">{token}</pre>
+        </div>
+      ) : (
+        <Button size="sm" variant="secondary" disabled={issue.isPending} onClick={() => issue.mutate()}>
+          {issue.isPending ? 'Issuing…' : 'Issue upload token'}
+        </Button>
+      )}
+      {issue.isError && (
+        <div className="mt-1 text-caption text-level-error">{issue.error instanceof ApiError ? issue.error.message : 'Failed to issue token'}</div>
+      )}
     </div>
   );
 }

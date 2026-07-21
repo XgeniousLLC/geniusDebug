@@ -338,6 +338,11 @@ async function processReplay(
     issueId = ev[0]?.issueId;
   }
 
+  // replay_event carries the same shape as an error event (browser/os/device
+  // contexts, request.url) — reuse normalizeEvent for the session metadata bar
+  // (GD-170) rather than re-deriving it.
+  const meta = normalizeEvent(payload as SentryEventPayload);
+
   // One row per (replayId, segmentId); at-least-once delivery must not
   // double-insert a segment (FR-WRK-2). The player assembles all segments of a
   // replayId in order (FR-RPL).
@@ -350,6 +355,8 @@ async function processReplay(
       segmentId,
       traceId,
       user: (payload.user as Record<string, unknown>) ?? undefined,
+      contexts: meta.contexts as Record<string, unknown>,
+      url: meta.url,
       startedAt: start,
       durationMs,
       segmentCount: segmentId + 1,

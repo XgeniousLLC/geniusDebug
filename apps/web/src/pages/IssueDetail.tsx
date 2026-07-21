@@ -141,6 +141,21 @@ export function IssueDetail() {
   const [selectedReplay, setSelectedReplay] = React.useState<string | null>(null);
   const [shareOpen, setShareOpen] = React.useState(false);
 
+  // Correlate the selected occurrence to its exact replay session by shared
+  // traceId (GD-169) — falls back to the newest session (existing behavior)
+  // when this occurrence has no linked replay.
+  const currentEvent = q.data?.events[eventIdx] ?? q.data?.latestEvent;
+  React.useEffect(() => {
+    const traceId = currentEvent?.traceId;
+    if (!traceId || !issueReplays.data) {
+      setSelectedReplay(null);
+      return;
+    }
+    const match = issueReplays.data.find((rep) => rep.traceId === traceId);
+    setSelectedReplay(match ? match.id : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentEvent?.traceId, issueReplays.data]);
+
   // AI fix suggestion (DeepSeek, FR-AIF) — diagnosis is inert; PR is human-gated.
   const suggestion = useQuery({
     queryKey: ['suggest', shortId],
@@ -187,7 +202,22 @@ export function IssueDetail() {
   });
 
   if (q.isLoading) return <div className="p-6"><Skeleton className="h-40 w-full" /></div>;
-  if (q.isError || !q.data) return <div className="p-6"><ErrorState message="Issue not found." /></div>;
+  if (q.isError || !q.data) {
+    return (
+      <div className="p-6">
+        <div className="flex flex-col items-center justify-center gap-3 rounded-md border border-dashed border-border bg-surface/50 py-20 text-center">
+          <AlertTriangleIcon className="h-8 w-8 text-text-faint" />
+          <div className="text-h2 font-semibold text-text">Issue not found</div>
+          <div className="max-w-md text-small text-text-muted">
+            It may have been merged into another issue, deleted, or the link is for a different project/environment.
+          </div>
+          <Link to="/issues">
+            <Button size="sm">Back to Issues</Button>
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   const { issue, events, activity } = q.data;
   const event = events[eventIdx] ?? q.data.latestEvent;
@@ -460,16 +490,29 @@ export function IssueDetail() {
                 </div>
               )}
               <div className="overflow-hidden rounded-md border border-border">
-                {events.map((e, i) => (
-                <button
-                  key={e.id}
-                  onClick={() => { setEventIdx(i); setTab('stack'); }}
-                  className="flex w-full items-center justify-between border-b border-border bg-bg px-3 py-2 text-left last:border-0 hover:bg-surface-2"
-                >
-                    <span className="font-mono text-caption text-text-muted">{e.id.slice(0, 12)}…</span>
-                    <span className="text-caption text-text-faint">{timeAgo(e.timestamp)} ago</span>
-                  </button>
-                ))}
+                {events.map((e, i) => {
+                  const hasReplay = !!e.traceId && (issueReplays.data ?? []).some((rep) => rep.traceId === e.traceId);
+                  return (
+                    <button
+                      key={e.id}
+                      onClick={() => {
+                        setEventIdx(i);
+                        setTab(hasReplay ? 'replay' : 'stack');
+                      }}
+                      className="flex w-full items-center justify-between border-b border-border bg-bg px-3 py-2 text-left last:border-0 hover:bg-surface-2"
+                    >
+                      <span className="flex items-center gap-2">
+                        <span className="font-mono text-caption text-text-muted">{e.id.slice(0, 12)}…</span>
+                        {hasReplay && (
+                          <span title="Replay captured for this occurrence" className="flex items-center gap-1 rounded-full bg-accent/15 px-1.5 py-0.5 text-caption text-accent">
+                            <PlayIcon size={10} /> replay
+                          </span>
+                        )}
+                      </span>
+                      <span className="text-caption text-text-faint">{timeAgo(e.timestamp)} ago</span>
+                    </button>
+                  );
+                })}
               </div>
             </>
           )}
@@ -481,6 +524,7 @@ export function IssueDetail() {
               const list = issueReplays.data!;
               const activeKey = selectedReplay ?? list[0].id;
               const active = list.find((r) => r.id === activeKey) ?? list[0];
+              const linkedToOccurrence = !!currentEvent?.traceId && active.traceId === currentEvent.traceId;
               return (
                 <div>
                   <div className="mb-3 flex items-center justify-between">
@@ -489,6 +533,15 @@ export function IssueDetail() {
                       {list.length} session{list.length > 1 ? 's' : ''} · newest first
                     </span>
                   </div>
+                  {linkedToOccurrence ? (
+                    <div className="mb-2 inline-flex items-center gap-1.5 rounded-full bg-accent/15 px-2 py-0.5 text-caption text-accent">
+                      <PlayIcon size={10} /> Linked to the selected occurrence
+                    </div>
+                  ) : (
+                    <div className="mb-2 text-caption text-text-faint">
+                      Showing the most recent session — no replay was captured for this exact occurrence.
+                    </div>
+                  )}
                   <ReplayViewer replayId={active.id} durationMs={active.durationMs} />
                   {list.length > 1 && (
                     <div className="mt-3 divide-y divide-border overflow-hidden rounded-md border border-border">
@@ -519,12 +572,25 @@ export function IssueDetail() {
         <div className="flex flex-col gap-4">
           <Card className="p-4">
             <div className="mb-2 text-h2 font-semibold">Session Replay</div>
-            {(issueReplays.data?.length ?? 0) > 0 ? (
-              <div className="text-small text-text-muted">
-                {issueReplays.data!.length} replay{issueReplays.data!.length > 1 ? 's' : ''} — watch under{' '}
-                <span className="text-accent">Replays in this issue</span>.
-              </div>
-            ) : (
+            {(issueReplays.data?.length ?? 0) > 0 ? (() => {
+              const linked = currentEvent?.traceId
+                ? issueReplays.data!.find((rep) => rep.traceId === currentEvent.traceId)
+                : undefined;
+              return (
+                <div className="flex flex-col gap-2">
+                  <div className="text-small text-text-muted">
+                    {issueReplays.data!.length} replay{issueReplays.data!.length > 1 ? 's' : ''} captured for this issue.
+                    {linked ? ' One is linked to the selected occurrence (GD-169).' : ' None captured for this exact occurrence — showing the newest session.'}
+                  </div>
+                  <button
+                    onClick={() => { setTab('replay'); }}
+                    className="inline-flex w-fit items-center gap-1.5 rounded-md bg-accent px-2.5 py-1 text-caption text-white hover:opacity-90"
+                  >
+                    <PlayIcon size={11} /> Open Replay
+                  </button>
+                </div>
+              );
+            })() : (
               <div className="text-small text-text-muted">No replay captured for this issue.</div>
             )}
           </Card>
