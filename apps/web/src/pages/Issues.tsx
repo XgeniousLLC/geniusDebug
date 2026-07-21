@@ -353,7 +353,7 @@ export function Issues() {
         <EmptyState
           icon={<CheckIcon size={28} />}
           title="No issues"
-          hint="Waiting for events. Point @sentry/nextjs at your project DSN, or run the reference-incident seed."
+          hint="Waiting for events. Point your project's Sentry SDK (JS or Laravel) at its DSN — see Projects → Setup guide."
         />
       ) : (
         <>

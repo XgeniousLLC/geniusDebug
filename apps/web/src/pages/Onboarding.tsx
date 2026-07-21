@@ -8,8 +8,9 @@ import { CheckIcon } from '../components/icons';
 
 /** Post-signup onboarding (brief §6): DSN + install, live "waiting for first event". */
 export function Onboarding() {
-  const projects = useQuery({ queryKey: ['projects'], queryFn: () => api<{ id: string; name: string }[]>('/projects') });
+  const projects = useQuery({ queryKey: ['projects'], queryFn: () => api<{ id: string; name: string; platform: string }[]>('/projects') });
   const projectId = projects.data?.[0]?.id;
+  const isPhp = (projects.data?.[0]?.platform ?? '').startsWith('php');
   const keys = useQuery({
     queryKey: ['keys', projectId],
     enabled: !!projectId,
@@ -29,7 +30,9 @@ export function Onboarding() {
   return (
     <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6">
       <h1 className="mb-1 text-h1 font-semibold">Set up geniusDebug</h1>
-      <p className="mb-6 text-small text-text-muted">Point Taskip's @sentry/nextjs at your project, then trigger an error.</p>
+      <p className="mb-6 text-small text-text-muted">
+        {isPhp ? "Point your Laravel app's sentry-laravel config at your project, then trigger an error." : "Point Taskip's @sentry/nextjs at your project, then trigger an error."}
+      </p>
 
       <Card className="mb-4 p-4">
         <div className="mb-2 text-h2 font-semibold">1 · Your DSN</div>
@@ -42,13 +45,24 @@ export function Onboarding() {
 
       <Card className="mb-4 p-4">
         <div className="mb-2 text-h2 font-semibold">2 · Install</div>
-        <pre className="overflow-x-auto rounded-md border border-border bg-bg px-3 py-2 font-mono text-mono text-text">{`Sentry.init({
+        <pre className="overflow-x-auto rounded-md border border-border bg-bg px-3 py-2 font-mono text-mono text-text">
+          {isPhp
+            ? `composer require sentry/sentry-laravel
+php artisan sentry:publish --dsn="${dsnUrl}"
+
+# .env
+SENTRY_LARAVEL_DSN="${dsnUrl}"
+SENTRY_TRACES_SAMPLE_RATE=0.2`
+            : `Sentry.init({
   dsn: "${dsnUrl}",
   tunnelRoute: "/monitoring",
   tracesSampleRate: 0.1,
   replaysOnErrorSampleRate: 1.0,
-});`}</pre>
-        <p className="mt-2 text-caption text-text-muted">Full reference: <code>taskip-integration/</code> in the repo.</p>
+});`}
+        </pre>
+        <p className="mt-2 text-caption text-text-muted">
+          {isPhp ? 'Full guide: Projects → Setup guide (register the exception handler + tracing config too).' : (<>Full reference: <code>taskip-integration/</code> in the repo.</>)}
+        </p>
       </Card>
 
       <Card className="p-4">

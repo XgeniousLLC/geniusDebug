@@ -920,6 +920,7 @@ function SuspectFrame({ frames, githubDefault }: { frames: NormalizedFrame[]; gi
   const path = suspect.absPath ?? suspect.filename ?? '<anonymous>';
   const base = path.replace(/^webpack-internal:\/\/\/(\(.*?\)\/)?/, '').replace(/^\.\//, '');
   const hasCode = suspect.contextLine != null || (suspect.preContext?.length ?? 0) > 0;
+  const mappable = /\.(mjs|cjs|jsx?|tsx?|vue|svelte)$/.test(base);
   return (
     <Card className="mb-4 overflow-hidden border-l-2 border-l-level-error p-0">
       <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
@@ -955,7 +956,11 @@ function SuspectFrame({ frames, githubDefault }: { frames: NormalizedFrame[]; gi
         </pre>
       ) : (
         <div className="border-t border-border bg-bg px-4 py-2 text-caption text-text-faint">
-          {suspect.inApp ? 'No source context — upload source maps to see the crashing line here.' : 'System / minified frame — no source available.'}
+          {suspect.inApp
+            ? mappable
+              ? 'No source context — link a GitHub repo or upload source maps to see the crashing line here.'
+              : 'No source context — link a GitHub repo to see the crashing line here.'
+            : 'System / minified frame — no source available.'}
         </div>
       )}
     </Card>

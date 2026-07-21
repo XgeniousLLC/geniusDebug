@@ -33,6 +33,10 @@ export async function processEnvelope(
     try {
       if (type === 'event') {
         const payload = JSON.parse(item.payload.toString('utf8')) as SentryEventPayload;
+        // Sentry protocol only guarantees event_id on the ENVELOPE header — the
+        // item payload duplicating it is SDK-specific (JS does; PHP doesn't).
+        // Fall back so non-JS platforms aren't silently dropped (FR-WRK-7).
+        if (!payload.event_id && parsed.header.event_id) payload.event_id = parsed.header.event_id;
         await processEvent(projectId, payload);
       } else if (type === 'transaction') {
         if (opts.shedLowValue) {
