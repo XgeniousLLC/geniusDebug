@@ -22,7 +22,13 @@ export async function symbolicate(e: NormalizedEvent, projectId: string): Promis
   if (e.platform === 'javascript') {
     // Debug-ID lookup → fetch the map from R2 → apply it (FR-MAP-3/4). Falls back
     // to the raw frames with a warning when no map is found/available (FR-MAP-8).
+    if (e.debugIds.length === 0) {
+      console.warn(`[symbolicate] no debug_ids in event — source maps cannot be matched. Check that withSentryConfig sourcemaps.disable is NOT true.`);
+    }
     const r2Key = await findMapR2Key(projectId, e.debugIds);
+    if (!r2Key && e.debugIds.length > 0) {
+      console.warn(`[symbolicate] debug_ids [${e.debugIds.join(', ')}] not found in source_map_artifacts — were maps uploaded and registered?`);
+    }
     if (r2Key && (await r2Configured())) {
       try {
         const bytes = await getObject(r2Key);

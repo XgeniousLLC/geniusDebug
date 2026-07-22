@@ -65,6 +65,17 @@ Sentry.init({
   tracesSampleRate: 0.1,
   replaysOnErrorSampleRate: 1.0,
   replaysSessionSampleRate: 0,
+});
+
+// next.config.mjs — do NOT set sourcemaps.disable (Debug IDs must be injected)
+import { withSentryConfig } from "@sentry/nextjs";
+
+const nextConfig = { /* ...your config */ };
+
+export default withSentryConfig(nextConfig, {
+  release: { create: false },
+  tunnelRoute: "/monitoring",
+  silent: true,
 });`;
 
   const [copied, setCopied] = React.useState(false);
@@ -136,7 +147,7 @@ Sentry.init({
           <>
             <li>Install the SDK: <code className="font-mono text-text">npm i @sentry/nextjs</code></li>
             <li>Add the config below to <code className="font-mono text-text">sentry.client.config.ts</code> (and server/edge).</li>
-            <li>Wrap <code className="font-mono text-text">next.config.js</code> with <code className="font-mono text-text">withSentryConfig</code> + tunnel route.</li>
+            <li>Wrap <code className="font-mono text-text">next.config.js</code> with <code className="font-mono text-text">withSentryConfig</code> + tunnel route (see below).</li>
             <li>Deploy — events appear here within seconds.</li>
           </>
         )}
@@ -145,7 +156,7 @@ Sentry.init({
       {/* DSN + snippet */}
       <div>
         <div className="mb-1 flex items-center justify-between">
-          <span className="text-caption uppercase text-text-faint">{isPhp ? '.env / config' : 'Sentry.init'}</span>
+          <span className="text-caption uppercase text-text-faint">{isPhp ? '.env / config' : 'Sentry.init + next.config'}</span>
           <button onClick={() => copy(snippet)} className="text-caption text-accent hover:underline">
             {copied ? 'copied ✓' : 'copy'}
           </button>

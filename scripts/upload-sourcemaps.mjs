@@ -47,8 +47,19 @@ async function findMaps(dir) {
   return out;
 }
 
-/** Debug ID injection is done by @sentry/cli in CI; here we derive a stable id. */
+/**
+ * Read the Debug ID that the Sentry webpack plugin injected into the source map.
+ * The plugin puts a UUID-format "debugId" (or "debug_id") at the top level of the
+ * .map JSON; error events carry the same ID in debug_meta.images[].debug_id, so
+ * the worker's symbolicate() can match them (FR-MAP-3). Fall back to a content
+ * hash when the field is missing (non-Sentry builds, manual uploads, etc.).
+ */
 function debugIdFor(buf) {
+  try {
+    const map = JSON.parse(buf.toString('utf8'));
+    if (map.debugId) return map.debugId;
+    if (map['debug_id']) return map['debug_id'];
+  } catch { /* not JSON — fall through */ }
   return createHash('sha256').update(buf).digest('hex').slice(0, 32);
 }
 
