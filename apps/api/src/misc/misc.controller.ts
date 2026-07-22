@@ -338,12 +338,14 @@ export class MiscController {
   @Get('releases')
   async releasesList(
     @Req() req: Request & { user?: AuthPrincipal },
+    @Query('projectId') projectId?: string,
     @Query('limit') limitQ?: string,
     @Query('offset') offsetQ?: string,
   ) {
     const limit = Math.min(200, Math.max(1, Number(limitQ) || 20));
     const offset = Math.max(0, Number(offsetQ) || 0);
-    const pids = await accessibleProjectIds(req.user!);
+    const access = await accessibleProjectIds(req.user!);
+    const pids = projectId && access.includes(projectId) ? [projectId] : access;
     if (pids.length === 0) return { items: [], total: 0 };
     const totalRow = await db
       .select({ c: sql<number>`count(*)::int` })

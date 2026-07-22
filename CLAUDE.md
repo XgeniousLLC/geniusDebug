@@ -827,4 +827,18 @@ GitHub advanced (GD-043/44/45) code-complete; live needs a GitHub App install.
 
 ### Sprint Stats
 - Total: 9  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 9  /  BLOCKED: 0
+
+## Sprint 35 — Dashboard status badge, project-scoped Releases, PHP-aware Settings DSN
+**Status:** COMPLETE (needs api+web redeploy)
+**Started:** 2026-07-22
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-175 | Dashboard "Most frequent issues" missing resolved/archived/muted badge | DONE | MED | User screenshot: a resolved issue in dashboard's top-issues list showed no status indicator. `Dashboard.tsx` now renders `StatusChip` next to the title when `status !== 'unresolved'` (reuses the same chip Issues feed uses). |
+| GD-176 | Releases page ignores project switcher — shows all-org releases | DONE | HIGH | User screenshot: `Taskip-api` selected but `/releases` showed releases from other projects too (`Taskip - Client`). Root cause: `GET /releases` (misc.controller.ts) never took a `projectId` param, always queried all `accessibleProjectIds`. Fixed to accept `projectId` and narrow like replays/performance/alerts already do; `Releases.tsx` now sends `currentProjectId` + resets page on project switch. |
+| GD-177 | Settings DSN snippet + Source Maps section hardcoded JS/Next.js for PHP projects | DONE | HIGH | User screenshot: a `php-laravel` project's Settings page showed the `Sentry.init({...})` JS snippet and the JS-only "Source Maps (deploy-time uploader)" section (IntegrationGuide.tsx already branches on `isPhp` per GD-161/171, but Settings.tsx's own DSN block never did). Added `isPhp` check to `Settings.tsx`: PHP shows the `.env` `SENTRY_LARAVEL_DSN` block instead of `Sentry.init`, and the Source Maps section (source maps are a JS/webpack concept) is hidden for PHP projects. |
+
+### Sprint Stats
+- Total: 3  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 3  /  BLOCKED: 0
+- web + api typecheck clean. Needs api+web redeploy on Coolify.
 - api+web+workers+db typecheck clean; 37 tests green (9 ingest + 14 workers + 14 api). Migration 0015 applied locally. Browser-verified live (Chrome, logged in as the new dev test admin): login page renders + signs in correctly; replay page (previously blank-crashing) now renders the 75/25 split layout, metadata bar, and scrollable activity tabs with zero console errors. Needs api+workers+web redeploy on Coolify to take effect in prod.

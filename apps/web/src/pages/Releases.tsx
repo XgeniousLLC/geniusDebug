@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { Card, EmptyState, Skeleton, ErrorState } from '../components/ui';
 import { timeAgo } from '../lib/format';
+import { useUi } from '../store/ui';
 
 const PAGE_SIZE = 20;
 
@@ -23,10 +24,16 @@ interface Release {
  * so those are intentionally omitted rather than shown as fake numbers.
  */
 export function Releases() {
+  const currentProjectId = useUi((s) => s.currentProjectId);
   const [page, setPage] = React.useState(0);
+  React.useEffect(() => setPage(0), [currentProjectId]);
   const q = useQuery({
-    queryKey: ['releases', page],
-    queryFn: () => api<{ items: Release[]; total: number }>(`/releases?limit=${PAGE_SIZE}&offset=${page * PAGE_SIZE}`),
+    queryKey: ['releases', currentProjectId, page],
+    queryFn: () => {
+      const p = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(page * PAGE_SIZE) });
+      if (currentProjectId) p.set('projectId', currentProjectId);
+      return api<{ items: Release[]; total: number }>(`/releases?${p}`);
+    },
     placeholderData: (prev) => prev,
   });
   const total = q.data?.total ?? 0;
