@@ -450,12 +450,17 @@ export class AdminController {
       // worker's symbolicate() can look it up. Fall back to a content hash when
       // the field is missing (non-Sentry builds, manual uploads, etc.).
       let debugId: string;
+      let source: string;
       try {
         const map = JSON.parse(buf.toString('utf8'));
-        debugId = map.debugId ?? map['debug_id'] ?? createHash('sha256').update(buf).digest('hex').slice(0, 32);
+        if (map.debugId) { debugId = map.debugId; source = 'debugId'; }
+        else if (map['debug_id']) { debugId = map['debug_id']; source = 'debug_id'; }
+        else { debugId = createHash('sha256').update(buf).digest('hex').slice(0, 32); source = 'sha256-fallback'; }
       } catch {
         debugId = createHash('sha256').update(buf).digest('hex').slice(0, 32);
+        source = 'parse-error-fallback';
       }
+      if (uploaded < 3) console.log(`[upload] ${f.name} → debugId=${debugId} (source=${source})`);
 
       const r2Key = `sourcemaps/${projectId}/${debugId}.map`;
       await s3.send(new PutObjectCommand({ Bucket: r2Cfg.bucket, Key: r2Key, Body: buf, ContentType: 'application/json' }));
