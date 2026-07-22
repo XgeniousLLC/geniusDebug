@@ -136,9 +136,10 @@ async function sendEmail(recipients: string[], ctx: AlertCtx, kind: string): Pro
     ['First seen', fmtDate(row?.firstSeen)],
     ['Last seen', fmtDate(row?.lastSeen)],
   ];
+  const shortTitle = ctx.title.length > 100 ? `${ctx.title.slice(0, 100).trimEnd()}…` : ctx.title;
   const subject = row?.shortId
-    ? `[geniusDebug] ${trig.label} · ${row.shortId}: ${ctx.title}`
-    : `[geniusDebug] ${trig.label}: ${ctx.title}`;
+    ? `[geniusDebug] ${trig.label} · ${row.shortId}: ${shortTitle}`
+    : `[geniusDebug] ${trig.label}: ${shortTitle}`;
   const html = renderAlertEmail({ kind, title: ctx.title, type: row?.type ?? null, link, projectName: proj?.name, rows });
   await sendAlertEmail(recipients, subject, html);
 }

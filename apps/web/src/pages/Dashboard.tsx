@@ -2,7 +2,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { timeAgo, compact } from '../lib/format';
-import { Card, Skeleton, LevelPill, IdChip } from '../components/ui';
+import { Card, Skeleton, LevelPill, IdChip, StatusChip } from '../components/ui';
 import { NoProject } from '../components/NoProject';
 import { useUi } from '../store/ui';
 
@@ -78,7 +78,10 @@ export function Dashboard() {
                 <Link key={i.shortId} to={`/issues/${i.shortId}`} className="flex items-center gap-3 py-2.5 hover:bg-surface-2">
                   <LevelPill level={i.level} />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-small text-text">{i.title}</div>
+                    <div className="flex items-center gap-2">
+                      <div className="truncate text-small text-text">{i.title}</div>
+                      {i.status !== 'unresolved' && <StatusChip status={i.status} />}
+                    </div>
                     <div className="truncate font-mono text-caption text-text-muted">
                       {i.culprit ?? '—'} · {i.projectName}
                     </div>

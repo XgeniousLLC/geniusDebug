@@ -63,6 +63,7 @@ export function Settings() {
   if (projects.isLoading) return <div className="p-6"><Skeleton className="h-40 w-full" /></div>;
   const dsn = keys.data?.[0];
   const dsnUrl = dsn && project ? buildDsn(dsn.publicKey, project.id) : '…';
+  const isPhp = (project?.platform ?? '').startsWith('php');
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-5 sm:px-6">
@@ -115,9 +116,14 @@ export function Settings() {
                   </Button>
                 </div>
                 <div className="mt-2">
-                  <div className="mb-1 text-caption uppercase text-text-faint">Sentry.init DSN</div>
+                  <div className="mb-1 text-caption uppercase text-text-faint">{isPhp ? '.env' : 'Sentry.init DSN'}</div>
                   <pre className="overflow-x-auto rounded-md border border-border bg-bg px-3 py-2 font-mono text-mono text-text">
-{`Sentry.init({
+{isPhp
+  ? `SENTRY_LARAVEL_DSN="${dsnUrl}"
+SENTRY_TRACES_SAMPLE_RATE=0.2
+SENTRY_ENVIRONMENT=production
+SENTRY_RELEASE=\${GIT_COMMIT_SHA}`
+  : `Sentry.init({
   dsn: "${dsnUrl}",
   tunnelRoute: "/monitoring",
   environment: process.env.NEXT_PUBLIC_ENV,
@@ -136,19 +142,21 @@ export function Settings() {
             {project ? <KillSwitch projectId={project.id} enabled={project.ingestEnabled} /> : null}
           </Section>
 
-          <Section
-            title="Source Maps (deploy-time uploader)"
-            hint="Env vars for scripts/upload-sourcemaps.mjs as a Vercel post-build step (FR-BLD-2/3). Not Sentry's org/project/authToken — those are unused/disabled here."
-          >
-            <Row k="GENIUSDEBUG_API" v={API_BASE} />
-            <Row k="GENIUSDEBUG_PROJECT_ID" v={project?.id ?? '—'} />
-            <Row k="RELEASE" v="$VERCEL_GIT_COMMIT_SHA" />
-            {isAdmin ? (
-              <UploadToken projectId={project!.id} />
-            ) : (
-              <div className="mt-2 text-caption text-text-muted">Ask an admin to issue GENIUSDEBUG_ORG_TOKEN.</div>
-            )}
-          </Section>
+          {!isPhp && (
+            <Section
+              title="Source Maps (deploy-time uploader)"
+              hint="Env vars for scripts/upload-sourcemaps.mjs as a Vercel post-build step (FR-BLD-2/3). Not Sentry's org/project/authToken — those are unused/disabled here."
+            >
+              <Row k="GENIUSDEBUG_API" v={API_BASE} />
+              <Row k="GENIUSDEBUG_PROJECT_ID" v={project?.id ?? '—'} />
+              <Row k="RELEASE" v="$VERCEL_GIT_COMMIT_SHA" />
+              {isAdmin ? (
+                <UploadToken projectId={project!.id} />
+              ) : (
+                <div className="mt-2 text-caption text-text-muted">Ask an admin to issue GENIUSDEBUG_ORG_TOKEN.</div>
+              )}
+            </Section>
+          )}
 
           <Section title="Retention & Usage" hint="Purge ages out old data to control cost (FR-RET-1/3).">
             <Row k="Events retention" v="30 days" />
