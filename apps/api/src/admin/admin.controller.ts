@@ -11,9 +11,11 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import type { Request } from 'express';
+import { createHash } from 'node:crypto';
 import { randomBytes } from 'node:crypto';
 import bcrypt from 'bcryptjs';
-import { db, repositories, releases, orgTokens, sourceMapArtifacts, projects, users, memberships, dsnKeys, projectMembers } from '@geniusdebug/db';
+import { db, repositories, releases, orgTokens, sourceMapArtifacts, projects, users, memberships, dsnKeys, projectMembers, getActiveIntegration } from '@geniusdebug/db';
+import { decrypt } from '@geniusdebug/shared';
 import { and, eq, ne, inArray } from 'drizzle-orm';
 import { JwtGuard, type AuthPrincipal } from '../auth/jwt.guard';
 import { sendEmail } from '../mailer';
@@ -389,5 +391,89 @@ export class AdminController {
       });
     }
     return { ok: true, registered: (body.artifacts ?? []).length };
+  }
+
+  /* --------------- Source-map upload via API (FR-BLD-2) -------------------- */
+  /**
+   * Accepts base64-encoded .map files, uploads them to R2, and registers the
+   * artifact index. Used by the Vercel build script so R2 creds stay server-side.
+   * Body: { files: [{ name, content (base64) }], commitSha? }
+   */
+  @Post('api/:projectId/releases/:release/upload')
+  async uploadSourceMaps(
+    @Param('projectId') projectId: string,
+    @Param('release') release: string,
+    @Req() req: Request,
+    @Body() body: { files?: { name: string; content: string }[]; commitSha?: string },
+  ) {
+    // Auth — same org-token check as registerArtifacts.
+    const auth = req.headers.authorization;
+    if (!auth?.startsWith('Bearer ')) throw new UnauthorizedException('missing org token');
+    const presented = auth.slice(7);
+    const proj = await db.select({ orgId: projects.orgId }).from(projects).where(eq(projects.id, projectId)).limit(1);
+    if (proj.length === 0) throw new UnauthorizedException('unknown project');
+    const tokens = await db.select({ hash: orgTokens.tokenHash }).from(orgTokens).where(eq(orgTokens.orgId, proj[0].orgId));
+    let tokenOk = false;
+    for (const t of tokens) {
+      if (await bcrypt.compare(presented, t.hash)) { tokenOk = true; break; }
+    }
+    if (!tokenOk) throw new UnauthorizedException('invalid org token');
+
+    if (!body.files?.length) throw new BadRequestException('files array required');
+
+    // Resolve R2 config from env (ops override) or DB integrations row.
+    const r2Cfg = await this.resolveR2Config();
+    if (!r2Cfg) throw new BadRequestException('R2 not configured — connect it in Settings → Integrations');
+
+    const { S3Client, PutObjectCommand } = await import('@aws-sdk/client-s3');
+    const s3 = new S3Client({
+      region: 'auto',
+      endpoint: r2Cfg.endpoint,
+      credentials: { accessKeyId: r2Cfg.accessKeyId, secretAccessKey: r2Cfg.secretAccessKey },
+    });
+
+    // Upsert the release.
+    const rel = await db
+      .insert(releases)
+      .values({ projectId, version: release, commitSha: body.commitSha })
+      .onConflictDoUpdate({ target: [releases.projectId, releases.version], set: { commitSha: body.commitSha ?? null } })
+      .returning({ id: releases.id });
+    const releaseId = rel[0].id;
+
+    let uploaded = 0;
+    for (const f of body.files) {
+      const buf = Buffer.from(f.content, 'base64');
+      const debugId = createHash('sha256').update(buf).digest('hex').slice(0, 32);
+      const r2Key = `sourcemaps/${projectId}/${debugId}.map`;
+      await s3.send(new PutObjectCommand({ Bucket: r2Cfg.bucket, Key: r2Key, Body: buf, ContentType: 'application/json' }));
+      await db.insert(sourceMapArtifacts).values({
+        releaseId, projectId, debugId, r2Key,
+        checksum: createHash('sha1').update(buf).digest('hex'),
+        size: buf.length,
+      });
+      uploaded++;
+    }
+
+    return { ok: true, uploaded, release };
+  }
+
+  private async resolveR2Config(): Promise<{ endpoint: string; bucket: string; accessKeyId: string; secretAccessKey: string } | null> {
+    // Env vars first (ops override).
+    const { R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_ENDPOINT, R2_BUCKET } = process.env;
+    if (R2_ACCESS_KEY_ID && R2_SECRET_ACCESS_KEY && R2_ENDPOINT && R2_BUCKET) {
+      return { endpoint: R2_ENDPOINT, bucket: R2_BUCKET, accessKeyId: R2_ACCESS_KEY_ID, secretAccessKey: R2_SECRET_ACCESS_KEY };
+    }
+    // Fall back to encrypted DB integrations row.
+    try {
+      const row = await getActiveIntegration('r2');
+      if (row?.secretEnc) {
+        const sec = JSON.parse(decrypt(row.secretEnc)) as { accessKeyId?: string; secretAccessKey?: string };
+        const cfg = row.config as { endpoint?: string; bucket?: string };
+        if (cfg.endpoint && cfg.bucket && sec.accessKeyId && sec.secretAccessKey) {
+          return { endpoint: cfg.endpoint, bucket: cfg.bucket, accessKeyId: sec.accessKeyId, secretAccessKey: sec.secretAccessKey };
+        }
+      }
+    } catch { /* ignore */ }
+    return null;
   }
 }
