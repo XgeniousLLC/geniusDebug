@@ -9,7 +9,7 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   app.enableCors({ origin: true });
   // Increase JSON body limit for source-map uploads (550+ .map files base64-encoded).
-  app.use(express.json({ limit: '50mb' }));
+  app.use(express.json({ limit: '100mb' }));
   app.setGlobalPrefix('', { exclude: [] });
   app.useGlobalFilters(new HtmlExceptionFilter());
   const port = Number(process.env.API_PORT ?? 4002);
