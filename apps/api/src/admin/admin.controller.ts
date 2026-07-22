@@ -443,7 +443,20 @@ export class AdminController {
     let uploaded = 0;
     for (const f of body.files) {
       const buf = Buffer.from(f.content, 'base64');
-      const debugId = createHash('sha256').update(buf).digest('hex').slice(0, 32);
+
+      // Read the debug_id that the Sentry SDK injected into the source map.
+      // The SDK puts a UUID-format "debugId" at the top level of the .map JSON;
+      // error events carry the same ID in debug_meta.images[].debug_id, so the
+      // worker's symbolicate() can look it up. Fall back to a content hash when
+      // the field is missing (non-Sentry builds, manual uploads, etc.).
+      let debugId: string;
+      try {
+        const map = JSON.parse(buf.toString('utf8'));
+        debugId = map.debugId ?? map['debug_id'] ?? createHash('sha256').update(buf).digest('hex').slice(0, 32);
+      } catch {
+        debugId = createHash('sha256').update(buf).digest('hex').slice(0, 32);
+      }
+
       const r2Key = `sourcemaps/${projectId}/${debugId}.map`;
       await s3.send(new PutObjectCommand({ Bucket: r2Cfg.bucket, Key: r2Key, Body: buf, ContentType: 'application/json' }));
       await db.insert(sourceMapArtifacts).values({
