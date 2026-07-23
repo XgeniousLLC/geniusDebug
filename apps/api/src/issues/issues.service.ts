@@ -1,11 +1,12 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
-import { db, issues, events, environments, issueActivity, users, issueCounts, replays, repositories, releases } from '@geniusdebug/db';
+import { db, issues, events, environments, issueActivity, users, issueCounts, replays, repositories, releases, traces, spans } from '@geniusdebug/db';
 import { and, eq, ne, desc, asc, ilike, or, inArray, gte, sql } from 'drizzle-orm';
 import type { IssueDto, EventDto, IssueListQuery, IssueListResponse, IssueActionInput } from '@geniusdebug/shared';
 import type { AuthPrincipal } from '../auth/jwt.guard';
 import { accessibleProjectIds } from '../access';
 import { GithubService } from '../github/github.service';
+import { deleteObjects } from '../r2';
 
 @Injectable()
 export class IssuesService {
@@ -345,7 +346,13 @@ export class IssuesService {
   }
 
   /** Permanently delete issues by shortId (GD-149). Events aren't FK-cascaded
-   *  (the table is partitioned) so remove them explicitly; the rest cascades. */
+   *  (the table is partitioned) so remove them explicitly. `replays.issueId` is
+   *  `onDelete: set null` (not cascade — replays can outlive an issue on purpose
+   *  at the project level) and `traces`/`spans` have no `issueId` at all, so both
+   *  must be swept explicitly too, keyed off the trace ids of the deleted events'
+   *  occurrences — otherwise performance data + session replays are orphaned
+   *  forever instead of deleted. A trace is only dropped if no surviving event
+   *  (outside this delete) still references it. */
   async deleteMany(user: AuthPrincipal, shortIds: string[]): Promise<{ deleted: number }> {
     const projectIds = await accessibleProjectIds(user);
     if (projectIds.length === 0 || shortIds.length === 0) return { deleted: 0 };
@@ -355,8 +362,34 @@ export class IssuesService {
       .where(and(inArray(issues.shortId, shortIds), inArray(issues.projectId, projectIds)));
     const ids = rows.map((r) => r.id);
     if (ids.length === 0) return { deleted: 0 };
-    await db.delete(events).where(inArray(events.issueId, ids));
-    await db.delete(issues).where(inArray(issues.id, ids));
+
+    const traceRows = await db
+      .selectDistinct({ traceId: events.traceId })
+      .from(events)
+      .where(and(inArray(events.issueId, ids), sql`${events.traceId} is not null`));
+    const traceIds = traceRows.map((r) => r.traceId).filter((t): t is string => !!t);
+
+    const replayRows = await db
+      .select({ id: replays.id, r2Prefix: replays.r2Prefix })
+      .from(replays)
+      .where(traceIds.length ? or(inArray(replays.issueId, ids), inArray(replays.traceId, traceIds)) : inArray(replays.issueId, ids));
+
+    await db.transaction(async (tx) => {
+      if (replayRows.length) await tx.delete(replays).where(inArray(replays.id, replayRows.map((r) => r.id)));
+      await tx.delete(events).where(inArray(events.issueId, ids));
+      if (traceIds.length) {
+        const stillReferenced = await tx.selectDistinct({ traceId: events.traceId }).from(events).where(inArray(events.traceId, traceIds));
+        const stillIds = new Set(stillReferenced.map((r) => r.traceId));
+        const orphanTraceIds = traceIds.filter((t) => !stillIds.has(t));
+        if (orphanTraceIds.length) {
+          await tx.delete(spans).where(inArray(spans.traceId, orphanTraceIds));
+          await tx.delete(traces).where(inArray(traces.traceId, orphanTraceIds));
+        }
+      }
+      await tx.delete(issues).where(inArray(issues.id, ids));
+    });
+
+    if (replayRows.length) await deleteObjects(replayRows.map((r) => r.r2Prefix)).catch(() => 0);
     return { deleted: ids.length };
   }
 
@@ -373,6 +406,10 @@ export class IssuesService {
     if (source.id === target.id) throw new NotFoundException('cannot merge into itself');
 
     await db.update(events).set({ issueId: target.id }).where(eq(events.issueId, source.id));
+    // replays.issueId is FK onDelete:'set null' (not cascade) — without this,
+    // deleting the source issue below would silently NULL out (orphan) every
+    // replay recorded against it instead of following the merge into target.
+    await db.update(replays).set({ issueId: target.id }).where(eq(replays.issueId, source.id));
     await db
       .update(issues)
       .set({

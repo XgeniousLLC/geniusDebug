@@ -1,11 +1,12 @@
 import * as React from 'react';
-import { Link, useParams } from 'react-router-dom';
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { Link, useParams, useNavigate } from 'react-router-dom';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import 'rrweb/dist/style.css';
-import { api } from '../lib/api';
+import { api, errMsg } from '../lib/api';
 import { Card, Skeleton, ErrorState } from '../components/ui';
 import { PlayIcon, PauseIcon, FullscreenIcon, ActivityIcon, TerminalIcon, GlobeIcon, AlertTriangleIcon } from '../components/icons';
 import { timeAgo } from '../lib/format';
+import { toast } from '../store/toast';
 
 // Warm the rrweb chunk as soon as this module evaluates (app load), not on
 // first mount — avoids the brief white flash while `import('rrweb')` resolves
@@ -36,8 +37,24 @@ interface Recording {
  */
 export function ReplayPlayer() {
   const { replayId = '' } = useParams();
+  const navigate = useNavigate();
+  const qc = useQueryClient();
   const seekRef = React.useRef<((ms: number) => void) | undefined>(undefined);
   const [currentMs, setCurrentMs] = React.useState(0);
+
+  const del = useMutation({
+    mutationFn: () => api(`/replays/${replayId}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['replays'] });
+      toast.success('Replay deleted');
+      navigate('/replays');
+    },
+    onError: (e: unknown) => toast.error(`Couldn't delete: ${errMsg(e)}`),
+  });
+  function doDelete() {
+    if (!window.confirm('Permanently delete this replay session? This removes all recorded segments and cannot be undone.')) return;
+    del.mutate();
+  }
 
   const q = useQuery({ queryKey: ['replay', replayId], queryFn: () => api<Replay | null>(`/replays/${replayId}`) });
   const rec = useQuery({
@@ -95,10 +112,17 @@ export function ReplayPlayer() {
         <MetaChip label="Started" value={`${timeAgo(r.startedAt ?? r.createdAt)} ago`} />
         <MetaChip label="Duration" value={`${((r.durationMs ?? 0) / 1000).toFixed(1)}s`} />
         {r.traceId && (
-          <Link to={`/traces/${r.traceId}`} className="ml-auto text-caption text-accent hover:underline">
+          <Link to={`/traces/${r.traceId}`} className="text-caption text-accent hover:underline">
             Open trace →
           </Link>
         )}
+        <button
+          onClick={doDelete}
+          disabled={del.isPending}
+          className="ml-auto rounded-md border border-level-error/40 px-2.5 py-1 text-caption font-medium text-level-error hover:bg-level-error/10 disabled:opacity-50"
+        >
+          Delete replay
+        </button>
       </Card>
 
       {/* Left 75% — stable player only. Right 25% — synced chronological activity (GD-170). */}

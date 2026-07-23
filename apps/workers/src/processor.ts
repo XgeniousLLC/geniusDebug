@@ -1,5 +1,5 @@
 import { db, sql, issues, events, projects, environments, releases, issueActivity, traces, spans, issueCounts, replays } from '@geniusdebug/db';
-import { and, eq, isNull, sql as dsql } from 'drizzle-orm';
+import { and, eq, isNull, inArray, desc, sql as dsql } from 'drizzle-orm';
 import type { ParsedEnvelope, SentryEventPayload, SentryTransactionPayload } from '@geniusdebug/shared';
 import { normalizeEvent } from './normalize';
 import { computeFingerprint } from './fingerprint';
@@ -177,6 +177,18 @@ async function processEvent(projectId: string, payload: SentryEventPayload): Pro
     spanId: symbolicated.spanId,
   });
 
+  // Backfill: a replay for this same trace may have already landed and processed
+  // BEFORE this (slower, symbolicated) event — replay_recording items arrive in
+  // their own envelope/job and can race ahead. Those rows were inserted with
+  // issueId=NULL and nothing else ever revisits them; fix them up now that the
+  // issue is known.
+  if (symbolicated.traceId) {
+    await db
+      .update(replays)
+      .set({ issueId })
+      .where(and(eq(replays.projectId, projectId), eq(replays.traceId, symbolicated.traceId), isNull(replays.issueId)));
+  }
+
   // First event ever received for this project (GD-072 onboarding) auto-completes
   // setup — receiving an event is stronger proof than a manual checkbox.
   await db
@@ -317,6 +329,10 @@ async function processReplay(
   recBlob?: { r2Key: string; size: number; segmentId?: number },
 ): Promise<void> {
   // Assemble replay metadata (FR-RPL-3/5); the recording blob lives in R2 (pointer).
+  // `trace_ids` is every trace the SDK saw during this replay segment window
+  // (navigations, XHRs, …) — not guaranteed to be led by the erroring trace, so
+  // don't just take [0]. Store the first as the row's own traceId (existing
+  // behavior/column), but match the issue against ALL of them (GD-19x).
   const traceIds = (payload.trace_ids as string[] | undefined) ?? [];
   const traceId = traceIds[0];
   const start = payload.replay_start_timestamp
@@ -331,10 +347,20 @@ async function processReplay(
     recBlob?.segmentId ?? (typeof payload.segment_id === 'number' ? payload.segment_id : 0);
   const replayId = typeof payload.replay_id === 'string' ? payload.replay_id : undefined;
 
-  // Link to the issue that shares this trace, if any.
+  // Link to the issue whose error shares one of this replay's traces, scoped to
+  // this project and picking the most recent match deterministically (was:
+  // trace_ids[0] only, no project scope, no ordering — arbitrary row on ties).
+  // If the erroring event hasn't been processed yet (replay_recording items are
+  // separate envelopes/jobs and can race ahead of the slower symbolicated event
+  // job), this misses — processEvent backfills orphaned replays once it lands.
   let issueId: string | undefined;
-  if (traceId) {
-    const ev = await db.select({ issueId: events.issueId }).from(events).where(eq(events.traceId, traceId)).limit(1);
+  if (traceIds.length) {
+    const ev = await db
+      .select({ issueId: events.issueId })
+      .from(events)
+      .where(and(inArray(events.traceId, traceIds), eq(events.projectId, projectId)))
+      .orderBy(desc(events.timestamp))
+      .limit(1);
     issueId = ev[0]?.issueId;
   }
 

@@ -83,3 +83,19 @@ export async function getObject(key: string): Promise<Buffer | null> {
     return null; // missing object / access error → treat as no blob
   }
 }
+
+/** Best-effort blob cleanup for issue/replay delete (mirrors workers/src/r2.ts). */
+export async function deleteObjects(keys: string[]): Promise<number> {
+  const cfg = await resolveConfig();
+  if (!cfg || keys.length === 0) return 0;
+  const { DeleteObjectCommand } = await import('@aws-sdk/client-s3');
+  const c = await client(cfg);
+  for (const Key of keys) {
+    try {
+      await c.send(new DeleteObjectCommand({ Bucket: cfg.bucket, Key }));
+    } catch {
+      // missing object / access error — nothing more we can do here
+    }
+  }
+  return keys.length;
+}
