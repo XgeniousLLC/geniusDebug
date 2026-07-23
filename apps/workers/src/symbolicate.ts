@@ -47,7 +47,13 @@ export async function symbolicate(e: NormalizedEvent, projectId: string): Promis
     githubUrl: gh ? buildGithubUrl(gh, f) : undefined,
   }));
 
-  return { ...e, frames };
+  // Culprit was computed in normalize() from the raw (pre-symbolication) top
+  // in-app frame — refresh it from the resolved frames so a successfully
+  // symbolicated event doesn't keep showing the minified chunk path (FR-GRP-3).
+  const topInApp = [...frames].reverse().find((f) => f.inApp) ?? frames[frames.length - 1];
+  const culprit = topInApp?.absPath ?? topInApp?.module ?? topInApp?.filename ?? e.culprit;
+
+  return { ...e, frames, culprit };
 }
 
 /** First matching artifact's R2 key for any of the event's Debug IDs (FR-MAP-2). */
