@@ -72,7 +72,7 @@ export function ReplayPlayer() {
   // resolved) and crashed the whole page blank.
   const firstNav = React.useMemo(() => extractActivity(events).find((a) => a.kind === 'navigation'), [events]);
 
-  if (q.isLoading) return <div className="p-6"><Skeleton className="h-64 w-full" /></div>;
+  if (q.isLoading) return <ReplayPlayerSkeleton />;
   if (q.isError || !q.data) return <div className="p-6"><ErrorState message="Replay not found." /></div>;
 
   const r = q.data;
@@ -157,6 +157,65 @@ export function ReplayPlayer() {
               className="mt-0 lg:min-h-0 lg:flex-1"
             />
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Shaped skeleton matching the real layout regions (breadcrumb/title/meta bar/
+ * video+transport/right-rail cards) instead of one flat block — keeps the page
+ * from jumping around once data lands. */
+function ReplayPlayerSkeleton() {
+  return (
+    <div className="w-full px-4 py-5 sm:px-6">
+      <Skeleton className="mb-3 h-4 w-32" />
+      <Skeleton className="mb-3 h-7 w-48" />
+
+      <Card className="mb-4 flex flex-wrap items-center gap-x-6 gap-y-2 p-3">
+        <Skeleton className="h-4 w-56" />
+        <Skeleton className="h-4 w-20" />
+        <Skeleton className="h-4 w-24" />
+        <Skeleton className="h-4 w-20" />
+        <Skeleton className="ml-auto h-7 w-24" />
+      </Card>
+
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,3fr)_minmax(300px,1fr)] lg:items-start">
+        <div className="min-w-0">
+          <Card className="aspect-video"><Skeleton className="h-full w-full" /></Card>
+          <div className="mt-3 flex items-center gap-3">
+            <Skeleton className="h-9 w-9 rounded-full" />
+            <Skeleton className="h-2 flex-1 rounded-full" />
+            <Skeleton className="h-4 w-16" />
+          </div>
+        </div>
+
+        <div className="flex min-w-0 flex-col gap-4">
+          <Card className="h-fit p-4">
+            <Skeleton className="mb-2 h-5 w-32" />
+            <Skeleton className="h-16 w-full" />
+          </Card>
+          <Card className="h-fit p-4">
+            <Skeleton className="mb-3 h-5 w-16" />
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="mb-2 flex items-center justify-between">
+                <Skeleton className="h-3 w-20" />
+                <Skeleton className="h-3 w-10" />
+              </div>
+            ))}
+          </Card>
+          <Card className="h-fit p-4">
+            <div className="mb-3 flex gap-3">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <Skeleton key={i} className="h-6 w-6 rounded-md" />
+              ))}
+            </div>
+            <div className="flex flex-col gap-2">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <Skeleton key={i} className="h-8 w-full" />
+              ))}
+            </div>
+          </Card>
         </div>
       </div>
     </div>
