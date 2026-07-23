@@ -35,18 +35,23 @@ export class MiscController {
       .from(events)
       .where(and(eq(events.traceId, traceId), inArray(events.projectId, pids.length ? pids : [''])))
       .orderBy(desc(events.timestamp));
+    const issueIds = [...new Set(errRows.map((e) => e.issueId))];
+    const relatedIssues = issueIds.length
+      ? await db.select({ id: issues.id, shortId: issues.shortId, title: issues.title }).from(issues).where(inArray(issues.id, issueIds))
+      : [];
+    const titleByIssueId = new Map(relatedIssues.map((i) => [i.id, i.title]));
+
+    // events.message is only populated by SDK captureMessage() calls — most
+    // errors are captureException(), which leaves it null. Fall back to the
+    // issue title (== exception value/type) so the trace view isn't blank.
     const errs = errRows.map((e) => ({
       id: e.id,
       issueId: e.issueId,
-      message: e.message,
+      message: e.message ?? titleByIssueId.get(e.issueId) ?? null,
       level: e.level,
       timestamp: e.timestamp?.toISOString() ?? null,
       transaction: e.transaction ?? null,
     }));
-    const issueIds = [...new Set(errs.map((e) => e.issueId))];
-    const relatedIssues = issueIds.length
-      ? await db.select({ id: issues.id, shortId: issues.shortId, title: issues.title }).from(issues).where(inArray(issues.id, issueIds))
-      : [];
 
     // Header meta (GD-143): browser/os/env/age/error-count, derived from the error event.
     const lead = errRows[0];
@@ -63,7 +68,7 @@ export class MiscController {
       os: nv(ctx.os),
       environment: envName,
       errorCount: errs.length,
-      leadMessage: lead?.message ?? relatedIssues[0]?.title ?? null,
+      leadMessage: lead?.message ?? (lead ? titleByIssueId.get(lead.issueId) : null) ?? null,
       leadTimestamp: lead?.timestamp?.toISOString() ?? null,
       transaction: lead?.transaction ?? t[0].rootTransaction ?? null,
     };

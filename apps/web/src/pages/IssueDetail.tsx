@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import type { IssueDto, EventDto, NormalizedFrame } from '@geniusdebug/shared';
+import { hasUsableFramePath } from '@geniusdebug/shared';
 import { api, errMsg } from '../lib/api';
 import { useUi } from '../store/ui';
 import { toast, ACTION_PAST } from '../store/toast';
@@ -364,6 +365,10 @@ export function IssueDetail() {
                   v={event?.url ? <a href={event.url} className="text-accent hover:underline" target="_blank" rel="noreferrer">{event.url}</a> : '—'}
                 />
               )}
+              {/* CLI/artisan-command context (sentry-laravel `command_info` breadcrumb + tag) —
+                  always shown when present so a queue-worker/artisan crash tells you which
+                  command to re-run, without cluttering JS issues that never have it. */}
+              {event?.tags?.command && <Highlight k="command" v={event.tags.command} mono />}
               {pinned.has('trace') && (
                 <div className="col-span-2 flex items-center gap-2">
                   <span className="text-text-muted">Trace ID</span>
@@ -978,10 +983,14 @@ function SuspectFrame({ frames, githubDefault }: { frames: NormalizedFrame[]; gi
   void githubDefault;
   if (!frames || frames.length === 0) return null;
   const ordered = [...frames].reverse(); // crashing frame first
+  // Fallback chain: in-app + has source context → any frame with context →
+  // in-app with at least a real (non-SDK-placeholder) path → any real path →
+  // give up and show whatever the innermost frame is.
   const suspect =
     ordered.find((f) => f.inApp && f.contextLine != null) ??
     ordered.find((f) => f.contextLine != null) ??
-    ordered.find((f) => f.inApp) ??
+    ordered.find((f) => f.inApp && hasUsableFramePath(f)) ??
+    ordered.find(hasUsableFramePath) ??
     ordered[0];
   const path = suspect.absPath ?? suspect.filename ?? '<anonymous>';
   const base = path.replace(/^webpack-internal:\/\/\/(\(.*?\)\/)?/, '').replace(/^\.\//, '');

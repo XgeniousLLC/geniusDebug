@@ -54,7 +54,7 @@ Integration::handles($this);
     'views'                  => true,   // Blade view render as spans
     'missing_routes'         => false,  // trace 404s too
 ],`
-    : `// sentry.client.config.ts
+    : `// sentry.client.config.ts (or instrumentation-client.ts on Next.js 15+)
 import * as Sentry from "@sentry/nextjs";
 
 Sentry.init({
@@ -67,7 +67,19 @@ Sentry.init({
   replaysSessionSampleRate: 0,
 });
 
-// next.config.mjs — do NOT set sourcemaps.disable (Debug IDs must be injected)
+// sentry.server.config.ts + sentry.edge.config.ts — same DSN. Without these,
+// API routes / RSC / middleware errors never reach geniusDebug — only the
+// browser SDK above does, and that's an easy gap to miss.
+import * as Sentry from "@sentry/nextjs";
+
+Sentry.init({
+  dsn: "${dsn}",
+  environment: process.env.NEXT_PUBLIC_ENV,
+  release: process.env.VERCEL_GIT_COMMIT_SHA,
+  tracesSampleRate: 0.1,
+});
+
+// next.config.mjs
 import { withSentryConfig } from "@sentry/nextjs";
 
 const nextConfig = { /* ...your config */ };
@@ -76,6 +88,11 @@ export default withSentryConfig(nextConfig, {
   release: { create: false },
   tunnelRoute: "/monitoring",
   silent: true,
+  // sourcemaps.disable must stay false (or omitted) — this is what makes the
+  // webpack plugin inject the debug-ID marker every resolved frame/GitHub
+  // deep-link depends on. Leaving it default already does this; the block
+  // below is only here so it's not accidentally set to true later.
+  sourcemaps: { disable: false },
 });`;
 
   const [copied, setCopied] = React.useState(false);

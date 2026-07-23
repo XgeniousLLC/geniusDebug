@@ -14,9 +14,10 @@ import type { Request } from 'express';
 import { createHash } from 'node:crypto';
 import { randomBytes } from 'node:crypto';
 import bcrypt from 'bcryptjs';
-import { db, repositories, releases, orgTokens, sourceMapArtifacts, projects, users, memberships, dsnKeys, projectMembers, getActiveIntegration } from '@geniusdebug/db';
-import { decrypt } from '@geniusdebug/shared';
-import { and, eq, ne, inArray } from 'drizzle-orm';
+import { db, repositories, releases, orgTokens, sourceMapArtifacts, projects, users, memberships, dsnKeys, projectMembers, getActiveIntegration, issues, events } from '@geniusdebug/db';
+import { decrypt, computeCulprit } from '@geniusdebug/shared';
+import type { NormalizedFrame } from '@geniusdebug/shared';
+import { and, eq, ne, inArray, desc } from 'drizzle-orm';
 import { JwtGuard, type AuthPrincipal } from '../auth/jwt.guard';
 import { sendEmail } from '../mailer';
 
@@ -341,6 +342,42 @@ export class AdminController {
       }
     });
     return { ok: true, projectIds: wanted };
+  }
+
+  /**
+   * One-time backfill (FR-GRP-3): `issues.culprit` used to be frozen at the raw,
+   * pre-symbolication top-in-app frame and never refreshed once the worker fix
+   * landed — this recomputes it from each issue's latest stored event frames
+   * for every issue already in the org, so old issues don't have to wait for a
+   * new event to show the right culprit. Safe to re-run; only writes when the
+   * recomputed value differs.
+   */
+  @Post('admin/recompute-culprits')
+  @UseGuards(JwtGuard)
+  async recomputeCulprits(@Req() req: Request & { user?: AuthPrincipal }) {
+    if (req.user!.role !== 'admin') throw new ForbiddenException('admin only');
+    const projRows = await db.select({ id: projects.id }).from(projects).where(eq(projects.orgId, req.user!.orgId));
+    const projectIds = projRows.map((p) => p.id);
+    if (projectIds.length === 0) return { checked: 0, updated: 0 };
+
+    const issueRows = await db.select({ id: issues.id, culprit: issues.culprit }).from(issues).where(inArray(issues.projectId, projectIds));
+    let updated = 0;
+    for (const issue of issueRows) {
+      const ev = await db
+        .select({ exception: events.exception })
+        .from(events)
+        .where(eq(events.issueId, issue.id))
+        .orderBy(desc(events.timestamp))
+        .limit(1);
+      const frames = (ev[0]?.exception as { frames?: NormalizedFrame[] } | undefined)?.frames;
+      if (!frames || frames.length === 0) continue;
+      const newCulprit = computeCulprit(frames) ?? null;
+      if (newCulprit && newCulprit !== issue.culprit) {
+        await db.update(issues).set({ culprit: newCulprit }).where(eq(issues.id, issue.id));
+        updated++;
+      }
+    }
+    return { checked: issueRows.length, updated };
   }
 
   /* --------------- Deploy-pipeline artifact registration (FR-BLD-2) -------- */
