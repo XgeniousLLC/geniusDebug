@@ -920,3 +920,17 @@ User reported live on `debug.taskip.net`: replays still show "No linked issue" a
 ### Sprint Stats
 - Total: 1  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 1  /  BLOCKED: 0
 - Migration 0016 applied to local dev DB only — **prod needs `drizzle-kit migrate` (or the deploy pre-step) + api+workers redeploy** before this takes effect. New events (post-deploy) will carry `replay_id`; run `POST /admin/recompute-replay-links` again afterward — it will still show `updated:0` for the 2 *already-orphaned* prod replays checked live in this session, since their matching events predate this fix and never had `replay_id` captured (only `trace_id`, which was already tried and failed to match in GD-196). New replay/error pairs after deploy should link automatically.
+
+## Sprint 40 — Shaped skeleton loading states (Replay detail + Issue Detail)
+**Status:** DONE
+**Started:** 2026-07-24
+
+User screenshot: replay detail page took a moment to load with only flat gray blocks (no shimmer, no shape); asked for a skeleton animation there and a proper skeleton on Issue Detail too.
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-198 | Shaped skeleton loaders for ReplayPlayer + IssueDetail | DONE | MED | Both pages gated their entire body behind one flat `Skeleton` block (`h-64`/`h-40`) while the main query loaded — no region shape, page visibly snapped into place once data arrived. Reused the existing `Skeleton` primitive (`components/ui.tsx`, `animate-pulse` + `bg-surface-2`, already the app-wide pattern) to build `ReplayPlayerSkeleton` (breadcrumb/title/meta-bar card/video+transport shape/AI-summary+meta+activity-tabs right rail) and `IssueDetailSkeleton` (breadcrumb/header+action-bar/event-nav/suspect-frame card/two-column body with chart+highlights+tabs left, 4-card right rail) — both mirroring the real JSX structure region-for-region. `apps/web` typecheck clean; browser-verified live under Slow-4G+4x-CPU throttle (chrome-devtools-mcp) — skeleton shape lines up closely with the loaded page. |
+
+### Sprint Stats
+- Total: 1  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 1  /  BLOCKED: 0
+- Pure `apps/web` display change, no backend/schema touch. No redeploy blockers — ships on next web deploy.

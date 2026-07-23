@@ -273,12 +273,7 @@ export function IssueDetail() {
     onError: (e: unknown) => toast.error(`Couldn't update: ${errMsg(e)}`),
   });
 
-  if (q.isLoading)
-    return (
-      <div className="p-6">
-        <Skeleton className="h-40 w-full" />
-      </div>
-    );
+  if (q.isLoading) return <IssueDetailSkeleton />;
   if (q.isError || !q.data) {
     return (
       <div className="p-6">
@@ -1008,6 +1003,88 @@ export function IssueDetail() {
           onClose={() => setTraceSheet(false)}
         />
       )}
+    </div>
+  );
+}
+
+/** Shaped skeleton matching the real layout (breadcrumb/header/action-bar/
+ * suspect-frame/two-column body) instead of one flat block — keeps the page
+ * from jumping around once data lands. */
+function IssueDetailSkeleton() {
+  return (
+    <div className="w-full px-4 py-5 sm:px-6">
+      <Skeleton className="mb-3 h-4 w-40" />
+
+      <div className="mb-4 flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="mb-2 flex items-center gap-2">
+            <Skeleton className="h-5 w-16" />
+            <Skeleton className="h-5 w-20" />
+          </div>
+          <Skeleton className="mb-2 h-7 w-96 max-w-full" />
+          <Skeleton className="h-4 w-64" />
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <Skeleton className="h-7 w-24" />
+          <Skeleton className="h-7 w-16" />
+          <Skeleton className="h-7 w-20" />
+          <Skeleton className="h-7 w-20" />
+        </div>
+      </div>
+
+      <div className="mb-4 flex items-center gap-2">
+        <Skeleton className="h-6 w-16" />
+        <Skeleton className="h-4 w-24" />
+        <Skeleton className="h-6 w-16" />
+      </div>
+
+      <Card className="mb-4 p-0">
+        <div className="flex items-center justify-between border-b border-border p-3">
+          <Skeleton className="h-4 w-64" />
+          <Skeleton className="h-4 w-16" />
+        </div>
+        <div className="p-3">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="mb-2 h-4 w-full" />
+          ))}
+        </div>
+      </Card>
+
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
+        <div className="min-w-0">
+          <Card className="mb-4 p-4">
+            <Skeleton className="mb-3 h-5 w-24" />
+            <Skeleton className="h-24 w-full" />
+          </Card>
+          <Card className="mb-4 p-4">
+            <Skeleton className="mb-3 h-5 w-24" />
+            <div className="grid grid-cols-2 gap-3">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <Skeleton key={i} className="h-4 w-full" />
+              ))}
+            </div>
+          </Card>
+          <div className="mb-3 flex gap-4 border-b border-border">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <Skeleton key={i} className="mb-2 h-4 w-16" />
+            ))}
+          </div>
+          <Card className="p-4">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <Skeleton key={i} className="mb-2 h-4 w-full" />
+            ))}
+          </Card>
+        </div>
+
+        <div className="flex flex-col gap-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Card key={i} className="p-4">
+              <Skeleton className="mb-2 h-5 w-28" />
+              <Skeleton className="h-12 w-full" />
+            </Card>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
