@@ -48,13 +48,31 @@ async function findMaps(dir) {
 }
 
 /**
- * Read the Debug ID that the Sentry webpack plugin injected into the source map.
- * The plugin puts a UUID-format "debugId" (or "debug_id") at the top level of the
- * .map JSON; error events carry the same ID in debug_meta.images[].debug_id, so
- * the worker's symbolicate() can match them (FR-MAP-3). Fall back to a content
- * hash when the field is missing (non-Sentry builds, manual uploads, etc.).
+ * Read the Debug ID that Sentry's webpack plugin injected for this bundle.
+ *
+ * IMPORTANT (found the hard way — see taskip-client incident, Sprint 36): the
+ * `//# debugId=<uuid>` COMMENT in the .map JSON is only ever written by the
+ * plugin's own upload-preparation step, which requires SENTRY_AUTH_TOKEN — and
+ * this guide deliberately tells you NOT to set that (no SaaS upload). Without
+ * it, the .map's `debugId`/`debug_id` field is simply never populated, and
+ * falling back to a content hash means it can NEVER match a real event's
+ * debug_id — every symbolication lookup silently fails forever, with no error
+ * anywhere in the pipeline to point at why.
+ *
+ * What IS always present, auth-independent, is the debug-ID marker webpack's
+ * BannerPlugin injects into the actual JS file — `sentry-dbid-<uuid>` — which
+ * is also what the browser SDK itself reads into debug_meta.images[].debug_id.
+ * Read that from the sibling .js file instead. Falls back to the .map's own
+ * field (works if you DO have a Sentry auth token configured) and finally to
+ * a content hash (non-Sentry builds).
  */
-function debugIdFor(buf) {
+async function debugIdFor(buf, mapPath) {
+  try {
+    const jsPath = mapPath.replace(/\.map$/, '');
+    const jsContent = await readFile(jsPath, 'utf8');
+    const marker = jsContent.match(/sentry-dbid-([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/);
+    if (marker) return marker[1];
+  } catch { /* JS file missing/unreadable — fall through */ }
   try {
     const map = JSON.parse(buf.toString('utf8'));
     if (map.debugId) return map.debugId;
@@ -103,7 +121,7 @@ async function main() {
   const artifacts = [];
   for (const mapPath of maps) {
     const buf = await readFile(mapPath);
-    const debugId = debugIdFor(buf);
+    const debugId = await debugIdFor(buf, mapPath);
     const checksum = createHash('sha1').update(buf).digest('hex');
     const { r2Key } = await uploadToR2(debugId, buf);
     artifacts.push({ debugId, r2Key, checksum, size: buf.length });

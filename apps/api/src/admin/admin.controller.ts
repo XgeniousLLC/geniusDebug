@@ -15,7 +15,8 @@ import { createHash } from 'node:crypto';
 import { randomBytes } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { db, repositories, releases, orgTokens, sourceMapArtifacts, projects, users, memberships, dsnKeys, projectMembers, getActiveIntegration, issues, events } from '@geniusdebug/db';
-import { decrypt } from '@geniusdebug/shared';
+import { decrypt, computeCulprit } from '@geniusdebug/shared';
+import type { NormalizedFrame } from '@geniusdebug/shared';
 import { and, eq, ne, inArray, desc } from 'drizzle-orm';
 import { JwtGuard, type AuthPrincipal } from '../auth/jwt.guard';
 import { sendEmail } from '../mailer';
@@ -368,11 +369,9 @@ export class AdminController {
         .where(eq(events.issueId, issue.id))
         .orderBy(desc(events.timestamp))
         .limit(1);
-      const frames = (ev[0]?.exception as { frames?: Array<{ absPath?: string; module?: string; filename?: string; inApp?: boolean }> } | undefined)
-        ?.frames;
+      const frames = (ev[0]?.exception as { frames?: NormalizedFrame[] } | undefined)?.frames;
       if (!frames || frames.length === 0) continue;
-      const topInApp = [...frames].reverse().find((f) => f.inApp) ?? frames[frames.length - 1];
-      const newCulprit = topInApp?.absPath ?? topInApp?.module ?? topInApp?.filename ?? null;
+      const newCulprit = computeCulprit(frames) ?? null;
       if (newCulprit && newCulprit !== issue.culprit) {
         await db.update(issues).set({ culprit: newCulprit }).where(eq(issues.id, issue.id));
         updated++;

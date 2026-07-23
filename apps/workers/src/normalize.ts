@@ -1,4 +1,5 @@
 import type { SentryEventPayload, NormalizedEvent, NormalizedFrame, IssueLevel } from '@geniusdebug/shared';
+import { computeCulprit } from '@geniusdebug/shared';
 
 function coerceMessage(m: SentryEventPayload['message']): string | undefined {
   if (!m) return undefined;
@@ -32,8 +33,7 @@ export function normalizeEvent(p: SentryEventPayload): NormalizedEvent {
   }));
 
   // Culprit = top in-app frame's module/abs_path (FR-GRP-3).
-  const topInApp = [...frames].reverse().find((f) => f.inApp) ?? frames[frames.length - 1];
-  const culprit = topInApp?.absPath ?? topInApp?.module ?? topInApp?.filename;
+  const culprit = computeCulprit(frames);
 
   const ts =
     typeof p.timestamp === 'number'

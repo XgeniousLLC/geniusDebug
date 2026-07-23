@@ -3,6 +3,7 @@ import { and, eq, inArray } from 'drizzle-orm';
 import type { NormalizedEvent, NormalizedFrame } from '@geniusdebug/shared';
 import { getObject, r2Configured } from './r2';
 import { symbolicateWithMaps, FRAMEWORK_INTERNAL_RE } from './apply-map';
+import { computeCulprit } from '@geniusdebug/shared';
 
 /**
  * Symbolication step (FR-MAP-3..10). Map-based symbolication SKIPS when
@@ -55,8 +56,7 @@ export async function symbolicate(e: NormalizedEvent, projectId: string): Promis
   // Culprit was computed in normalize() from the raw (pre-symbolication) top
   // in-app frame — refresh it from the resolved frames so a successfully
   // symbolicated event doesn't keep showing the minified chunk path (FR-GRP-3).
-  const topInApp = [...frames].reverse().find((f) => f.inApp) ?? frames[frames.length - 1];
-  const culprit = topInApp?.absPath ?? topInApp?.module ?? topInApp?.filename ?? e.culprit;
+  const culprit = computeCulprit(frames, e.culprit);
 
   return { ...e, frames, culprit };
 }
