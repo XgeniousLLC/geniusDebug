@@ -398,20 +398,39 @@ export class AdminController {
     if (projectIds.length === 0) return { checked: 0, updated: 0 };
 
     const orphans = await db
-      .select({ id: replays.id, projectId: replays.projectId, traceId: replays.traceId })
+      .select({
+        id: replays.id,
+        projectId: replays.projectId,
+        traceId: replays.traceId,
+        replayId: replays.replayId,
+      })
       .from(replays)
       .where(and(inArray(replays.projectId, projectIds), isNull(replays.issueId)));
     let updated = 0;
     for (const r of orphans) {
-      if (!r.traceId) continue;
-      const ev = await db
-        .select({ issueId: events.issueId })
-        .from(events)
-        .where(and(eq(events.traceId, r.traceId), eq(events.projectId, r.projectId)))
-        .orderBy(desc(events.timestamp))
-        .limit(1);
-      if (ev[0]?.issueId) {
-        await db.update(replays).set({ issueId: ev[0].issueId }).where(eq(replays.id, r.id));
+      // replay_id match first (GD-197) — reliable regardless of trace sampling;
+      // trace_id is a fallback for events recorded before replay_id was captured.
+      let matchedIssueId: string | undefined;
+      if (r.replayId) {
+        const ev = await db
+          .select({ issueId: events.issueId })
+          .from(events)
+          .where(and(eq(events.replayId, r.replayId), eq(events.projectId, r.projectId)))
+          .orderBy(desc(events.timestamp))
+          .limit(1);
+        matchedIssueId = ev[0]?.issueId;
+      }
+      if (!matchedIssueId && r.traceId) {
+        const ev = await db
+          .select({ issueId: events.issueId })
+          .from(events)
+          .where(and(eq(events.traceId, r.traceId), eq(events.projectId, r.projectId)))
+          .orderBy(desc(events.timestamp))
+          .limit(1);
+        matchedIssueId = ev[0]?.issueId;
+      }
+      if (matchedIssueId) {
+        await db.update(replays).set({ issueId: matchedIssueId }).where(eq(replays.id, r.id));
         updated++;
       }
     }
