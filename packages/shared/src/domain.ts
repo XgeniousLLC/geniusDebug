@@ -35,6 +35,7 @@ export interface NormalizedEvent {
   sdk?: { name?: string; version?: string };
   traceId?: string;
   spanId?: string;
+  replayId?: string;
   debugIds: string[];
 }
 

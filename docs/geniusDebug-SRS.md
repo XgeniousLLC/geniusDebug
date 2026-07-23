@@ -463,8 +463,9 @@ Blobs (replay segments, source maps, attachments) live in **R2**; PostgreSQL sto
 **issues** — `id, project_id, short_id(JAVASCRIPT-NEXTJS-Z), fingerprint(unique per project), title, culprit, type(TypeError), level, status(unresolved|resolved|archived|muted), is_regressed, assignee_user_id, first_seen, last_seen, times_seen, users_affected, created_at`
 > Indexes: `(project_id, status, last_seen)`, `(project_id, fingerprint)` unique, `(project_id, first_seen)`.
 
-**events** — `id(event_id uuid), issue_id, project_id, environment_id, release_id, timestamp, level, handled(bool), transaction('/:workspace/dashboard'), url, message, exception jsonb(type,value,stacktrace), contexts jsonb(browser,os,device), request jsonb, user jsonb, tags jsonb, breadcrumbs jsonb, sdk jsonb, trace_id, span_id`
-> Partitioned by `timestamp` (e.g. daily/weekly). Indexes: `(issue_id, timestamp)`, `(project_id, timestamp)`, `(trace_id)`.
+**events** — `id(event_id uuid), issue_id, project_id, environment_id, release_id, timestamp, level, handled(bool), transaction('/:workspace/dashboard'), url, message, exception jsonb(type,value,stacktrace), contexts jsonb(browser,os,device), request jsonb, user jsonb, tags jsonb, breadcrumbs jsonb, sdk jsonb, trace_id, span_id, replay_id`
+> Partitioned by `timestamp` (e.g. daily/weekly). Indexes: `(issue_id, timestamp)`, `(project_id, timestamp)`, `(trace_id)`, `(replay_id)`.
+> `replay_id` (GD-197) comes from `contexts.replay.replay_id` on the event — present whenever a replay session was active, independent of trace sampling. It's the primary error↔replay correlator; `trace_id` matching (below) is a fallback since Replay's `trace_ids` only include *sampled* transactions, which is empty most of the time at `tracesSampleRate < 1`.
 
 **issue_counts** *(aggregate/time-series)* — `issue_id, bucket(time), count` *(so we don't store every duplicate event at full fidelity — FR-RET-2)*
 

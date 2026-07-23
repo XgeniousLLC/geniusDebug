@@ -272,12 +272,19 @@ export const events = pgTable(
     sdk: jsonb('sdk').$type<Record<string, unknown>>(),
     traceId: varchar('trace_id', { length: 64 }),
     spanId: varchar('span_id', { length: 64 }),
+    // Sentry Replay session id (contexts.replay.replay_id), when the event fired
+    // during an active replay recording. Independent of trace sampling — a far
+    // more reliable error<->replay correlator than trace_id (replay's trace_ids
+    // only include *sampled* transactions, which is empty most of the time at
+    // typical tracesSampleRate < 1). See GD-197.
+    replayId: varchar('replay_id', { length: 64 }),
   },
   (t) => ({
     pk: primaryKey({ columns: [t.id, t.timestamp] }),
     issueTsIdx: index('events_issue_ts_idx').on(t.issueId, t.timestamp),
     projectTsIdx: index('events_project_ts_idx').on(t.projectId, t.timestamp),
     traceIdx: index('events_trace_idx').on(t.traceId),
+    replayIdx: index('events_replay_idx').on(t.replayId),
   }),
 );
 

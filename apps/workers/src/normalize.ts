@@ -72,6 +72,7 @@ export function normalizeEvent(p: SentryEventPayload): NormalizedEvent {
     sdk: p.sdk,
     traceId: p.contexts?.trace?.trace_id,
     spanId: p.contexts?.trace?.span_id,
+    replayId: (p.contexts?.replay as { replay_id?: string } | undefined)?.replay_id,
     debugIds,
   };
 }

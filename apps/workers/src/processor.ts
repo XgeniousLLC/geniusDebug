@@ -175,13 +175,24 @@ async function processEvent(projectId: string, payload: SentryEventPayload): Pro
     sdk: symbolicated.sdk as Record<string, unknown>,
     traceId: symbolicated.traceId,
     spanId: symbolicated.spanId,
+    replayId: symbolicated.replayId,
   });
 
-  // Backfill: a replay for this same trace may have already landed and processed
-  // BEFORE this (slower, symbolicated) event — replay_recording items arrive in
-  // their own envelope/job and can race ahead. Those rows were inserted with
-  // issueId=NULL and nothing else ever revisits them; fix them up now that the
-  // issue is known.
+  // Backfill: a replay for this same session may have already landed and
+  // processed BEFORE this (slower, symbolicated) event — replay_recording items
+  // arrive in their own envelope/job and can race ahead. Those rows were
+  // inserted with issueId=NULL and nothing else ever revisits them; fix them up
+  // now that the issue is known. Match by replay_id first (GD-197) — reliable
+  // regardless of trace sampling; trace_id is a fallback for older events/replays
+  // recorded before this field was captured.
+  if (symbolicated.replayId) {
+    await db
+      .update(replays)
+      .set({ issueId })
+      .where(
+        and(eq(replays.projectId, projectId), eq(replays.replayId, symbolicated.replayId), isNull(replays.issueId)),
+      );
+  }
   if (symbolicated.traceId) {
     await db
       .update(replays)
@@ -347,14 +358,27 @@ async function processReplay(
     recBlob?.segmentId ?? (typeof payload.segment_id === 'number' ? payload.segment_id : 0);
   const replayId = typeof payload.replay_id === 'string' ? payload.replay_id : undefined;
 
-  // Link to the issue whose error shares one of this replay's traces, scoped to
-  // this project and picking the most recent match deterministically (was:
-  // trace_ids[0] only, no project scope, no ordering — arbitrary row on ties).
-  // If the erroring event hasn't been processed yet (replay_recording items are
-  // separate envelopes/jobs and can race ahead of the slower symbolicated event
-  // job), this misses — processEvent backfills orphaned replays once it lands.
+  // Link to the issue whose error happened during this replay session, scoped to
+  // this project and picking the most recent match deterministically. Match by
+  // replay_id first (GD-197) — trace_id only correlates when the SDK actually
+  // sampled a transaction during the segment window (rare at tracesSampleRate<1,
+  // so trace_ids is usually empty even though the error itself always carries an
+  // ambient trace context); replay_id is present on every event fired while a
+  // replay session is recording, independent of tracing sampling. If the erroring
+  // event hasn't been processed yet (replay_recording items are separate
+  // envelopes/jobs and can race ahead of the slower symbolicated event job), this
+  // misses — processEvent backfills orphaned replays once it lands.
   let issueId: string | undefined;
-  if (traceIds.length) {
+  if (replayId) {
+    const ev = await db
+      .select({ issueId: events.issueId })
+      .from(events)
+      .where(and(eq(events.replayId, replayId), eq(events.projectId, projectId)))
+      .orderBy(desc(events.timestamp))
+      .limit(1);
+    issueId = ev[0]?.issueId;
+  }
+  if (!issueId && traceIds.length) {
     const ev = await db
       .select({ issueId: events.issueId })
       .from(events)
