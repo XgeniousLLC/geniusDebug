@@ -364,6 +364,10 @@ export function IssueDetail() {
                   v={event?.url ? <a href={event.url} className="text-accent hover:underline" target="_blank" rel="noreferrer">{event.url}</a> : '—'}
                 />
               )}
+              {/* CLI/artisan-command context (sentry-laravel `command_info` breadcrumb + tag) —
+                  always shown when present so a queue-worker/artisan crash tells you which
+                  command to re-run, without cluttering JS issues that never have it. */}
+              {event?.tags?.command && <Highlight k="command" v={event.tags.command} mono />}
               {pinned.has('trace') && (
                 <div className="col-span-2 flex items-center gap-2">
                   <span className="text-text-muted">Trace ID</span>
