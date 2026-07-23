@@ -21,6 +21,17 @@ function framePath(f: NormalizedFrame): string | undefined {
 }
 
 /**
+ * True if this frame has a real file the UI can show (not an SDK placeholder
+ * like `"Unknown"`/`"[internal]"`/empty). Shared with the web app so the
+ * "Crashed in" summary / featured frame doesn't pick an unresolvable frame
+ * over a sibling that actually has a usable path, same fallback intent as
+ * computeCulprit().
+ */
+export function hasUsableFramePath(f: NormalizedFrame): boolean {
+  return framePath(f) !== undefined;
+}
+
+/**
  * Culprit = the top in-app frame's path (FR-GRP-3), skipping frames the SDK
  * couldn't resolve a real file for (e.g. sentry-php's "Unknown" placeholder
  * on shutdown-captured fatals — showing that as the culprit is worse than

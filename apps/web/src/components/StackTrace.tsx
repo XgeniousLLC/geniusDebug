@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { NormalizedFrame } from '@geniusdebug/shared';
+import { hasUsableFramePath } from '@geniusdebug/shared';
 import { api } from '../lib/api';
 import { ChevronDownIcon } from './icons';
 
@@ -25,7 +26,11 @@ export function StackTrace({ frames, shortId }: { frames: NormalizedFrame[]; sho
     return <div className="text-small text-text-muted">No stack trace on this event.</div>;
   }
   const ordered = [...frames].reverse(); // crashing frame first
-  const crash = ordered[0];
+  // The innermost frame is sometimes one the SDK couldn't resolve a real file
+  // for (e.g. sentry-php's "Unknown"/line-0 placeholder on a shutdown-captured
+  // fatal with no backtrace to the actual trigger) — featuring that as "Crashed
+  // in" is actively misleading. Prefer the nearest frame with a real path.
+  const crash = ordered.find(hasUsableFramePath) ?? ordered[0];
 
   // Group consecutive system frames so they collapse together (Sentry behavior).
   const groups: { system: boolean; frames: { f: NormalizedFrame; idx: number }[] }[] = [];
@@ -46,7 +51,7 @@ export function StackTrace({ frames, shortId }: { frames: NormalizedFrame[]; sho
           Crashed in {crash.inApp ? '' : 'non-app: '}
           <span className="font-mono text-text">
             {shortFile(crash.absPath ?? crash.filename)}
-            {crash.lineno != null ? `:${crash.lineno}${crash.colno != null ? `:${crash.colno}` : ''}` : ''}
+            {crash.lineno ? `:${crash.lineno}${crash.colno != null ? `:${crash.colno}` : ''}` : ''}
           </span>
           {crash.function && (
             <span>
@@ -132,7 +137,7 @@ function Frame({ f, defaultOpen, last, shortId }: { f: NormalizedFrame; defaultO
           <ChevronDownIcon size={13} className={`shrink-0 text-text-faint transition-transform ${open ? '' : '-rotate-90'}`} />
           <span className={`min-w-0 truncate ${f.inApp ? 'text-text' : 'text-text-faint'}`}>
             {file}
-            {f.lineno != null && (
+            {!!f.lineno && (
               <span className="text-text-faint">
                 :{f.lineno}
                 {f.colno != null ? `:${f.colno}` : ''}
@@ -184,18 +189,20 @@ function Frame({ f, defaultOpen, last, shortId }: { f: NormalizedFrame; defaultO
             <div className="flex flex-wrap gap-x-6 gap-y-1">
               {f.function && <Detail k="function" v={f.function} />}
               <Detail k="file" v={f.absPath ?? f.filename ?? '<anonymous>'} />
-              {f.lineno != null && <Detail k="line" v={`${f.lineno}${f.colno != null ? `:${f.colno}` : ''}`} />}
+              {!!f.lineno && <Detail k="line" v={`${f.lineno}${f.colno != null ? `:${f.colno}` : ''}`} />}
             </div>
             <div className="mt-1.5 text-caption text-text-faint">
-              {src.isFetching
-                ? 'Loading source from GitHub…'
-                : canFetch && src.data && !src.data.available
-                  ? `No source: ${src.data.reason ?? 'unavailable'}.`
-                  : f.inApp
-                    ? mappable
-                      ? 'No source context — link a GitHub repo or upload source maps to see the code here.'
-                      : 'No source context — link a GitHub repo to see the code here.'
-                    : 'System / minified frame — no source available.'}
+              {!hasUsableFramePath(f)
+                ? "No file for this frame — the SDK couldn't resolve one (common for a PHP shutdown-captured fatal with no full backtrace to the trigger). Linking a repo won't help here; check breadcrumbs/tags for context instead."
+                : src.isFetching
+                  ? 'Loading source from GitHub…'
+                  : canFetch && src.data && !src.data.available
+                    ? `No source: ${src.data.reason ?? 'unavailable'}.`
+                    : f.inApp
+                      ? mappable
+                        ? 'No source context — link a GitHub repo or upload source maps to see the code here.'
+                        : 'No source context — link a GitHub repo to see the code here.'
+                      : 'System / minified frame — no source available.'}
             </div>
           </div>
         ))}
