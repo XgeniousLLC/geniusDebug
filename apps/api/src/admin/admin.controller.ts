@@ -14,10 +14,10 @@ import type { Request } from 'express';
 import { createHash } from 'node:crypto';
 import { randomBytes } from 'node:crypto';
 import bcrypt from 'bcryptjs';
-import { db, repositories, releases, orgTokens, sourceMapArtifacts, projects, users, memberships, dsnKeys, projectMembers, getActiveIntegration, issues, events } from '@geniusdebug/db';
+import { db, repositories, releases, orgTokens, sourceMapArtifacts, projects, users, memberships, dsnKeys, projectMembers, getActiveIntegration, issues, events, replays } from '@geniusdebug/db';
 import { decrypt, computeCulprit } from '@geniusdebug/shared';
 import type { NormalizedFrame } from '@geniusdebug/shared';
-import { and, eq, ne, inArray, desc } from 'drizzle-orm';
+import { and, eq, ne, inArray, desc, isNull } from 'drizzle-orm';
 import { JwtGuard, type AuthPrincipal } from '../auth/jwt.guard';
 import { sendEmail } from '../mailer';
 
@@ -378,6 +378,44 @@ export class AdminController {
       }
     }
     return { checked: issueRows.length, updated };
+  }
+
+  /**
+   * One-time backfill: replays whose `issueId` was never resolved (the
+   * matching error event landed AFTER the replay was processed — replay
+   * segments are separate envelopes/jobs and can race ahead of the slower
+   * symbolicated event job) are stuck at issueId=NULL forever with no
+   * self-healing (the live path only backfills going forward, once the fix
+   * shipped). Re-runs the same trace-id match for every still-orphaned replay
+   * in the org. Safe to re-run; only writes rows that resolve to an issue.
+   */
+  @Post('admin/recompute-replay-links')
+  @UseGuards(JwtGuard)
+  async recomputeReplayLinks(@Req() req: Request & { user?: AuthPrincipal }) {
+    if (req.user!.role !== 'admin') throw new ForbiddenException('admin only');
+    const projRows = await db.select({ id: projects.id }).from(projects).where(eq(projects.orgId, req.user!.orgId));
+    const projectIds = projRows.map((p) => p.id);
+    if (projectIds.length === 0) return { checked: 0, updated: 0 };
+
+    const orphans = await db
+      .select({ id: replays.id, projectId: replays.projectId, traceId: replays.traceId })
+      .from(replays)
+      .where(and(inArray(replays.projectId, projectIds), isNull(replays.issueId)));
+    let updated = 0;
+    for (const r of orphans) {
+      if (!r.traceId) continue;
+      const ev = await db
+        .select({ issueId: events.issueId })
+        .from(events)
+        .where(and(eq(events.traceId, r.traceId), eq(events.projectId, r.projectId)))
+        .orderBy(desc(events.timestamp))
+        .limit(1);
+      if (ev[0]?.issueId) {
+        await db.update(replays).set({ issueId: ev[0].issueId }).where(eq(replays.id, r.id));
+        updated++;
+      }
+    }
+    return { checked: orphans.length, updated };
   }
 
   /* --------------- Deploy-pipeline artifact registration (FR-BLD-2) -------- */

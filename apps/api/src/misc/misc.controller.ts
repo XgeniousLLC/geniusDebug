@@ -1,11 +1,11 @@
-import { Controller, Get, Post, Body, Param, Query, Req, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Body, Param, Query, Req, UseGuards, HttpCode, BadRequestException } from '@nestjs/common';
 import { deepseekJson, deepseekConfigured } from '../suggest/deepseek';
 import type { Request } from 'express';
 import { db, traces, spans, events, issues, replays, alertRules, notifications, releases, projects, environments } from '@geniusdebug/db';
-import { and, desc, eq, gte, lt, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, lt, inArray, or, sql } from 'drizzle-orm';
 import { JwtGuard, type AuthPrincipal } from '../auth/jwt.guard';
 import { accessibleProjectIds, assertProjectAccess } from '../access';
-import { getObject } from '../r2';
+import { getObject, deleteObjects } from '../r2';
 import { decodeReplayEvents } from './replay-decode';
 import { countDrop } from '../drops';
 
@@ -193,6 +193,57 @@ export class MiscController {
       return { events: [], reason: hasPrefix ? 'blob unavailable (R2 unconfigured, wrong encryption key, or decode failed)' : 'no recording blob in R2' };
     }
     return { events, segments: fetched };
+  }
+
+  /** Delete one replay session (all its segments + R2 blobs). */
+  @Delete('replays/:id')
+  @HttpCode(204)
+  async deleteReplay(@Req() req: Request & { user?: AuthPrincipal }, @Param('id') id: string) {
+    await this.deleteReplaySessions(req.user!, [id]);
+  }
+
+  /** Bulk-delete replay sessions (all segments + R2 blobs) by row id. */
+  @Post('replays/bulk/delete')
+  async bulkDeleteReplays(@Req() req: Request & { user?: AuthPrincipal }, @Body() body: { ids?: string[] }) {
+    const ids = (body.ids ?? []).filter((s): s is string => typeof s === 'string');
+    if (ids.length === 0) throw new BadRequestException('ids required');
+    return this.deleteReplaySessions(req.user!, ids);
+  }
+
+  /**
+   * Resolves each given `replays.id` to its whole session (every segment sharing
+   * `replayId`+`projectId`, since a session is split across many segment rows —
+   * see `recording()` above), deletes the R2 blobs, then the rows. Access-scoped;
+   * ids outside the caller's projects are silently dropped.
+   */
+  private async deleteReplaySessions(user: AuthPrincipal, ids: string[]): Promise<{ deleted: number }> {
+    const access = await accessibleProjectIds(user);
+    if (access.length === 0 || ids.length === 0) return { deleted: 0 };
+    const rows = await db
+      .select({ id: replays.id, projectId: replays.projectId, replayId: replays.replayId })
+      .from(replays)
+      .where(inArray(replays.id, ids));
+    const owned = rows.filter((r) => access.includes(r.projectId));
+    if (owned.length === 0) return { deleted: 0 };
+
+    const singleIds = owned.filter((r) => !r.replayId).map((r) => r.id);
+    const pairs = [...new Map(owned.filter((r) => r.replayId).map((r) => [`${r.projectId}::${r.replayId}`, { projectId: r.projectId, replayId: r.replayId! }])).values()];
+
+    const [sessionRows, singleRows] = await Promise.all([
+      pairs.length
+        ? db
+            .select({ id: replays.id, r2Prefix: replays.r2Prefix })
+            .from(replays)
+            .where(or(...pairs.map((p) => and(eq(replays.projectId, p.projectId), eq(replays.replayId, p.replayId)))))
+        : Promise.resolve([]),
+      singleIds.length ? db.select({ id: replays.id, r2Prefix: replays.r2Prefix }).from(replays).where(inArray(replays.id, singleIds)) : Promise.resolve([]),
+    ]);
+    const allRows = [...sessionRows, ...singleRows];
+    if (allRows.length === 0) return { deleted: 0 };
+
+    await db.delete(replays).where(inArray(replays.id, allRows.map((r) => r.id)));
+    await deleteObjects(allRows.map((r) => r.r2Prefix)).catch(() => 0);
+    return { deleted: allRows.length };
   }
 
   /** AI session summary for a replay (GD-145) — narrative + steps via DeepSeek. */
