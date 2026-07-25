@@ -22,6 +22,7 @@
 import { readdir, readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
+import { gzipSync } from 'node:zlib';
 
 const {
   GENIUSDEBUG_API = 'http://localhost:4002',
@@ -81,32 +82,67 @@ async function debugIdFor(buf, mapPath) {
   return createHash('sha256').update(buf).digest('hex').slice(0, 32);
 }
 
-let _s3;
+let _s3Promise;
+let _PutObjectCommand;
 async function s3() {
-  if (!_s3) {
-    const { S3Client } = await import('@aws-sdk/client-s3');
-    _s3 = new S3Client({
-      region: 'auto',
-      endpoint: process.env.R2_ENDPOINT,
-      credentials: {
-        accessKeyId: process.env.R2_ACCESS_KEY_ID,
-        secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
-      },
+  if (!_s3Promise) {
+    _s3Promise = import('@aws-sdk/client-s3').then(({ S3Client, PutObjectCommand }) => {
+      _PutObjectCommand = PutObjectCommand;
+      return new S3Client({
+        region: 'auto',
+        endpoint: process.env.R2_ENDPOINT,
+        credentials: {
+          accessKeyId: process.env.R2_ACCESS_KEY_ID,
+          secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+        },
+      });
     });
   }
-  return _s3;
+  return _s3Promise;
 }
 
 async function uploadToR2(debugId, buf) {
   // Large maps go STRAIGHT to R2 (keyed by projectId + debugId); only the light
-  // index passes through the geniusDebug API (§4.3, FR-BLD-2).
+  // index passes through the geniusDebug API (§4.3, FR-BLD-2). Maps are plain
+  // JSON and compress hard (typically 5-10x) — gzipping before PUT cuts bytes
+  // over the wire, which on a ~860-map build matters as much as concurrency
+  // for total build time. The worker's map reader gunzip-decodes on read
+  // (detects the gzip magic bytes so old, already-uploaded plain-JSON maps in
+  // R2 still work — no backfill needed).
   const r2Key = `sourcemaps/${GENIUSDEBUG_PROJECT_ID}/${debugId}.map`;
-  const { PutObjectCommand } = await import('@aws-sdk/client-s3');
+  const gz = gzipSync(buf);
   const client = await s3();
   await client.send(
-    new PutObjectCommand({ Bucket: R2_BUCKET, Key: r2Key, Body: buf, ContentType: 'application/json' }),
+    new _PutObjectCommand({
+      Bucket: R2_BUCKET,
+      Key: r2Key,
+      Body: gz,
+      ContentType: 'application/json',
+      ContentEncoding: 'gzip',
+    }),
   );
   return { r2Key };
+}
+
+/**
+ * Bounded-concurrency map. The original loop awaited one R2 PutObject at a
+ * time — on a real build (~860 maps) that serialized ~860 round-trips to R2
+ * and alone blew Vercel build time out to 5-20min (Build CPU Minutes became
+ * the single largest cost line, more than Vercel + Sentry combined). R2
+ * (S3-compatible) handles concurrent PUTs fine; a small worker pool cuts
+ * wall-clock to roughly maps/concurrency round-trips instead of maps.
+ */
+async function mapWithConcurrency(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i], i);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
 }
 
 async function main() {
@@ -118,14 +154,14 @@ async function main() {
   const maps = await findMaps(BUILD_DIR).catch((e) => fail(`cannot read ${BUILD_DIR}: ${e.message}`));
   if (maps.length === 0) fail(`no .map files under ${BUILD_DIR}`);
 
-  const artifacts = [];
-  for (const mapPath of maps) {
+  const concurrency = Number(process.env.SOURCEMAP_UPLOAD_CONCURRENCY) || 24;
+  const artifacts = await mapWithConcurrency(maps, concurrency, async (mapPath) => {
     const buf = await readFile(mapPath);
     const debugId = await debugIdFor(buf, mapPath);
     const checksum = createHash('sha1').update(buf).digest('hex');
     const { r2Key } = await uploadToR2(debugId, buf);
-    artifacts.push({ debugId, r2Key, checksum, size: buf.length });
-  }
+    return { debugId, r2Key, checksum, size: buf.length };
+  });
 
   // Register the index (Debug IDs, R2 keys, release, commit, repo) with the API.
   const res = await fetch(
@@ -139,7 +175,7 @@ async function main() {
   if (!res.ok) fail(`register returned ${res.status}`);
 
   // Strip maps from public output so they never reach end users (FR-BLD-2).
-  for (const mapPath of maps) await unlink(mapPath).catch(() => {});
+  await Promise.all(maps.map((mapPath) => unlink(mapPath).catch(() => {})));
   console.log(`[upload-sourcemaps] ${artifacts.length} maps → R2, registered release ${RELEASE}, stripped from output.`);
 }
 

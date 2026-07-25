@@ -13,6 +13,7 @@ import {
 import type { Request } from 'express';
 import { createHash } from 'node:crypto';
 import { randomBytes } from 'node:crypto';
+import { gunzipSync } from 'node:zlib';
 import bcrypt from 'bcryptjs';
 import { db, repositories, releases, orgTokens, sourceMapArtifacts, projects, users, memberships, dsnKeys, projectMembers, getActiveIntegration, issues, events, replays } from '@geniusdebug/db';
 import { decrypt, computeCulprit } from '@geniusdebug/shared';
@@ -25,6 +26,28 @@ const WEB_URL = process.env.WEB_URL ?? 'http://localhost:5199';
 
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
+}
+
+/** Detect + strip gzip (client may send gzip-compressed map bytes to cut upload size/time). */
+function decodeMaybeGzip(buf: Buffer): { text: string; isGzip: boolean } {
+  const isGzip = buf.length >= 2 && buf[0] === 0x1f && buf[1] === 0x8b;
+  return { text: (isGzip ? gunzipSync(buf) : buf).toString('utf8'), isGzip };
+}
+
+/** Bounded-concurrency map — the deploy-time sourcemap upload was awaiting one
+ * R2 PutObject at a time (~860 maps/build → most of a 5-20min build). R2
+ * handles concurrent PUTs fine; run a small worker pool instead. */
+async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T, i: number) => Promise<R>): Promise<R[]> {
+  const results = new Array(items.length) as R[];
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i], i);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
 }
 
 /** Invite acceptance link (7-day reset token → /reset). */
@@ -534,19 +557,29 @@ export class AdminController {
       .returning({ id: releases.id });
     const releaseId = rel[0].id;
 
-    let uploaded = 0;
-    for (const f of body.files) {
+    // Per-file work (R2 PutObject + debugId extraction) used to run one file at
+    // a time in a `for` loop — with ~860 maps/build that serialized ~860 R2
+    // round-trips and was the direct cause of 5-20min Vercel builds (Build CPU
+    // Minutes became the largest line item, more than Vercel + Sentry combined).
+    // Run a bounded worker pool instead, and batch the artifact-index insert
+    // into one query instead of one INSERT per file.
+    const concurrency = Number(process.env.SOURCEMAP_UPLOAD_CONCURRENCY) || 24;
+    let loggedSamples = 0;
+    const rows = await mapWithConcurrency(body.files, concurrency, async (f) => {
       const buf = Buffer.from(f.content, 'base64');
 
       // Read the debug_id that the Sentry SDK injected into the source map.
       // The SDK puts a UUID-format "debugId" at the top level of the .map JSON;
       // error events carry the same ID in debug_meta.images[].debug_id, so the
       // worker's symbolicate() can look it up. Fall back to a content hash when
-      // the field is missing (non-Sentry builds, manual uploads, etc.).
+      // the field is missing (non-Sentry builds, manual uploads, etc.). Content
+      // may arrive gzip-compressed (client-side, to cut upload size/time) —
+      // decode for JSON parsing but store the original bytes as-is.
+      const { text, isGzip } = decodeMaybeGzip(buf);
       let debugId: string;
       let source: string;
       try {
-        const map = JSON.parse(buf.toString('utf8'));
+        const map = JSON.parse(text);
         if (map.debugId) { debugId = map.debugId; source = 'debugId'; }
         else if (map['debug_id']) { debugId = map['debug_id']; source = 'debug_id'; }
         else { debugId = createHash('sha256').update(buf).digest('hex').slice(0, 32); source = 'sha256-fallback'; }
@@ -554,17 +587,25 @@ export class AdminController {
         debugId = createHash('sha256').update(buf).digest('hex').slice(0, 32);
         source = 'parse-error-fallback';
       }
-      if (uploaded < 3) console.log(`[upload] ${f.name} → debugId=${debugId} (source=${source})`);
+      if (loggedSamples < 3) { loggedSamples++; console.log(`[upload] ${f.name} → debugId=${debugId} (source=${source})`); }
 
       const r2Key = `sourcemaps/${projectId}/${debugId}.map`;
-      await s3.send(new PutObjectCommand({ Bucket: r2Cfg.bucket, Key: r2Key, Body: buf, ContentType: 'application/json' }));
-      await db.insert(sourceMapArtifacts).values({
+      await s3.send(new PutObjectCommand({
+        Bucket: r2Cfg.bucket,
+        Key: r2Key,
+        Body: buf,
+        ContentType: 'application/json',
+        ...(isGzip ? { ContentEncoding: 'gzip' } : {}),
+      }));
+      return {
         releaseId, projectId, debugId, r2Key,
         checksum: createHash('sha1').update(buf).digest('hex'),
         size: buf.length,
-      });
-      uploaded++;
-    }
+      };
+    });
+
+    if (rows.length) await db.insert(sourceMapArtifacts).values(rows);
+    const uploaded = rows.length;
 
     return { ok: true, uploaded, release };
   }
