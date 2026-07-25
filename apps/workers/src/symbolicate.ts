@@ -1,9 +1,17 @@
 import { db, releases, repositories, sourceMapArtifacts } from '@geniusdebug/db';
 import { and, eq, inArray } from 'drizzle-orm';
+import { gunzipSync } from 'node:zlib';
 import type { NormalizedEvent, NormalizedFrame } from '@geniusdebug/shared';
 import { getObject, r2Configured } from './r2';
 import { symbolicateWithMaps, FRAMEWORK_INTERNAL_RE } from './apply-map';
 import { computeCulprit } from '@geniusdebug/shared';
+
+/** Uploader gzips maps before PUT (build-time cost); gunzip on read here,
+ * detected by magic bytes so pre-existing plain-JSON maps in R2 still work. */
+function decodeMapBytes(b: Buffer): string {
+  if (b.length >= 2 && b[0] === 0x1f && b[1] === 0x8b) return gunzipSync(b).toString('utf8');
+  return b.toString('utf8');
+}
 
 /**
  * Symbolication step (FR-MAP-3..10). Map-based symbolication SKIPS when
@@ -37,7 +45,7 @@ export async function symbolicate(e: NormalizedEvent, projectId: string): Promis
     if (r2Keys.length > 0 && (await r2Configured())) {
       try {
         const bytesList = await Promise.all(r2Keys.map((k) => getObject(k)));
-        const maps = bytesList.filter((b): b is NonNullable<typeof b> => b != null).map((b) => b.toString('utf8'));
+        const maps = bytesList.filter((b): b is NonNullable<typeof b> => b != null).map(decodeMapBytes);
         if (maps.length > 0) frames = await symbolicateWithMaps(frames, maps);
       } catch (err) {
         // eslint-disable-next-line no-console
