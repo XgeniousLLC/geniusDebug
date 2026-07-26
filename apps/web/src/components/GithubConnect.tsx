@@ -18,7 +18,7 @@ export function GithubConnect({ projectId }: { projectId: string }) {
   const app = useQuery({
     queryKey: ['gh-app', projectId],
     queryFn: () =>
-      api<{ installed: boolean; app: { id: string; slug: string; ownerLogin?: string | null; installUrl: string } | null }>(`/projects/${projectId}/github/app`),
+      api<{ installed: boolean; app: { id: string; slug: string; ownerLogin?: string | null; installUrl: string } | null }>(`/github/projects/${projectId}/github/app`),
   });
   const repo = useQuery({
     queryKey: ['repo', projectId],
@@ -30,27 +30,31 @@ export function GithubConnect({ projectId }: { projectId: string }) {
 
   // Step 1 — create the App: fetch a manifest, then POST a form to GitHub.
   async function createApp() {
-    const { postUrl, manifest, state } = await api<{ postUrl: string; manifest: object; state: string }>(
-      `/projects/${projectId}/github/app/manifest`,
-      { method: 'POST', body: JSON.stringify({ account, org: org || undefined }) },
-    );
-    const form = document.createElement('form');
-    form.method = 'POST';
-    form.action = `${postUrl}?state=${encodeURIComponent(state)}`;
-    const input = document.createElement('input');
-    input.type = 'hidden';
-    input.name = 'manifest';
-    input.value = JSON.stringify(manifest);
-    form.appendChild(input);
-    document.body.appendChild(form);
-    form.submit();
+    try {
+      const { postUrl, manifest, state } = await api<{ postUrl: string; manifest: object; state: string }>(
+        `/github/projects/${projectId}/github/app/manifest`,
+        { method: 'POST', body: JSON.stringify({ account, org: org || undefined }) },
+      );
+      const form = document.createElement('form');
+      form.method = 'POST';
+      form.action = `${postUrl}?state=${encodeURIComponent(state)}`;
+      const input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = 'manifest';
+      input.value = JSON.stringify(manifest);
+      form.appendChild(input);
+      document.body.appendChild(form);
+      form.submit();
+    } catch (e: unknown) {
+      toast.error(`Create App failed: ${errMsg(e)}`);
+    }
   }
 
   // Step 3 — pick a repo the installation can access.
   const repos = useQuery({
     queryKey: ['gh-repos', projectId, installationId],
     enabled: !!installationId,
-    queryFn: () => api<{ owner: string; name: string; defaultBranch: string }[]>(`/projects/${projectId}/github/installations/${installationId}/repos`),
+    queryFn: () => api<{ owner: string; name: string; defaultBranch: string }[]>(`/github/projects/${projectId}/github/installations/${installationId}/repos`),
   });
   const link = useMutation({
     mutationFn: (r: { owner: string; name: string; defaultBranch: string }) =>
@@ -76,7 +80,7 @@ export function GithubConnect({ projectId }: { projectId: string }) {
 
   // Disconnect a connected App (admin) — removes stored creds + cascades linked repos.
   const disconnect = useMutation({
-    mutationFn: (id: string) => api(`/projects/${projectId}/github/app/${id}/disconnect`, { method: 'POST' }),
+    mutationFn: (id: string) => api(`/github/projects/${projectId}/github/app/${id}/disconnect`, { method: 'POST' }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['gh-app', projectId] });
       qc.invalidateQueries({ queryKey: ['repo', projectId] });
