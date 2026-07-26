@@ -18,15 +18,23 @@ const WEB_URL = process.env.WEB_URL ?? 'http://localhost:5199';
 export class GithubController {
   constructor(private readonly gh: GithubService) {}
 
-  /** Build the manifest + the GitHub URL to POST it to (personal or org). */
-  @Post('app/manifest')
+  /** Build the manifest + the GitHub URL to POST it to (personal or org), scoped to a project. */
+  @Post('projects/:projectId/github/app/manifest')
   @UseGuards(JwtGuard)
   async manifest(
     @Req() req: Request & { user?: AuthPrincipal },
+    @Param('projectId') projectId: string,
     @Body() body: { account?: 'personal' | 'org'; org?: string },
   ) {
     if (req.user!.role !== 'admin') throw new ForbiddenException('admin only');
-    const state = Buffer.from(JSON.stringify({ orgId: req.user!.orgId })).toString('base64url');
+    const proj = await db
+      .select({ id: projects.id })
+      .from(projects)
+      .where(and(eq(projects.id, projectId), eq(projects.orgId, req.user!.orgId)))
+      .limit(1);
+    if (proj.length === 0) throw new ForbiddenException('project not in org');
+
+    const state = Buffer.from(JSON.stringify({ projectId })).toString('base64url');
 
     // Personal → /settings/apps/new; org → /organizations/<org>/settings/apps/new.
     const postUrl =
@@ -35,7 +43,7 @@ export class GithubController {
         : 'https://github.com/settings/apps/new';
 
     const manifest = {
-      name: `geniusDebug-${req.user!.orgId.slice(0, 8)}`,
+      name: `geniusDebug-${projectId.slice(0, 8)}`,
       url: WEB_URL,
       redirect_url: `${API_URL}/github/app/callback`,
       callback_urls: [`${API_URL}/github/installation/callback`],
@@ -56,20 +64,25 @@ export class GithubController {
   @Get('app/callback')
   async appCallback(@Query('code') code: string, @Query('state') state: string, @Res() res: Response) {
     if (!code || !state) return res.status(400).send('missing code/state');
-    let orgId: string;
+    let projectId: string;
     try {
-      orgId = JSON.parse(Buffer.from(state, 'base64url').toString()).orgId;
+      projectId = JSON.parse(Buffer.from(state, 'base64url').toString()).projectId;
     } catch {
       return res.status(400).send('bad state');
     }
     try {
+      const proj = await db.select({ orgId: projects.orgId }).from(projects).where(eq(projects.id, projectId)).limit(1);
+      if (proj.length === 0) throw new Error('project not found');
+      const orgId = proj[0].orgId;
+
       const app = await this.gh.convertManifest(code);
-      // Store encrypted at rest (NFR-SEC-5). One app per org — replace any
-      // existing app for this org (unique index enforces single row).
-      await db.delete(githubApps).where(eq(githubApps.orgId, orgId));
+      // Store encrypted at rest (NFR-SEC-5). One app per project — replace any
+      // existing app for this project (unique index enforces single row).
+      await db.delete(githubApps).where(eq(githubApps.projectId, projectId));
       await db.insert(githubApps).values({
+        projectId,
         orgId,
-        name: `geniusDebug-${orgId.slice(0, 8)}`,
+        name: `geniusDebug-${projectId.slice(0, 8)}`,
         slug: app.slug,
         appId: String(app.id),
         clientId: app.client_id,
@@ -78,26 +91,33 @@ export class GithubController {
         webhookSecretEnc: app.webhook_secret ? encrypt(app.webhook_secret) : null,
         ownerLogin: app.owner?.login,
       });
-      // Send the admin back to Settings, then straight into the install step.
-      return res.redirect(`${WEB_URL}/settings?github=created&slug=${app.slug}`);
+      // Send the admin back to the project setup, then straight into the install step.
+      return res.redirect(`${WEB_URL}/projects/${projectId}/setup?github=created&slug=${app.slug}`);
     } catch (e) {
       // Don't leak a raw 500 to the browser — log the real cause and bounce the
-      // admin back to Settings with a readable reason (FR-GH-1).
+      // admin back with a readable reason (FR-GH-1).
       const reason = e instanceof Error ? e.message : 'unknown error';
       // eslint-disable-next-line no-console
       console.error('[github] app callback failed:', reason);
-      return res.redirect(`${WEB_URL}/settings?github=error&reason=${encodeURIComponent(reason)}`);
+      return res.redirect(`${WEB_URL}/projects/${projectId}/setup?github=error&reason=${encodeURIComponent(reason)}`);
     }
   }
 
-  /** The single App connected by the caller's org + its install URL (FR-GH-1). */
-  @Get('app')
+  /** The App connected to a project + its install URL (FR-GH-1). */
+  @Get('projects/:projectId/github/app')
   @UseGuards(JwtGuard)
-  async currentApp(@Req() req: Request & { user?: AuthPrincipal }) {
+  async currentApp(@Req() req: Request & { user?: AuthPrincipal }, @Param('projectId') projectId: string) {
+    const proj = await db
+      .select({ id: projects.id })
+      .from(projects)
+      .where(and(eq(projects.id, projectId), eq(projects.orgId, req.user!.orgId)))
+      .limit(1);
+    if (proj.length === 0) throw new ForbiddenException('project not in org');
+
     const rows = await db
       .select({ id: githubApps.id, slug: githubApps.slug, ownerLogin: githubApps.ownerLogin })
       .from(githubApps)
-      .where(eq(githubApps.orgId, req.user!.orgId))
+      .where(eq(githubApps.projectId, projectId))
       .limit(1);
     if (rows.length === 0) return { installed: false, app: null };
     const r = rows[0];
@@ -107,30 +127,33 @@ export class GithubController {
     };
   }
 
-  /** Disconnect (delete) the org's connected App — admin only (FR-GH-1). */
-  @Post('app/:id/disconnect')
+  /** Disconnect (delete) the project's connected App — admin only (FR-GH-1). */
+  @Post('projects/:projectId/github/app/:id/disconnect')
   @UseGuards(JwtGuard)
-  async disconnectApp(@Req() req: Request & { user?: AuthPrincipal }, @Param('id') id: string) {
+  async disconnectApp(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Param('projectId') projectId: string,
+    @Param('id') id: string,
+  ) {
     if (req.user!.role !== 'admin') throw new ForbiddenException('admin only');
-    // First find repos linked via this app's installations so we can cascade-delete.
+    const proj = await db
+      .select({ id: projects.id })
+      .from(projects)
+      .where(and(eq(projects.id, projectId), eq(projects.orgId, req.user!.orgId)))
+      .limit(1);
+    if (proj.length === 0) throw new ForbiddenException('project not in org');
+
     const app = await db
       .select({ id: githubApps.id })
       .from(githubApps)
-      .where(and(eq(githubApps.id, id), eq(githubApps.orgId, req.user!.orgId)))
+      .where(and(eq(githubApps.id, id), eq(githubApps.projectId, projectId)))
       .limit(1);
     if (app.length === 0) throw new BadRequestException('app not found');
 
-    // Delete all repositories linked to projects in this org (they depend on this app's installation tokens).
-    const orgProjects = await db
-      .select({ id: projects.id })
-      .from(projects)
-      .where(eq(projects.orgId, req.user!.orgId));
-    const projectIds = orgProjects.map((p) => p.id);
-    if (projectIds.length > 0) {
-      await db.delete(repositories).where(inArray(repositories.projectId, projectIds));
-    }
+    // Delete repos linked to this project (they depend on this app's installation tokens).
+    await db.delete(repositories).where(eq(repositories.projectId, projectId));
 
-    await db.delete(githubApps).where(and(eq(githubApps.id, id), eq(githubApps.orgId, req.user!.orgId)));
+    await db.delete(githubApps).where(and(eq(githubApps.id, id), eq(githubApps.projectId, projectId)));
     return { ok: true };
   }
 
@@ -141,10 +164,21 @@ export class GithubController {
   }
 
   /** List repos the installation can access, so the admin can pick one. */
-  @Get('installations/:installationId/repos')
+  @Get('projects/:projectId/github/installations/:installationId/repos')
   @UseGuards(JwtGuard)
-  async repos(@Req() req: Request & { user?: AuthPrincipal }, @Param('installationId') installationId: string) {
-    const token = await this.gh.installationTokenForOrg(req.user!.orgId, installationId);
+  async repos(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Param('projectId') projectId: string,
+    @Param('installationId') installationId: string,
+  ) {
+    const proj = await db
+      .select({ id: projects.id })
+      .from(projects)
+      .where(and(eq(projects.id, projectId), eq(projects.orgId, req.user!.orgId)))
+      .limit(1);
+    if (proj.length === 0) throw new ForbiddenException('project not in org');
+
+    const token = await this.gh.installationTokenForProject(projectId, installationId);
     if (!token) throw new BadRequestException('no GitHub App for this installation');
     return this.gh.listInstallationRepos(token);
   }
@@ -205,7 +239,7 @@ export class GithubController {
     const ctx = await this.issueRepoContext(req.user!, shortId);
     if (!ctx) return { available: false };
     if (!ctx.installationId) return { available: false, reason: 'no GitHub App installation' };
-    const token = await this.gh.installationTokenForOrg(req.user!.orgId, ctx.installationId);
+    const token = await this.gh.installationTokenForProject(ctx.projectId, ctx.installationId);
     if (!token) return { available: false, reason: 'no GitHub App installation' };
     const path = (ctx.culprit ?? '').replace(/^\.\//, '');
     const commits = await this.gh.commitsForFile(token, ctx.owner, ctx.name, path);
@@ -230,7 +264,7 @@ export class GithubController {
     const priorUrl = (prior[0]?.payload as { url?: string } | undefined)?.url;
     if (priorUrl) return { ok: true, url: priorUrl, existing: true };
 
-    const token = await this.gh.installationTokenForOrg(req.user!.orgId, ctx.installationId);
+    const token = await this.gh.installationTokenForProject(ctx.projectId, ctx.installationId);
     if (!token) throw new BadRequestException('no GitHub App installation');
     const body = `**Culprit:** \`${ctx.culprit}\`\n**geniusDebug:** ${WEB_URL}/issues/${shortId}\n\nType: ${ctx.type ?? ''}`;
     try {
