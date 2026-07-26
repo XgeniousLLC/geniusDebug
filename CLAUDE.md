@@ -965,3 +965,16 @@ User reported every replay on `/replays` still showed "No linked issue" in prod,
 ### Sprint Stats
 - Total: 1  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 1  /  BLOCKED: 0
 - Commit `0c2deed` on `dev`, pushed. **Needs `workers` redeployed on Coolify** (force rebuild, not restart — same gotcha as GD-197). After deploy, re-run `POST /admin/recompute-replay-links` to backfill, then verify a fresh trigger links live.
+
+## Sprint 43 — Replay player: fix shrink-to-corner during playback
+**Status:** DONE
+
+User screenshot: during playback the replay video slowly shrinks and crawls into the top-left corner, frame by frame, until barely visible.
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-204 | Replay player shrinks toward top-left during playback | DONE | HIGH | `RrwebCanvas.fit()` (`ReplayPlayer.tsx`) computed `scale = min(1, width/recW, MAX_H/contentH)`. As rrweb applies mutation events during playback the recorded page's DOM height (`contentH`) climbs on every 500ms fit tick → `MAX_H/contentH` shrinks → `scale` shrinks again next tick — a self-reinforcing feedback loop. With `transformOrigin: top left` the shrink visibly crawled the player into the corner. Fixed: `scale` now derives from width only (stable, no longer chases content growth); visible height is capped via CSS `max-height:560px` + `overflow-y:auto` on the stage div instead of shrinking the transform, so tall recordings scroll instead of shrinking. `MAX_H` hoisted to module scope (shared by `fit()` and JSX). web typecheck clean. |
+
+### Sprint Stats
+- Total: 1  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 1  /  BLOCKED: 0
+- Pure `apps/web` display fix, no backend/schema touch. Ships on next web deploy.
