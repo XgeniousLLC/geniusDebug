@@ -3,6 +3,12 @@
 
 ALTER TABLE github_apps ADD COLUMN project_id UUID;
 
+-- Drop old unique constraint on (org_id) BEFORE backfilling — otherwise it still
+-- allows only one row per org_id, so every backfill insert below (one row per
+-- project, same org_id) conflicts against the still-present original row and
+-- ON CONFLICT DO NOTHING silently skips ALL of them.
+DROP INDEX github_apps_org_uq;
+
 -- Backfill: for each existing org app, create copies for each project in that org.
 -- This preserves existing org apps by assigning them to the first project per org.
 INSERT INTO github_apps (id, project_id, org_id, name, slug, app_id, client_id, client_secret_enc, private_key_enc, webhook_secret_enc, owner_login, created_at)
@@ -28,9 +34,6 @@ ON CONFLICT DO NOTHING;
 -- otherwise they're left behind with project_id still NULL and the NOT NULL
 -- constraint below fails on any org that had a pre-existing app.
 DELETE FROM github_apps WHERE project_id IS NULL;
-
--- Drop old unique constraint on (org_id) only.
-DROP INDEX github_apps_org_uq;
 
 -- Add new unique constraint on (project_id).
 CREATE UNIQUE INDEX github_apps_project_uq ON github_apps(project_id);
