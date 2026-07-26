@@ -24,6 +24,11 @@ CROSS JOIN projects p
 WHERE p.org_id = ga.org_id
 ON CONFLICT DO NOTHING;
 
+-- Drop the original org-scoped rows now that each project has its own copy —
+-- otherwise they're left behind with project_id still NULL and the NOT NULL
+-- constraint below fails on any org that had a pre-existing app.
+DELETE FROM github_apps WHERE project_id IS NULL;
+
 -- Drop old unique constraint on (org_id) only.
 DROP INDEX github_apps_org_uq;
 
