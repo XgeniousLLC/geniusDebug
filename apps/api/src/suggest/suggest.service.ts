@@ -207,7 +207,7 @@ export class SuggestService {
     )[0];
     if (existing) return { ok: true, url: existing.prUrl, branch: existing.branch, existing: true };
 
-    const token = await this.gh.installationTokenForOrg(user.orgId, repo.installationId);
+    const token = await this.gh.installationTokenForProject(issue.projectId, repo.installationId);
     if (!token) throw new BadRequestException('could not authenticate the GitHub App');
 
     const base = repo.defaultBranch;
@@ -295,7 +295,7 @@ export class SuggestService {
 
     const repo = (await db.select().from(repositories).where(eq(repositories.projectId, issue.projectId)).limit(1))[0];
     if (!repo || !repo.installationId) return { windows: [] };
-    const token = await this.gh.installationTokenForOrg(orgId, repo.installationId);
+    const token = await this.gh.installationTokenForProject(issue.projectId, repo.installationId);
     if (!token) return { windows: [] };
 
     // Prefer the errored release's commit; else the repo default branch.

@@ -27,7 +27,7 @@ export class IssuesService {
 
     const repo = (await db.select().from(repositories).where(eq(repositories.projectId, issue.projectId)).limit(1))[0];
     if (!repo || !repo.installationId) return { available: false, reason: 'no GitHub repo linked' as const };
-    const token = await this.gh.installationTokenForOrg(user.orgId, repo.installationId);
+    const token = await this.gh.installationTokenForProject(issue.projectId, repo.installationId);
     if (!token) return { available: false, reason: 'GitHub auth unavailable' as const };
 
     let ref = repo.defaultBranch;

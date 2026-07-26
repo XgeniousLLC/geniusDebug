@@ -159,6 +159,7 @@ export const githubApps = pgTable(
   'github_apps',
   {
     id: uuid('id').defaultRandom().primaryKey(),
+    projectId: uuid('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
     orgId: uuid('org_id').notNull().references(() => organizations.id, { onDelete: 'cascade' }),
     name: varchar('name', { length: 160 }).notNull(),
     slug: varchar('slug', { length: 160 }).notNull(),
@@ -171,7 +172,7 @@ export const githubApps = pgTable(
     ownerLogin: varchar('owner_login', { length: 160 }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
-  (t) => ({ orgUq: uniqueIndex('github_apps_org_uq').on(t.orgId) }),
+  (t) => ({ projectUq: uniqueIndex('github_apps_project_uq').on(t.projectId) }),
 );
 
 export const releases = pgTable(
