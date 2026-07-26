@@ -978,3 +978,30 @@ User screenshot: during playback the replay video slowly shrinks and crawls into
 ### Sprint Stats
 - Total: 1  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 1  /  BLOCKED: 0
 - Pure `apps/web` display fix, no backend/schema touch. Ships on next web deploy.
+
+## Sprint 44 — Root-caused "replays still not linked": GD-203 fix never reached main
+**Status:** VERIFIED LOCALLY, needs merge + deploy
+**Started:** 2026-07-26
+
+User reported replays STILL not linking to issues despite GD-197 (Sprint 39) + GD-203 (Sprint 42). Investigation found the real bug: `main` (Coolify's deploy branch) never received commit `0c2deed` (GD-203's `tags.replayId` fallback) — `main` last merged `dev` on 2026-07-24, GD-203 landed 2026-07-26. Prod workers are still running the pre-GD-203 `normalize.ts` (`contexts.replay.replay_id` only), which the real SDK (`sentry.javascript.nextjs` 10.x) never populates — it only stamps `tags.replayId`. Not a new bug — the Sprint 42 fix was simply never deployed.
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-205 | Verify GD-203 fix locally + prove main is stale | DONE | HIGH | New `apps/workers/src/replay-link.smoke.test.ts` (real local Postgres/Redis, no mocks): 2 scenarios — replay_event landing before its error event (backfill path) and after (insert-time link path), both via `tags.replayId` only (no `contexts.replay`), matching the real SDK shape. Both pass on current `dev`. Temporarily reverted `normalize.ts` to pre-GD-203 logic and reran: both failed identically to the reported prod symptom (`issueId`/`replay_id` null) — confirms root cause + that the fix on `dev` is correct. Restored fix; 25/25 workers tests green (22 prior + 3 new), no regressions. Confirmed via `git log main..dev` that `main` is missing `0c2deed` (GD-203), `9ea9164` (docs), `1417a45` (GD-204), `b26b8f7`. Pushed test commit `b2203bc` to `dev` only — user wants prod pushed for a final test but explicitly asked NOT to auto-merge `dev`→`main`; user will merge themselves. |
+
+### Sprint Stats
+- Total: 1  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 1  /  BLOCKED: 0
+- **Next step (user-driven):** merge `dev`→`main`, force-rebuild-redeploy `workers` on Coolify (restart alone won't pick up new source — same gotcha noted in Sprint 39/42), then re-run `POST /admin/recompute-replay-links` to backfill existing orphaned replays, then verify a fresh live trigger links.
+
+## Sprint 45 — Bulk assign + realtime cross-project feed fix
+**Status:** COMPLETE
+**Started:** 2026-07-26
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-206 | Bulk assign from Issues page | DONE | HIGH | Added "Assign…" dropdown to the bulk action toolbar (alongside Resolve/Archive/Delete/Merge). Reuses the existing `GET /members` endpoint and `POST /issues/:shortId/actions {action:'assign', assigneeUserId}` backend — no new API needed. The `act` mutation now accepts `assigneeUserId`. Dropdown supports "Unassigned" (clear assignee) + all org members. Sentinel value `__pick__` avoids the empty-string collision between the disabled placeholder and the "Unassigned" option. |
+| GD-207 | Fix realtime SSE invalidating all projects' issue queries | DONE | HIGH | `useRealtime.ts` used `qc.invalidateQueries({ queryKey: ['issues'] })` which uses prefix matching — any SSE message refetched EVERY project's issue query, not just the one that changed. While the SSE server correctly filters messages by `projectId`, the client-side over-invalidation caused unnecessary cross-project refetches. Fixed: `invalidateQueries` now uses a `predicate` that matches `queryKey[0]` and `queryKey[1].projectId` against the SSE message's `projectId`, so only the affected project's queries refetch. Same fix for replays. |
+
+### Sprint Stats
+- Total: 2  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 2  /  BLOCKED: 0
+- `apps/web` typecheck clean; 14 tests green. Pure frontend changes, no backend/schema touch. Ships on next web deploy.
