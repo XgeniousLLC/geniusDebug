@@ -72,7 +72,10 @@ export function normalizeEvent(p: SentryEventPayload): NormalizedEvent {
     sdk: p.sdk,
     traceId: p.contexts?.trace?.trace_id,
     spanId: p.contexts?.trace?.span_id,
-    replayId: (p.contexts?.replay as { replay_id?: string } | undefined)?.replay_id,
+    // SDK versions vary: some stamp `contexts.replay.replay_id`, others (e.g.
+    // sentry.javascript.nextjs 10.x) only stamp `tags.replayId` on the error event.
+    replayId:
+      (p.contexts?.replay as { replay_id?: string } | undefined)?.replay_id ?? p.tags?.replayId,
     debugIds,
   };
 }

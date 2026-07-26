@@ -951,3 +951,17 @@ User screenshot: Vercel Usage showed Build CPU Minutes $72.88 as the top cost li
 ### Sprint Stats
 - Total: 4  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 4  /  BLOCKED: 0
 - **Locally validated against real R2**, not just theorized: true baseline 191s/300 files (~9min/860, matches the report) → fixed 14.7s/300 files (~42s/860), ~13x. Needs: this repo's `api` redeployed on Coolify (dev branch); taskip-client's `hotfix/genius-debug` (2 commits, local only) merged to `main` by the user, then a Vercel deploy to actually change the bill.
+
+## Sprint 42 — Real fix for replay↔issue linking (tags.replayId, not contexts.replay)
+**Status:** CODE COMPLETE (needs `workers` redeploy)
+**Started:** 2026-07-26
+
+User reported every replay on `/replays` still showed "No linked issue" in prod, including ones captured 30s after GD-197 (Sprint 39) was migrated + redeployed. `POST /admin/recompute-replay-links` confirmed: `checked:17, updated:0`.
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-203 | Fix replay_id extraction — SDK sends `tags.replayId`, not `contexts.replay.replay_id` | DONE | HIGH | Live-captured a real envelope from `sentry.javascript.nextjs@10.67.0` (via the `crm.xgenious.com/sentry-replay-test` console + chrome-devtools-mcp network inspection) to see ground truth on the wire. The error event's `contexts` block only ever had `trace`/`react`/`culture` — **no `replay` key at all** — but `tags.replayId` was present and correct. GD-197's `normalize.ts:75` only read `contexts.replay.replay_id`, so `replayId` was always `undefined` for this SDK version, explaining the 100% miss rate even on fresh replays. Also reconfirmed the GD-196/197-era secondary bug is real: the replay envelope's own `trace_ids`/`error_ids` arrays come back empty (`tracesSampleRate` too low + SDK doesn't backfill them), so the trace_id fallback path was never going to catch these either — `tags.replayId` is the only reliable correlator. Fixed `normalizeEvent()` to fall back to `p.tags?.replayId` when `contexts.replay` is absent. 22 worker tests green, no regressions. Migration 0016 confirmed already applied to prod DB this session (ran clean, no errors). |
+
+### Sprint Stats
+- Total: 1  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 1  /  BLOCKED: 0
+- Commit `0c2deed` on `dev`, pushed. **Needs `workers` redeployed on Coolify** (force rebuild, not restart — same gotcha as GD-197). After deploy, re-run `POST /admin/recompute-replay-links` to backfill, then verify a fresh trigger links live.
