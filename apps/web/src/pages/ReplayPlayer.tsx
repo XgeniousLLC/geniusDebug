@@ -489,6 +489,9 @@ function normalizeEvents(events: unknown[]): unknown[] {
     .sort((a, b) => (a?.timestamp ?? 0) - (b?.timestamp ?? 0));
 }
 
+// Max visible stage height (px) — content taller than this scrolls (fit() and JSX both use it).
+const MAX_H = 560;
+
 type ActKind = 'console' | 'network' | 'navigation' | 'click' | 'error' | 'other';
 interface Activity {
   t: number; // ms offset from replay start
@@ -624,14 +627,17 @@ function RrwebCanvas({
     lastFitH.current = contentH;
     if (iframe) iframe.style.height = `${contentH}px`;
     wrap.style.height = `${contentH}px`;
-    // Fit within the container width AND a max stage height so the whole page is
-    // visible but the transport controls stay in view (GD-133).
-    const MAX_H = 560;
-    const scale = Math.min(1, (root.clientWidth || recW) / recW, MAX_H / contentH);
+    // Scale ONLY by width, never by height. Scaling by MAX_H/contentH used to
+    // feed back on itself: as the recorded page grew during playback (rrweb
+    // applying mutation events), contentH climbed on every 500ms fit() tick,
+    // shrinking scale further each time — and with transformOrigin 'top left'
+    // that shrink visibly crawled the whole player into the top-left corner
+    // (reported bug). Cap the VISIBLE height with CSS max-height + scroll
+    // instead of shrinking the transform.
+    const scale = Math.min(1, (root.clientWidth || recW) / recW);
     wrap.style.transform = `scale(${scale})`;
     wrap.style.transformOrigin = 'top left';
-    root.style.height = `${Math.round(contentH * scale)}px`;
-    // Centre horizontally when height-capped leaves side gutters.
+    root.style.height = `${Math.min(Math.round(contentH * scale), MAX_H)}px`;
     root.style.width = '100%';
   }, [events]);
 
@@ -814,7 +820,7 @@ function RrwebCanvas({
   const pct = total > 0 ? Math.min(100, (cur / total) * 100) : 0;
   return (
     <div ref={shellRef} className="overflow-hidden rounded-xl border border-border bg-surface">
-      <div ref={stageRef} className="w-full overflow-hidden bg-white" />
+      <div ref={stageRef} className="w-full overflow-y-auto overflow-x-hidden bg-white" style={{ maxHeight: MAX_H }} />
 
       {/* Transport */}
       <div className="flex items-center gap-3 border-t border-border bg-surface px-3 py-2.5">
