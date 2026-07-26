@@ -57,6 +57,9 @@ export function Issues() {
   });
   const qc = useQueryClient();
 
+  // Members list for bulk assign (reuses same endpoint as IssueDetail assignee picker)
+  const members = useQuery({ queryKey: ['members'], queryFn: () => api<{ id: string; name: string }[]>('/members') });
+
   const persistSaved = (next: SavedSearch[]) => {
     setSaved(next);
     localStorage.setItem('gd_saved_searches', JSON.stringify(next));
@@ -100,8 +103,11 @@ export function Issues() {
   });
 
   const act = useMutation({
-    mutationFn: (v: { shortId: string; action: string }) =>
-      api(`/issues/${v.shortId}/actions`, { method: 'POST', body: JSON.stringify({ action: v.action }) }),
+    mutationFn: (v: { shortId: string; action: string; assigneeUserId?: string }) =>
+      api(`/issues/${v.shortId}/actions`, {
+        method: 'POST',
+        body: JSON.stringify({ action: v.action, assigneeUserId: v.assigneeUserId }),
+      }),
     onSuccess: (_r, v) => {
       qc.invalidateQueries({ queryKey: ['issues'] });
       toast.success(`${v.shortId} ${ACTION_PAST[v.action] ?? v.action}`);
@@ -133,6 +139,11 @@ export function Issues() {
   function bulkAct(action: 'resolve' | 'archive') {
     for (const shortId of selected) act.mutate({ shortId, action });
     setSelected(new Set());
+  }
+  function bulkAssign(assigneeUserId: string) {
+    for (const shortId of selected) act.mutate({ shortId, action: 'assign', assigneeUserId: assigneeUserId || undefined });
+    setSelected(new Set());
+    toast.success(`Assigned ${selected.size} issue${selected.size === 1 ? '' : 's'}`);
   }
   function doBulkDelete() {
     const ids = [...selected];
@@ -320,6 +331,23 @@ export function Issues() {
           >
             Archive
           </button>
+          <select
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v === '__pick__') return;
+              bulkAssign(v); // empty string = unassigned
+              e.target.value = '__pick__';
+            }}
+            defaultValue="__pick__"
+            className="rounded-md border border-border bg-surface px-2 py-1 text-caption text-text-muted hover:bg-surface-2"
+            title="Assign to…"
+          >
+            <option value="__pick__" disabled>Assign…</option>
+            <option value="">Unassigned</option>
+            {members.data?.map((m) => (
+              <option key={m.id} value={m.id}>{m.name}</option>
+            ))}
+          </select>
           <button
             onClick={doBulkDelete}
             disabled={bulkDelete.isPending}
