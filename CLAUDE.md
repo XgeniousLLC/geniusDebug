@@ -1005,3 +1005,17 @@ User reported replays STILL not linking to issues despite GD-197 (Sprint 39) + G
 ### Sprint Stats
 - Total: 2  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 2  /  BLOCKED: 0
 - `apps/web` typecheck clean; 14 tests green. Pure frontend changes, no backend/schema touch. Ships on next web deploy.
+
+## Sprint 46 — Fix Coolify migration deploy hook (ran against stale container)
+**Status:** COMPLETE
+**Started:** 2026-07-27
+
+Migration 0017 (GD-208) kept failing in prod with the exact pre-fix error (`column "project_id" ... already exists` / `contains null values`) even after 3 rounds of fixing the SQL and force-rebuilding without cache. Root cause found live via Coolify's Terminal tab: `api`'s **Pre-Deployment Command** (`npm run db:migrate`) runs inside the **currently-running (old) production container**, not the freshly built image — confirmed by `cat`-ing the migration file in that container and seeing the original pre-`IF NOT EXISTS` version, unchanged across multiple no-cache rebuilds. The new image is only swapped in *after* the pre-deploy hook succeeds, so migrations run there can never see new migration files.
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-210 | Move db:migrate from Pre-Deployment Command to Start Command (api) | DONE | HIGH | Coolify config only, no repo code change. Manually applied migration 0017 by hand via `psql` (verified `github_apps` schema: `project_id` NOT NULL, unique index, FK, 3 rows correctly backfilled) to unblock prod immediately. Then cleared `api`'s Pre-Deployment Command (was `npm run db:migrate`) and changed Start Command to `npm run db:migrate && node apps/api/dist/main.js` — migrations now run inside the fresh container on every deploy, before the app boots, instead of a hook that only ever sees the old one. Verified: deploy succeeded clean after the change. |
+
+### Sprint Stats
+- Total: 1  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 1  /  BLOCKED: 0
+- Pure Coolify-config fix, no application code touched. Worth remembering for any future Coolify app in this project: **never put migrations in Pre-Deployment Command** — put them at the front of Start Command instead.
