@@ -1019,3 +1019,14 @@ Migration 0017 (GD-208) kept failing in prod with the exact pre-fix error (`colu
 ### Sprint Stats
 - Total: 1  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 1  /  BLOCKED: 0
 - Pure Coolify-config fix, no application code touched. Worth remembering for any future Coolify app in this project: **never put migrations in Pre-Deployment Command** — put them at the front of Start Command instead.
+
+## Sprint 47 — Gmail unsafe flagging fix
+**Status:** COMPLETE
+**Started:** 2026-08-03
+
+| Ticket | Title | Status | Priority | Description |
+|--------|-------|--------|----------|-------------|
+| GD-211 | Remove full error from alert email subject + body header | DONE | HIGH | Gmail flagged geniusDebug alert emails as unsafe because the subject line contained raw SQL exceptions / PHP error text with special characters. Subject now shows only `[geniusDebug] <trigger> · <shortId>` (no error title). Body header truncated to 80 chars. Full title moved to the metadata table (monospace, smaller text). |
+
+### Sprint Stats
+- Total: 1  /  TODO: 0  /  IN_PROGRESS: 0  /  DONE: 1  /  BLOCKED: 0
