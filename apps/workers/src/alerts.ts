@@ -122,6 +122,7 @@ async function sendEmail(recipients: string[], ctx: AlertCtx, kind: string): Pro
   const fmtDate = (d?: Date | null) => (d ? new Date(d).toUTCString().replace(' GMT', ' UTC') : undefined);
 
   const rows: [string, string | undefined, boolean?][] = [
+    ['Title', ctx.title || undefined, true],
     ['Project', proj?.name],
     ['Environment', envName],
     ['Level', row?.level ?? 'error'],
@@ -136,10 +137,11 @@ async function sendEmail(recipients: string[], ctx: AlertCtx, kind: string): Pro
     ['First seen', fmtDate(row?.firstSeen)],
     ['Last seen', fmtDate(row?.lastSeen)],
   ];
-  const shortTitle = ctx.title.length > 100 ? `${ctx.title.slice(0, 100).trimEnd()}…` : ctx.title;
+  // Subject kept minimal — full error title stays in the email body.
+  // Gmail flags error messages with SQL/exception text in the subject as unsafe.
   const subject = row?.shortId
-    ? `[geniusDebug] ${trig.label} · ${row.shortId}: ${shortTitle}`
-    : `[geniusDebug] ${trig.label}: ${shortTitle}`;
+    ? `[geniusDebug] ${trig.label} · ${row.shortId}`
+    : `[geniusDebug] ${trig.label}`;
   const html = renderAlertEmail({ kind, title: ctx.title, type: row?.type ?? null, link, projectName: proj?.name, rows });
   await sendAlertEmail(recipients, subject, html);
 }
@@ -177,7 +179,7 @@ export function renderAlertEmail(input: {
         </tr></table>
       </td></tr>
       <tr><td style="padding:14px 24px 4px">
-        <div style="font-size:20px;line-height:1.3;font-weight:700;color:#1b1f2a">${esc(input.title)}</div>
+        <div style="font-size:20px;line-height:1.3;font-weight:700;color:#1b1f2a">${esc(input.title.length > 80 ? `${input.title.slice(0, 80).trimEnd()}…` : input.title)}</div>
         ${input.type ? `<div style="margin-top:4px;font-size:13px;color:#8891a5;${mono}">${esc(input.type)}</div>` : ''}
         ${trig.note ? `<div style="margin-top:8px;font-size:13px;color:#6b7280">${esc(trig.note)}</div>` : ''}
       </td></tr>
