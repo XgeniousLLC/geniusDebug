@@ -557,22 +557,23 @@ export class AdminController {
       .returning({ id: releases.id });
     const releaseId = rel[0].id;
 
-    // Per-file work (R2 PutObject + debugId extraction) used to run one file at
-    // a time in a `for` loop — with ~860 maps/build that serialized ~860 R2
-    // round-trips and was the direct cause of 5-20min Vercel builds (Build CPU
-    // Minutes became the largest line item, more than Vercel + Sentry combined).
-    // Run a bounded worker pool instead, and batch the artifact-index insert
-    // into one query instead of one INSERT per file.
-    const concurrency = Number(process.env.SOURCEMAP_UPLOAD_CONCURRENCY) || 24;
+    // Accept-and-acknowledge: everything that can fail the request (auth, R2
+    // config, debug-id extraction, artifact-index insert) happens BEFORE the
+    // response; the R2 PutObject round-trips happen AFTER it, in the
+    // background. The previous synchronous version processed a whole batch
+    // (up to 50 large SSR maps) inside the request — regularly exceeding the
+    // reverse proxy's ~60s window (504 Gateway Timeout / 499 Client Closed
+    // Request seen in Vercel build logs), which both lost maps and stretched
+    // taskip builds from ~5 to ~11 minutes on retries.
     let loggedSamples = 0;
-    const rows = await mapWithConcurrency(body.files, concurrency, async (f) => {
+    const prepared = body.files.map((f) => {
       const buf = Buffer.from(f.content, 'base64');
 
-      // Read the debug_id that the Sentry SDK injected into the source map.
-      // The SDK puts a UUID-format "debugId" at the top level of the .map JSON;
-      // error events carry the same ID in debug_meta.images[].debug_id, so the
-      // worker's symbolicate() can look it up. Fall back to a content hash when
-      // the field is missing (non-Sentry builds, manual uploads, etc.). Content
+      // Read the debug_id the build injected into the source map (sentry-cli
+      // writes `debug_id`; some tooling writes `debugId`). Error events carry
+      // the same ID in debug_meta.images[].debug_id, so the worker's
+      // symbolicate() can look it up. Fall back to a content hash when the
+      // field is missing (non-Sentry builds, manual uploads, etc.). Content
       // may arrive gzip-compressed (client-side, to cut upload size/time) —
       // decode for JSON parsing but store the original bytes as-is.
       const { text, isGzip } = decodeMaybeGzip(buf);
@@ -590,24 +591,52 @@ export class AdminController {
       if (loggedSamples < 3) { loggedSamples++; console.log(`[upload] ${f.name} → debugId=${debugId} (source=${source})`); }
 
       const r2Key = `sourcemaps/${projectId}/${debugId}.map`;
-      await s3.send(new PutObjectCommand({
-        Bucket: r2Cfg.bucket,
-        Key: r2Key,
-        Body: buf,
-        ContentType: 'application/json',
-        ...(isGzip ? { ContentEncoding: 'gzip' } : {}),
-      }));
-      return {
-        releaseId, projectId, debugId, r2Key,
-        checksum: createHash('sha1').update(buf).digest('hex'),
-        size: buf.length,
-      };
+      return { buf, isGzip, r2Key, debugId };
     });
 
+    // Register the artifact index synchronously — symbolication finds maps
+    // through these rows, and a failed insert must fail the request.
+    const rows = prepared.map((p) => ({
+      releaseId, projectId, debugId: p.debugId, r2Key: p.r2Key,
+      checksum: createHash('sha1').update(p.buf).digest('hex'),
+      size: p.buf.length,
+    }));
     if (rows.length) await db.insert(sourceMapArtifacts).values(rows);
-    const uploaded = rows.length;
 
-    return { ok: true, uploaded, release };
+    // R2 uploads continue after the response (bounded pool, per-file retry).
+    // Events referencing a map before its PUT lands just keep raw frames for
+    // that event (worker's graceful FR-MAP-8 path) — strictly better than
+    // timing out the whole batch at the proxy and losing the maps entirely.
+    const concurrency = Number(process.env.SOURCEMAP_UPLOAD_CONCURRENCY) || 24;
+    setImmediate(() => {
+      void (async () => {
+        let failed = 0;
+        await mapWithConcurrency(prepared, concurrency, async (p) => {
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+              await s3.send(new PutObjectCommand({
+                Bucket: r2Cfg.bucket,
+                Key: p.r2Key,
+                Body: p.buf,
+                ContentType: 'application/json',
+                ...(p.isGzip ? { ContentEncoding: 'gzip' } : {}),
+              }));
+              return;
+            } catch (err) {
+              if (attempt === 3) {
+                failed++;
+                console.error(`[upload] R2 put failed for ${p.r2Key} after 3 attempts:`, (err as Error).message);
+              } else {
+                await new Promise((r) => setTimeout(r, 1000 * attempt));
+              }
+            }
+          }
+        });
+        console.log(`[upload] background R2 push done for release ${release}: ${prepared.length - failed}/${prepared.length} ok`);
+      })();
+    });
+
+    return { ok: true, uploaded: rows.length, release };
   }
 
   private async resolveR2Config(): Promise<{ endpoint: string; bucket: string; accessKeyId: string; secretAccessKey: string } | null> {
