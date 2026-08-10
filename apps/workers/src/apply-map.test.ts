@@ -213,3 +213,33 @@ test('sanitizeRawJsFrames: unresolved chunk URLs and runtime placeholders lose t
   assert.equal(resolved.inApp, true, 'symbolicated app frame keeps its classification');
   assert.equal(pathless.inApp, false, 'pathless frame cannot be app code');
 });
+
+test('sanitizeRawJsFrames: SSR server chunks lose in_app even when the server SDK attached source context', () => {
+  // Node-side SDK reads bundled files off disk, so these frames arrive with
+  // contextLine set — they are still bundled output, not the app's code.
+  const frames: NormalizedFrame[] = [
+    { absPath: 'app:///_next/server/chunks/ssr/[turbopack]_runtime.js', function: 'instantiateModule', lineno: 853, colno: 9, contextLine: 'const module1 = createModuleWithDirection(id);', inApp: true },
+    { absPath: 'app:///_next/server/chunks/ssr/[root-of-the-server]__0hw7z76._.js', lineno: 8, colno: 66303, inApp: true },
+    { absPath: '/var/task/node_modules/next/dist/compiled/next-server/app-page-turbo.runtime.prod.js', lineno: 52, colno: 24384, inApp: true },
+  ];
+  for (const f of sanitizeRawJsFrames(frames)) {
+    assert.equal(f.inApp, false, `${f.absPath} must not classify in-app`);
+  }
+});
+
+test('debugIdForFrame: server-side disk-path image (.next) pairs with rewritten frame path (_next) by unique basename', () => {
+  const images = [
+    { codeFile: '/var/task/.next/server/chunks/ssr/%5Bturbopack%5D_runtime.js', debugId: VENDOR_ID },
+    { codeFile: '/var/task/.next/server/chunks/ssr/page_abc123._.js', debugId: BUNDLE_ID },
+  ];
+  assert.equal(
+    debugIdForFrame({ absPath: 'app:///_next/server/chunks/ssr/page_abc123._.js', inApp: false }, images),
+    BUNDLE_ID,
+  );
+  // ambiguous basename (two images share it) → no guess
+  const dup = [
+    { codeFile: '/var/task/.next/server/chunks/ssr/x.js', debugId: BUNDLE_ID },
+    { codeFile: '/var/task/.next/server/other/x.js', debugId: VENDOR_ID },
+  ];
+  assert.equal(debugIdForFrame({ absPath: 'app:///_next/server/chunks/ssr/x.js', inApp: false }, dup), undefined);
+});
