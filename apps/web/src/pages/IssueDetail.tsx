@@ -1538,12 +1538,35 @@ function SuspectFrame({
   const hasCode =
     suspect.contextLine != null || (suspect.preContext?.length ?? 0) > 0;
   const mappable = /\.(mjs|cjs|jsx?|tsx?|vue|svelte)$/.test(base);
+  // No in-app frame anywhere → the crash originated inside framework code
+  // (hydration mismatches, chunk-load failures, React internals). Presenting
+  // a node_modules frame under a red "Suspect" chip reads as "this file is
+  // the bug" — it isn't. Present it honestly and point at the signals that
+  // actually locate the trigger (page, breadcrumbs, replay).
+  const frameworkOnly = !frames.some((f) => f.inApp);
   return (
-    <Card className="mb-4 overflow-hidden border-l-2 border-l-level-error p-0">
+    <Card
+      className={`mb-4 overflow-hidden border-l-2 p-0 ${frameworkOnly ? "border-l-border" : "border-l-level-error"}`}
+    >
+      {frameworkOnly && (
+        <div className="border-b border-border bg-surface px-4 py-2.5 text-caption text-text-muted">
+          This error was thrown inside <span className="font-medium text-text">framework code</span> — none
+          of the stack frames are this app&apos;s own code, so there is no app file to point at. To find the
+          trigger, start from the <span className="font-medium text-text">page it happened on</span> (shown
+          in Highlights), then use the breadcrumbs, request URL, and session replay below. The frame shown
+          here is where the framework raised the error, not where the bug lives.
+        </div>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
         <div className="flex min-w-0 items-baseline gap-2 font-mono text-small">
-          <span className="shrink-0 rounded bg-level-error/15 px-1.5 py-0.5 text-caption font-medium text-level-error">
-            Suspect
+          <span
+            className={`shrink-0 rounded px-1.5 py-0.5 text-caption font-medium ${
+              frameworkOnly
+                ? "bg-surface-2 text-text-muted"
+                : "bg-level-error/15 text-level-error"
+            }`}
+          >
+            {frameworkOnly ? "Framework frame" : "Suspect"}
           </span>
           {suspect.function && (
             <span className="shrink-0 text-accent">{suspect.function}</span>
