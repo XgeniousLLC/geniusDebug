@@ -46,6 +46,12 @@ export function StackTrace({ frames, shortId }: { frames: NormalizedFrame[]; sho
 
   return (
     <div>
+      {appCount === 0 && (
+        <div className="mb-2 rounded-md border border-border bg-surface px-3 py-2 text-caption text-text-muted">
+          Framework-only stack — no frames from this app&apos;s own code. The trigger isn&apos;t in any file
+          below; locate it via the page, breadcrumbs, and replay.
+        </div>
+      )}
       {/* Crashed-in summary */}
       <div className="mb-2 flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-caption text-text-muted">
         <span className="min-w-0 truncate">
