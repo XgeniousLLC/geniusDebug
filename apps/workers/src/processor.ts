@@ -166,6 +166,7 @@ async function processEvent(projectId: string, payload: SentryEventPayload): Pro
       type: symbolicated.exceptionType,
       value: symbolicated.exceptionValue,
       frames: symbolicated.frames,
+      componentStackFrames: symbolicated.componentStackFrames,
     },
     contexts: symbolicated.contexts as Record<string, unknown>,
     request: symbolicated.request,
