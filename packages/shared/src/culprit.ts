@@ -69,16 +69,23 @@ export function pageOf(transaction?: string, url?: string): string | undefined {
  * `node_modules/next/dist/compiled/react-dom/...` is noise — "which page did
  * this happen on" is the useful headline (this is also what Sentry shows).
  */
+/** Top (innermost) in-app frame's usable path, or undefined. */
+export function topInAppFramePath(frames: NormalizedFrame[]): string | undefined {
+  for (const f of [...frames].reverse()) {
+    if (!f.inApp) continue;
+    const path = framePath(f);
+    if (path) return path;
+  }
+  return undefined;
+}
+
 export function computeCulprit(
   frames: NormalizedFrame[],
   previous?: string,
   transaction?: string,
 ): string | undefined {
-  const inAppFrames = [...frames].reverse().filter((f) => f.inApp);
-  for (const f of inAppFrames) {
-    const path = framePath(f);
-    if (path) return path;
-  }
+  const inApp = topInAppFramePath(frames);
+  if (inApp) return inApp;
   if (transaction) return transaction;
   for (const f of [...frames].reverse()) {
     const path = framePath(f);

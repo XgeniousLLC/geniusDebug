@@ -22,6 +22,14 @@ export interface NormalizedEvent {
   exceptionValue?: string;
   culprit?: string;
   frames: NormalizedFrame[];
+  /**
+   * React component stack for recoverable errors (hydration mismatches etc.),
+   * parsed from `contexts.react.componentStack` — the component chain that was
+   * rendering when React raised the error. Frames reference minified chunks
+   * and are symbolicated like regular frames, so in production this names the
+   * original component files/lines that dev mode would have shown.
+   */
+  componentStackFrames?: NormalizedFrame[];
   fingerprintOverride?: string[];
   contexts: {
     browser?: { name?: string; version?: string };
@@ -111,7 +119,12 @@ export interface EventDto {
   message: string | null;
   release: string | null;
   environment: string;
-  exception: { type?: string; value?: string; frames: NormalizedFrame[] } | null;
+  exception: {
+    type?: string;
+    value?: string;
+    frames: NormalizedFrame[];
+    componentStackFrames?: NormalizedFrame[];
+  } | null;
   contexts: Record<string, unknown>;
   request: Record<string, unknown> | null;
   user: Record<string, unknown> | null;
