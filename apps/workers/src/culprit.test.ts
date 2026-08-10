@@ -34,3 +34,28 @@ test('all frames unusable → falls back to the previous culprit', () => {
 test('no frames at all and no previous culprit → undefined, not a crash', () => {
   assert.equal(computeCulprit([]), undefined);
 });
+
+test('framework-only stack: transaction beats the node_modules frame path (Sentry-style headline)', () => {
+  const frames = [
+    f({ absPath: 'node_modules/next/dist/compiled/react-dom/cjs/react-dom-client.production.js', inApp: false }),
+  ];
+  assert.equal(computeCulprit(frames, undefined, '/login'), '/login');
+});
+
+test('in-app frame still beats the transaction', () => {
+  const frames = [
+    f({ absPath: 'node_modules/next/dist/compiled/react-dom/cjs/react-dom-client.production.js', inApp: false }),
+    f({ absPath: 'app/sentry-replay-test/page.tsx', inApp: true }),
+  ];
+  assert.equal(computeCulprit(frames, undefined, '/sentry-replay-test'), 'app/sentry-replay-test/page.tsx');
+});
+
+test('no transaction → framework frame path still shown (better than nothing)', () => {
+  const frames = [
+    f({ absPath: 'node_modules/next/dist/compiled/react-dom/cjs/react-dom-client.production.js', inApp: false }),
+  ];
+  assert.equal(
+    computeCulprit(frames),
+    'node_modules/next/dist/compiled/react-dom/cjs/react-dom-client.production.js',
+  );
+});

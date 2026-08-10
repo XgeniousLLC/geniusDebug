@@ -36,15 +36,26 @@ export function hasUsableFramePath(f: NormalizedFrame): boolean {
  * couldn't resolve a real file for (e.g. sentry-php's "Unknown" placeholder
  * on shutdown-captured fatals — showing that as the culprit is worse than
  * useless, it looks like a real path but isn't). Falls through: last in-app
- * frame with a usable path → any frame (in-app or not) with a usable path →
- * the previous culprit, if any.
+ * frame with a usable path → the transaction (page/route), when provided →
+ * any frame (in-app or not) with a usable path → the previous culprit.
+ *
+ * The transaction beats non-app frame paths deliberately: for errors thrown
+ * entirely inside framework code (React hydration mismatches, Next runtime
+ * errors) every frame is under node_modules, and headlining the issue with
+ * `node_modules/next/dist/compiled/react-dom/...` is noise — "which page did
+ * this happen on" is the useful headline (this is also what Sentry shows).
  */
-export function computeCulprit(frames: NormalizedFrame[], previous?: string): string | undefined {
+export function computeCulprit(
+  frames: NormalizedFrame[],
+  previous?: string,
+  transaction?: string,
+): string | undefined {
   const inAppFrames = [...frames].reverse().filter((f) => f.inApp);
   for (const f of inAppFrames) {
     const path = framePath(f);
     if (path) return path;
   }
+  if (transaction) return transaction;
   for (const f of [...frames].reverse()) {
     const path = framePath(f);
     if (path) return path;

@@ -75,7 +75,7 @@ export async function symbolicate(e: NormalizedEvent, projectId: string): Promis
   // Culprit was computed in normalize() from the raw (pre-symbolication) top
   // in-app frame — refresh it from the resolved frames so a successfully
   // symbolicated event doesn't keep showing the minified chunk path (FR-GRP-3).
-  const culprit = computeCulprit(frames, e.culprit);
+  const culprit = computeCulprit(frames, e.culprit, e.transaction);
 
   return { ...e, frames, culprit };
 }
