@@ -29,7 +29,15 @@ export async function symbolicate(e: NormalizedEvent, projectId: string): Promis
   let frames: NormalizedFrame[] = e.frames;
   let componentStackFrames: NormalizedFrame[] | undefined = e.componentStackFrames;
 
-  if (e.platform === 'javascript') {
+  // JS-family platforms: the browser SDK stamps `javascript`, but the
+  // @sentry/nextjs SERVER runtime stamps `node` — those events (SSR render
+  // errors, server actions, route handlers) carry minified .next/server
+  // chunk frames that need exactly the same map application and in-app
+  // sanitation. Gating on `javascript` alone silently skipped the whole
+  // pipeline for every server-side event: frames stayed raw, the SDK's
+  // in_app guesses survived, and uploaded server maps were never used.
+  // PHP/Laravel (FR-MAP-10) remains excluded — its frames arrive resolved.
+  if (e.platform === 'javascript' || e.platform === 'node') {
     // Debug-ID lookup → fetch every matching map from R2 → apply per frame
     // (FR-MAP-3/4). A single error spans frames from multiple bundled chunks,
     // each with its own debug_id/map; the event's debug_meta.images pairs tell

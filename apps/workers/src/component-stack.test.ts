@@ -27,3 +27,15 @@ test('returns undefined for empty/garbage input', () => {
   assert.equal(parseComponentStack(''), undefined);
   assert.equal(parseComponentStack('not a stack'), undefined);
 });
+
+// Regression guard for the platform gate: server-side @sentry/nextjs events
+// are platform "node", not "javascript" — they must go through symbolication
+// and in-app sanitation like any JS event (only PHP-family is excluded).
+import { sanitizeRawJsFrames } from './apply-map';
+
+test('node-platform sanity: SSR chunk frame classification helpers apply to server frames', () => {
+  const [f] = sanitizeRawJsFrames([
+    { absPath: 'app:///_next/server/chunks/ssr/[turbopack]_runtime.js', lineno: 853, colno: 9, inApp: true },
+  ]);
+  assert.equal(f.inApp, false);
+});
