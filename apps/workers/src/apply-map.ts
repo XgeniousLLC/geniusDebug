@@ -1,5 +1,5 @@
 import { SourceMapConsumer } from 'source-map';
-import type { NormalizedFrame } from '@geniusdebug/shared';
+import type { DebugImage, NormalizedFrame } from '@geniusdebug/shared';
 import { normalizeFramePath } from '@geniusdebug/shared';
 
 /**
@@ -32,30 +32,62 @@ export async function symbolicateWithMap(
 }
 
 /**
- * Multi-chunk variant (FR-MAP-3/4): a single stack trace can span frames from
- * several different bundled chunks (each with its own debug_id/map) — e.g. an
- * app-page frame plus a separate vendor chunk frame. Tries every available map
- * per frame and keeps the first one that produces a real mapping, instead of
- * applying just one map (previously: the first matching debug_id) to the whole
- * event, which left frames from any other chunk unresolved.
+ * Multi-chunk variant (FR-MAP-3/4): a single stack trace spans frames from
+ * several bundled chunks, each with its own debug_id/map. Every frame resolves
+ * ONLY through its own chunk's map, paired via the event's debug_meta.images
+ * (frame abs_path ↔ image code_file ↔ debug_id).
+ *
+ * The previous implementation tried every available map per frame and kept
+ * the first one that returned a mapping — but minified chunks are one long
+ * line, so the WRONG chunk's map still returns a plausible-looking original
+ * position for almost any column. In practice large framework chunk maps
+ * (Next.js runtime) won that race for app-code frames, mis-resolving them
+ * into node_modules/next/src/... and leaving no in-app frame on the event.
+ *
+ * A frame whose chunk has no image entry or no fetched map stays raw
+ * (FR-MAP-8) — a raw chunk path is honest; a wrong "original" path is worse.
  */
-export async function symbolicateWithMaps(
+export async function symbolicateWithImages(
   frames: NormalizedFrame[],
-  rawMapJsons: Array<string | object>,
+  mapsByDebugId: Map<string, string | object>,
+  images: DebugImage[],
 ): Promise<NormalizedFrame[]> {
-  if (rawMapJsons.length === 0) return frames;
-  const consumers = await Promise.all(rawMapJsons.map((m) => new SourceMapConsumer(m as never)));
+  if (mapsByDebugId.size === 0 || images.length === 0) return frames;
+  const consumers = new Map<string, SourceMapConsumer>();
+  for (const [debugId, raw] of mapsByDebugId) {
+    consumers.set(debugId, await new SourceMapConsumer(raw as never));
+  }
   try {
     return frames.map((f) => {
-      for (const consumer of consumers) {
-        const resolved = resolveFrame(f, consumer);
-        if (resolved !== f) return resolved; // first consumer with a real mapping wins
-      }
-      return f; // no map covered this frame — keep raw (FR-MAP-8)
+      const debugId = debugIdForFrame(f, images);
+      const consumer = debugId ? consumers.get(debugId) : undefined;
+      return consumer ? resolveFrame(f, consumer) : f;
     });
   } finally {
     consumers.forEach((c) => c.destroy());
   }
+}
+
+/**
+ * The debug_id covering this frame's chunk: exact code_file match on the
+ * frame's abs_path/filename first, then a pathname-tail match to tolerate
+ * scheme/host differences between what the SDK stamps on images
+ * (`app:///_next/static/chunks/X.js`) and on frames
+ * (`https://host/_next/static/chunks/X.js`, or vice versa).
+ */
+export function debugIdForFrame(f: NormalizedFrame, images: DebugImage[]): string | undefined {
+  const path = f.absPath ?? f.filename;
+  if (!path) return undefined;
+  const exact = images.find((img) => img.codeFile === path);
+  if (exact) return exact.debugId;
+  const tail = pathTail(path);
+  if (!tail) return undefined;
+  return images.find((img) => pathTail(img.codeFile) === tail)?.debugId;
+}
+
+/** Scheme/host-independent tail of a chunk URL (prefers the `/_next/...` part). */
+function pathTail(p: string): string | undefined {
+  return /(\/_next\/.+)$/.exec(p)?.[1] ?? /(\/[^/]+)$/.exec(p)?.[1];
 }
 
 export function resolveFrame(f: NormalizedFrame, consumer: SourceMapConsumer): NormalizedFrame {

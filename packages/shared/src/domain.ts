@@ -37,6 +37,22 @@ export interface NormalizedEvent {
   spanId?: string;
   replayId?: string;
   debugIds: string[];
+  /**
+   * The event's debug_meta.images pairs: which minified chunk (code_file, the
+   * frame's abs_path) is covered by which source map (debug_id). Symbolication
+   * MUST resolve each frame only through its own chunk's map — minified chunks
+   * are one long line, so the wrong chunk's map will still return a
+   * plausible-looking (but wrong) original position for almost any column.
+   * Optional for backward compatibility with events normalized before this
+   * field existed; absent/empty falls back to raw frames.
+   */
+  debugImages?: DebugImage[];
+}
+
+/** One debug_meta.images entry the SDK sent: chunk file ↔ its map's debug ID. */
+export interface DebugImage {
+  codeFile: string;
+  debugId: string;
 }
 
 export interface NormalizedFrame {
