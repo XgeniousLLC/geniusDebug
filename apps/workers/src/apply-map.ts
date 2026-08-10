@@ -11,7 +11,8 @@ import { normalizeFramePath } from '@geniusdebug/shared';
  * broken deep-links to files that only exist in Next.js's package, not the
  * app's own repo.
  */
-export const FRAMEWORK_INTERNAL_RE = /node_modules|\/framework\/|^src\/(client|server|shared|build|export)\//;
+export const FRAMEWORK_INTERNAL_RE =
+  /node_modules|\/framework\/|^src\/(client|server|shared|build|export)\/|^\[turbopack\]\/|^\[next\]\/|^node:/;
 
 /**
  * Apply a source map to minified frames (FR-MAP-3/4): resolve bundle line/col back
@@ -88,6 +89,33 @@ export function debugIdForFrame(f: NormalizedFrame, images: DebugImage[]): strin
 /** Scheme/host-independent tail of a chunk URL (prefers the `/_next/...` part). */
 function pathTail(p: string): string | undefined {
   return /(\/_next\/.+)$/.exec(p)?.[1] ?? /(\/[^/]+)$/.exec(p)?.[1];
+}
+
+/** Minified build assets and JS-runtime placeholders — never the app's own
+ * readable code, regardless of what the SDK's client-side in_app guess said. */
+const MINIFIED_ASSET_RE = /\/_next\/static\/|^_next\/static\/|(^|\/)webpack(-[0-9a-f]+)?\.js$/;
+const RUNTIME_PLACEHOLDERS = new Set(['<anonymous>', 'native', '[native code]', 'eval']);
+
+/**
+ * Post-symbolication in-app sanitation for JS events (FR-MAP-5): any frame
+ * still pointing at a minified chunk (`/_next/static/...`, hashed webpack
+ * chunks — e.g. an old release whose maps were never uploaded) or at a
+ * runtime placeholder (`<anonymous>`, `native`) must not classify in-app.
+ * The browser SDK stamps in_app=true on all of these client-side (it can't
+ * know better before symbolication), which otherwise promotes an unreadable
+ * frame to suspect/culprit over the honest page-level fallback.
+ * Frames symbolication resolved already had inApp re-derived in resolveFrame
+ * and keep it.
+ */
+export function sanitizeRawJsFrames(frames: NormalizedFrame[]): NormalizedFrame[] {
+  return frames.map((f) => {
+    if (!f.inApp) return f;
+    const p = (f.absPath ?? f.filename)?.trim();
+    if (!p) return { ...f, inApp: false };
+    if (RUNTIME_PLACEHOLDERS.has(p.toLowerCase())) return { ...f, inApp: false };
+    if (MINIFIED_ASSET_RE.test(p)) return { ...f, inApp: false };
+    return f;
+  });
 }
 
 export function resolveFrame(f: NormalizedFrame, consumer: SourceMapConsumer): NormalizedFrame {

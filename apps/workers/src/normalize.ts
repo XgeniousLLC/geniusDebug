@@ -1,5 +1,6 @@
 import type { SentryEventPayload, NormalizedEvent, NormalizedFrame, IssueLevel } from '@geniusdebug/shared';
-import { computeCulprit } from '@geniusdebug/shared';
+import { computeCulprit, pageOf } from '@geniusdebug/shared';
+import { decodeReactError } from './react-errors';
 
 function coerceMessage(m: SentryEventPayload['message']): string | undefined {
   if (!m) return undefined;
@@ -32,8 +33,16 @@ export function normalizeEvent(p: SentryEventPayload): NormalizedEvent {
     postContext: f.post_context,
   }));
 
-  // Culprit = top in-app frame's module/abs_path (FR-GRP-3).
-  const culprit = computeCulprit(frames);
+  // Culprit = top in-app frame's module/abs_path (FR-GRP-3); framework-only
+  // stacks headline the page (transaction, else URL pathname) instead of a
+  // node_modules path. Refreshed post-symbolication in symbolicate.ts.
+  const culprit = computeCulprit(frames, undefined, pageOf(p.transaction, p.request?.url));
+
+  // Expand production "Minified React error #NNN" values into the real
+  // developer-facing message (hydration mismatches etc.) so the issue title
+  // says what actually went wrong instead of pointing at react.dev.
+  const rawValue = exc?.value;
+  const exceptionValue = rawValue ? decodeReactError(rawValue) ?? rawValue : rawValue;
 
   const ts =
     typeof p.timestamp === 'number'
@@ -65,7 +74,7 @@ export function normalizeEvent(p: SentryEventPayload): NormalizedEvent {
     environment: p.environment ?? 'production',
     message: coerceMessage(p.message),
     exceptionType: exc?.type,
-    exceptionValue: exc?.value,
+    exceptionValue,
     culprit,
     frames,
     fingerprintOverride: p.fingerprint,

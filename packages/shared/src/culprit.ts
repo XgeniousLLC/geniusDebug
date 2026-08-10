@@ -6,7 +6,18 @@ import type { NormalizedFrame } from './domain';
  * the only in_app-flagged frame, with no real backtrace to the actual
  * trigger — see FR-GRP-3). Never usable as a culprit/display path.
  */
-const PLACEHOLDER_FILES = new Set(['unknown', '[internal]', '']);
+const PLACEHOLDER_FILES = new Set([
+  'unknown',
+  '[internal]',
+  '',
+  // JS runtime placeholders — `Array.reduce` in `<anonymous>` etc. carry no
+  // navigable file; showing them as the culprit/suspect is worse than the
+  // page-level fallback.
+  '<anonymous>',
+  'native',
+  '[native code]',
+  'eval',
+]);
 
 function isUsable(path: string | undefined | null): path is string {
   return !!path && !PLACEHOLDER_FILES.has(path.trim().toLowerCase());
@@ -31,20 +42,44 @@ export function hasUsableFramePath(f: NormalizedFrame): boolean {
   return framePath(f) !== undefined;
 }
 
+/** Page-level culprit fallback: parameterized transaction when the SDK sent
+ * one, else the URL's pathname (some events — e.g. errors before routing
+ * settles — carry a url but no transaction). */
+export function pageOf(transaction?: string, url?: string): string | undefined {
+  if (transaction) return transaction;
+  if (!url) return undefined;
+  try {
+    return new URL(url).pathname;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Culprit = the top in-app frame's path (FR-GRP-3), skipping frames the SDK
  * couldn't resolve a real file for (e.g. sentry-php's "Unknown" placeholder
  * on shutdown-captured fatals — showing that as the culprit is worse than
  * useless, it looks like a real path but isn't). Falls through: last in-app
- * frame with a usable path → any frame (in-app or not) with a usable path →
- * the previous culprit, if any.
+ * frame with a usable path → the transaction (page/route), when provided →
+ * any frame (in-app or not) with a usable path → the previous culprit.
+ *
+ * The transaction beats non-app frame paths deliberately: for errors thrown
+ * entirely inside framework code (React hydration mismatches, Next runtime
+ * errors) every frame is under node_modules, and headlining the issue with
+ * `node_modules/next/dist/compiled/react-dom/...` is noise — "which page did
+ * this happen on" is the useful headline (this is also what Sentry shows).
  */
-export function computeCulprit(frames: NormalizedFrame[], previous?: string): string | undefined {
+export function computeCulprit(
+  frames: NormalizedFrame[],
+  previous?: string,
+  transaction?: string,
+): string | undefined {
   const inAppFrames = [...frames].reverse().filter((f) => f.inApp);
   for (const f of inAppFrames) {
     const path = framePath(f);
     if (path) return path;
   }
+  if (transaction) return transaction;
   for (const f of [...frames].reverse()) {
     const path = framePath(f);
     if (path) return path;
