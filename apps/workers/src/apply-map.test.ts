@@ -94,3 +94,24 @@ test('Next.js internal source (webpack://_N_E/src/client/...) is not flagged in-
   assert.equal(f.filename, 'src/client/app-next.ts');
   assert.equal(f.inApp, false, 'Next.js framework internals must not read as the app\'s own code');
 });
+
+test('Turbopack-resolved Next.js internal source (turbopack:///[project]/src/client/...) is not flagged in-app', async () => {
+  // Regression: FRAMEWORK_INTERNAL_RE's `^src/...` alternative is anchored to
+  // string-start; the unstripped turbopack:///[project]/ prefix broke that
+  // anchor and left framework-internal frames misclassified as in-app.
+  const g = new SourceMapGenerator({ file: 'bundle.js' });
+  g.addMapping({ generated: { line: 1, column: 0 }, original: { line: 7, column: 10 }, source: 'turbopack:///[project]/src/client/app-next.ts' });
+  const minified: NormalizedFrame = { filename: 'bundle.js', lineno: 1, colno: 0, inApp: true };
+  const [f] = await symbolicateWithMap([minified], g.toString());
+  assert.equal(f.filename, 'src/client/app-next.ts');
+  assert.equal(f.inApp, false, 'Next.js framework internals resolved via Turbopack must not read as the app\'s own code');
+});
+
+test('Turbopack-resolved app source (turbopack:///[project]/app/...) IS flagged in-app', async () => {
+  const g = new SourceMapGenerator({ file: 'bundle.js' });
+  g.addMapping({ generated: { line: 1, column: 0 }, original: { line: 71, column: 21 }, source: 'turbopack:///[project]/app/sentry-replay-test/page.tsx' });
+  const minified: NormalizedFrame = { filename: 'bundle.js', lineno: 1, colno: 0, inApp: false };
+  const [f] = await symbolicateWithMap([minified], g.toString());
+  assert.equal(f.filename, 'app/sentry-replay-test/page.tsx');
+  assert.equal(f.inApp, true);
+});

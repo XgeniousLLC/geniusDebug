@@ -2,7 +2,7 @@ import * as React from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import type { IssueDto, EventDto, NormalizedFrame } from "@geniusdebug/shared";
-import { hasUsableFramePath } from "@geniusdebug/shared";
+import { normalizeFramePath, pickSuspectFrame } from "@geniusdebug/shared";
 import { api, errMsg } from "../lib/api";
 import { useUi } from "../store/ui";
 import { toast, ACTION_PAST } from "../store/toast";
@@ -1528,20 +1528,13 @@ function SuspectFrame({
 }) {
   void githubDefault;
   if (!frames || frames.length === 0) return null;
-  const ordered = [...frames].reverse(); // crashing frame first
-  // Fallback chain: in-app + has source context → any frame with context →
-  // in-app with at least a real (non-SDK-placeholder) path → any real path →
-  // give up and show whatever the innermost frame is.
-  const suspect =
-    ordered.find((f) => f.inApp && f.contextLine != null) ??
-    ordered.find((f) => f.contextLine != null) ??
-    ordered.find((f) => f.inApp && hasUsableFramePath(f)) ??
-    ordered.find(hasUsableFramePath) ??
-    ordered[0];
+  // In-app always wins over framework/system, even when the in-app frame
+  // lacks resolved source context (a different chunk's map may have resolved
+  // a framework frame WITH context — showing that instead would be wrong).
+  // Same selection used by the "Crashed in" summary (StackTrace.tsx).
+  const suspect = pickSuspectFrame(frames)!;
   const path = suspect.absPath ?? suspect.filename ?? "<anonymous>";
-  const base = path
-    .replace(/^webpack-internal:\/\/\/(\(.*?\)\/)?/, "")
-    .replace(/^\.\//, "");
+  const base = normalizeFramePath(path) ?? path;
   const hasCode =
     suspect.contextLine != null || (suspect.preContext?.length ?? 0) > 0;
   const mappable = /\.(mjs|cjs|jsx?|tsx?|vue|svelte)$/.test(base);

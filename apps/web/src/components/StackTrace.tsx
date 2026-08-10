@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { NormalizedFrame } from '@geniusdebug/shared';
-import { hasUsableFramePath } from '@geniusdebug/shared';
+import { hasUsableFramePath, normalizeFramePath, pickSuspectFrame } from '@geniusdebug/shared';
 import { api } from '../lib/api';
 import { ChevronDownIcon } from './icons';
 
@@ -26,11 +26,12 @@ export function StackTrace({ frames, shortId }: { frames: NormalizedFrame[]; sho
     return <div className="text-small text-text-muted">No stack trace on this event.</div>;
   }
   const ordered = [...frames].reverse(); // crashing frame first
-  // The innermost frame is sometimes one the SDK couldn't resolve a real file
-  // for (e.g. sentry-php's "Unknown"/line-0 placeholder on a shutdown-captured
-  // fatal with no backtrace to the actual trigger) — featuring that as "Crashed
-  // in" is actively misleading. Prefer the nearest frame with a real path.
-  const crash = ordered.find(hasUsableFramePath) ?? ordered[0];
+  // Prefer the nearest IN-APP frame with a real path over the literal
+  // innermost frame — the innermost frame is often framework/dispatch code
+  // (e.g. React/Next internals), or an SDK placeholder like sentry-php's
+  // "Unknown" on a shutdown-captured fatal — either is misleading as
+  // "Crashed in". Same selection used for the Suspect-frame card.
+  const crash = pickSuspectFrame(frames)!;
 
   // Group consecutive system frames so they collapse together (Sentry behavior).
   const groups: { system: boolean; frames: { f: NormalizedFrame; idx: number }[] }[] = [];
@@ -231,8 +232,7 @@ function CodeLine({ n, text, crash }: { n: number | null; text: string; crash?: 
 // ------------------------- helpers -------------------------
 
 function shortFile(p?: string | null): string {
-  if (!p) return '<anonymous>';
-  return p.replace(/^webpack-internal:\/\/\/(\(.*?\)\/)?/, '').replace(/^\.\//, '');
+  return normalizeFramePath(p) ?? '<anonymous>';
 }
 
 // Lightweight JS/TS syntax highlighter for source-context lines.
