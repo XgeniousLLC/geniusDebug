@@ -33,6 +33,16 @@ export function normalizeEvent(p: SentryEventPayload): NormalizedEvent {
     postContext: f.post_context,
   }));
 
+  // React component stack (recoverable errors — hydration mismatches etc.),
+  // sent by the client's hydrateRoot instrumentation as
+  // contexts.react.componentStack. Parsed into frames here so symbolication
+  // can resolve them to original component files/lines.
+  const reactCtx = p.contexts?.react as { componentStack?: unknown } | undefined;
+  const componentStackFrames =
+    typeof reactCtx?.componentStack === 'string'
+      ? parseComponentStack(reactCtx.componentStack)
+      : undefined;
+
   // Culprit = top in-app frame's module/abs_path (FR-GRP-3); framework-only
   // stacks headline the page (transaction, else URL pathname) instead of a
   // node_modules path. Refreshed post-symbolication in symbolicate.ts.
@@ -96,5 +106,32 @@ export function normalizeEvent(p: SentryEventPayload): NormalizedEvent {
       (p.contexts?.replay as { replay_id?: string } | undefined)?.replay_id ?? p.tags?.replayId,
     debugIds,
     debugImages,
+    componentStackFrames,
   };
+}
+
+/**
+ * Parse a React componentStack string into frames. Production lines look like
+ * `    at ComponentName (https://host/_next/static/chunks/x.js:1:2345)` —
+ * same shape as an Error stack, ordered innermost (mismatching component)
+ * first. Lines without a location (`at div`, host components) are kept as
+ * function-only frames. Stored innermost-LAST to match NormalizedFrame order
+ * (stack traces are outermost-first; the UI reverses for display).
+ */
+export function parseComponentStack(componentStack: string): NormalizedFrame[] | undefined {
+  const frames: NormalizedFrame[] = [];
+  for (const line of componentStack.split('\n')) {
+    const m = /^\s*at\s+(.+?)(?:\s+\((.+?)(?::(\d+))(?::(\d+))?\))?\s*$/.exec(line);
+    if (!m) continue;
+    frames.push({
+      function: m[1],
+      absPath: m[2],
+      filename: m[2],
+      lineno: m[3] ? Number(m[3]) : undefined,
+      colno: m[4] ? Number(m[4]) : undefined,
+      inApp: false, // re-derived after symbolication (resolveFrame / sanitize)
+    });
+  }
+  if (frames.length === 0) return undefined;
+  return frames.reverse(); // innermost last (NormalizedFrame convention)
 }

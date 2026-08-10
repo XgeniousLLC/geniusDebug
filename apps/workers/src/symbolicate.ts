@@ -4,7 +4,7 @@ import { gunzipSync } from 'node:zlib';
 import type { NormalizedEvent, NormalizedFrame } from '@geniusdebug/shared';
 import { getObject, r2Configured } from './r2';
 import { symbolicateWithImages, sanitizeRawJsFrames, FRAMEWORK_INTERNAL_RE } from './apply-map';
-import { computeCulprit, normalizeFramePath, pageOf } from '@geniusdebug/shared';
+import { computeCulprit, normalizeFramePath, pageOf, topInAppFramePath } from '@geniusdebug/shared';
 
 /** Uploader gzips maps before PUT (build-time cost); gunzip on read here,
  * detected by magic bytes so pre-existing plain-JSON maps in R2 still work. */
@@ -27,6 +27,7 @@ export async function symbolicate(e: NormalizedEvent, projectId: string): Promis
   const gh = await resolveGithub(projectId, e.release);
 
   let frames: NormalizedFrame[] = e.frames;
+  let componentStackFrames: NormalizedFrame[] | undefined = e.componentStackFrames;
 
   if (e.platform === 'javascript') {
     // Debug-ID lookup → fetch every matching map from R2 → apply per frame
@@ -56,7 +57,14 @@ export async function symbolicate(e: NormalizedEvent, projectId: string): Promis
           }),
         );
         if (mapsByDebugId.size > 0) {
-          frames = await symbolicateWithImages(frames, mapsByDebugId, images);
+          // Symbolicate stack frames AND React component-stack frames (from
+          // recoverable errors — hydration mismatches) in one pass; the
+          // component stack references the same chunks, so the same maps
+          // resolve it to original component files/lines.
+          const csf = componentStackFrames ?? [];
+          const resolved = await symbolicateWithImages([...frames, ...csf], mapsByDebugId, images);
+          frames = resolved.slice(0, frames.length);
+          if (csf.length > 0) componentStackFrames = resolved.slice(frames.length);
         }
       } catch (err) {
         // eslint-disable-next-line no-console
@@ -66,6 +74,7 @@ export async function symbolicate(e: NormalizedEvent, projectId: string): Promis
     // Frames still raw after (or without) map application: minified chunk
     // URLs and runtime placeholders must not classify in-app (FR-MAP-5).
     frames = sanitizeRawJsFrames(frames);
+    if (componentStackFrames) componentStackFrames = sanitizeRawJsFrames(componentStackFrames);
   } // FR-MAP-10
 
   // Deep-link any project source file to GitHub (FR-MAP-6) when a repo is linked —
@@ -78,9 +87,15 @@ export async function symbolicate(e: NormalizedEvent, projectId: string): Promis
   // Culprit was computed in normalize() from the raw (pre-symbolication) top
   // in-app frame — refresh it from the resolved frames so a successfully
   // symbolicated event doesn't keep showing the minified chunk path (FR-GRP-3).
-  const culprit = computeCulprit(frames, e.culprit, pageOf(e.transaction, e.url));
+  // Component-stack frames name the mismatching component even when the
+  // error's own stack is framework-only (hydration mismatches) — an in-app
+  // component beats the page-level fallback in the headline.
+  const culprit =
+    topInAppFramePath(frames) ??
+    (componentStackFrames ? topInAppFramePath(componentStackFrames) : undefined) ??
+    computeCulprit(frames, e.culprit, pageOf(e.transaction, e.url));
 
-  return { ...e, frames, culprit };
+  return { ...e, frames, componentStackFrames, culprit };
 }
 
 /** R2 key per matching debug_id for the event's Debug IDs (FR-MAP-2). Keyed by

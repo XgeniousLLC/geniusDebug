@@ -440,7 +440,11 @@ export function IssueDetail() {
       )}
 
       {/* Suspect frame — which file + line caused the error, with the code (GD-153) */}
-      <SuspectFrame frames={frames} githubDefault={null} />
+      <SuspectFrame
+        frames={frames}
+        componentStackFrames={event?.exception?.componentStackFrames}
+        githubDefault={null}
+      />
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
         {/* Left column */}
@@ -597,7 +601,26 @@ export function IssueDetail() {
           </div>
 
           {tab === "stack" && (
-            <StackTrace frames={frames} shortId={issue.shortId} />
+            <>
+              <StackTrace frames={frames} shortId={issue.shortId} />
+              {(event?.exception?.componentStackFrames?.length ?? 0) > 0 && (
+                <div className="mt-4">
+                  <div className="mb-2 text-small font-medium text-text">
+                    React component stack
+                  </div>
+                  <div className="mb-2 text-caption text-text-muted">
+                    The component tree that was rendering when React raised
+                    this error (innermost first) — for hydration mismatches,
+                    the top in-app component is where the server/client output
+                    diverged.
+                  </div>
+                  <StackTrace
+                    frames={event!.exception!.componentStackFrames!}
+                    shortId={issue.shortId}
+                  />
+                </div>
+              )}
+            </>
           )}
 
           {tab === "breadcrumbs" && (
@@ -1521,9 +1544,11 @@ function Breadcrumbs({ crumbs }: { crumbs: Array<Record<string, unknown>> }) {
 /** The frame that most likely caused the error, shown prominently with its code (GD-153). */
 function SuspectFrame({
   frames,
+  componentStackFrames,
   githubDefault,
 }: {
   frames: NormalizedFrame[];
+  componentStackFrames?: NormalizedFrame[];
   githubDefault: string | null;
 }) {
   void githubDefault;
@@ -1532,18 +1557,26 @@ function SuspectFrame({
   // lacks resolved source context (a different chunk's map may have resolved
   // a framework frame WITH context — showing that instead would be wrong).
   // Same selection used by the "Crashed in" summary (StackTrace.tsx).
-  const suspect = pickSuspectFrame(frames)!;
+  // When the error's own stack is framework-only (hydration mismatches) but
+  // the React component stack names an in-app component, THAT component is
+  // the most useful thing to show — it's where server/client output diverged.
+  const stackHasInApp = frames.some((f) => f.inApp);
+  const componentSuspect =
+    !stackHasInApp && componentStackFrames?.some((f) => f.inApp)
+      ? pickSuspectFrame(componentStackFrames)
+      : undefined;
+  const suspect = componentSuspect ?? pickSuspectFrame(frames)!;
   const path = suspect.absPath ?? suspect.filename ?? "<anonymous>";
   const base = normalizeFramePath(path) ?? path;
   const hasCode =
     suspect.contextLine != null || (suspect.preContext?.length ?? 0) > 0;
   const mappable = /\.(mjs|cjs|jsx?|tsx?|vue|svelte)$/.test(base);
-  // No in-app frame anywhere → the crash originated inside framework code
-  // (hydration mismatches, chunk-load failures, React internals). Presenting
-  // a node_modules frame under a red "Suspect" chip reads as "this file is
-  // the bug" — it isn't. Present it honestly and point at the signals that
-  // actually locate the trigger (page, breadcrumbs, replay).
-  const frameworkOnly = !frames.some((f) => f.inApp);
+  // No in-app frame anywhere (stack OR component stack) → the crash
+  // originated inside framework code (chunk-load failures, React internals).
+  // Presenting a node_modules frame under a red "Suspect" chip reads as
+  // "this file is the bug" — it isn't. Present it honestly and point at the
+  // signals that actually locate the trigger (page, breadcrumbs, replay).
+  const frameworkOnly = !stackHasInApp && !componentSuspect;
   return (
     <Card
       className={`mb-4 overflow-hidden border-l-2 p-0 ${frameworkOnly ? "border-l-border" : "border-l-level-error"}`}
@@ -1566,7 +1599,11 @@ function SuspectFrame({
                 : "bg-level-error/15 text-level-error"
             }`}
           >
-            {frameworkOnly ? "Framework frame" : "Suspect"}
+            {frameworkOnly
+              ? "Framework frame"
+              : componentSuspect
+                ? "Suspect component"
+                : "Suspect"}
           </span>
           {suspect.function && (
             <span className="shrink-0 text-accent">{suspect.function}</span>
