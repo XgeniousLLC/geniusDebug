@@ -82,8 +82,21 @@ export function debugIdForFrame(f: NormalizedFrame, images: DebugImage[]): strin
   const exact = images.find((img) => img.codeFile === path);
   if (exact) return exact.debugId;
   const tail = pathTail(path);
-  if (!tail) return undefined;
-  return images.find((img) => pathTail(img.codeFile) === tail)?.debugId;
+  const byTail = tail ? images.find((img) => pathTail(img.codeFile) === tail) : undefined;
+  if (byTail) return byTail.debugId;
+  // Server-side events: images carry disk paths (/var/task/.next/server/...)
+  // while frames carry rewritten app:///_next/server/... paths — `.next` vs
+  // `_next` defeats the tail match. Chunk basenames are build-hashed and
+  // unique within a release, so basename equality is a safe last resort.
+  const base = basename(path);
+  if (!base) return undefined;
+  const byBase = images.filter((img) => basename(img.codeFile) === base);
+  return byBase.length === 1 ? byBase[0].debugId : undefined;
+}
+
+function basename(p: string): string | undefined {
+  const b = p.slice(p.lastIndexOf('/') + 1);
+  return b.endsWith('.js') ? b : undefined;
 }
 
 /** Scheme/host-independent tail of a chunk URL (prefers the `/_next/...` part). */
@@ -91,9 +104,15 @@ function pathTail(p: string): string | undefined {
   return /(\/_next\/.+)$/.exec(p)?.[1] ?? /(\/[^/]+)$/.exec(p)?.[1];
 }
 
-/** Minified build assets and JS-runtime placeholders — never the app's own
- * readable code, regardless of what the SDK's client-side in_app guess said. */
-const MINIFIED_ASSET_RE = /\/_next\/static\/|^_next\/static\/|(^|\/)webpack(-[0-9a-f]+)?\.js$/;
+/** Minified/bundled build assets and JS-runtime placeholders — never the
+ * app's own readable code, regardless of the SDK's in_app guess. Covers
+ * client chunks (/_next/static/), SSR server chunks (/_next/server/ — the
+ * Node SDK attaches source context for these straight off disk, but they're
+ * still bundled output, e.g. [turbopack]_runtime.js / [root-of-the-server]),
+ * hashed webpack chunks, and dependency paths in raw server frames
+ * (/var/task/node_modules/...). */
+const MINIFIED_ASSET_RE =
+  /\/_next\/(static|server)\/|^_next\/(static|server)\/|(^|\/)webpack(-[0-9a-f]+)?\.js$|node_modules/;
 const RUNTIME_PLACEHOLDERS = new Set(['<anonymous>', 'native', '[native code]', 'eval']);
 
 /**
