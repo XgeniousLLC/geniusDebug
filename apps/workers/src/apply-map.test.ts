@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SourceMapGenerator } from 'source-map';
-import { symbolicateWithMap, symbolicateWithImages, debugIdForFrame } from './apply-map';
+import { symbolicateWithMap, symbolicateWithImages, debugIdForFrame, sanitizeRawJsFrames } from './apply-map';
 import type { NormalizedFrame } from '@geniusdebug/shared';
 
 /** Build a fixture map: minified bundle.js:1:100 → the real crashing line 42. */
@@ -185,4 +185,31 @@ test('Turbopack-resolved app source (turbopack:///[project]/app/...) IS flagged 
   const [f] = await symbolicateWithMap([minified], g.toString());
   assert.equal(f.filename, 'app/sentry-replay-test/page.tsx');
   assert.equal(f.inApp, true);
+});
+
+test('Turbopack runtime source ([turbopack]/browser/runtime/...) is not flagged in-app', async () => {
+  // "Failed to load chunk" errors are thrown by Turbopack's own runtime; its
+  // sources resolve to [turbopack]/... paths, which are framework internals.
+  const g = new SourceMapGenerator({ file: 'bundle.js' });
+  g.addMapping({ generated: { line: 1, column: 0 }, original: { line: 233, column: 22 }, source: 'turbopack:///[turbopack]/browser/runtime/base/runtime-base.ts' });
+  const minified: NormalizedFrame = { filename: 'bundle.js', lineno: 1, colno: 0, inApp: true };
+  const [f] = await symbolicateWithMap([minified], g.toString());
+  assert.equal(f.filename, '[turbopack]/browser/runtime/base/runtime-base.ts');
+  assert.equal(f.inApp, false, 'bundler runtime must not read as the app\'s own code');
+});
+
+test('sanitizeRawJsFrames: unresolved chunk URLs and runtime placeholders lose their SDK in_app flag', () => {
+  const frames: NormalizedFrame[] = [
+    { filename: '<anonymous>', function: 'Array.reduce', inApp: true },
+    { absPath: 'app:///_next/static/chunks/77183-ee940e82975cb0f0.js', lineno: 2, colno: 62423, inApp: true },
+    { absPath: 'https://crm.example.com/_next/static/chunks/webpack-d1e8e2013f8d2416.js', lineno: 1, colno: 1409, inApp: true },
+    { absPath: 'app/real/page.tsx', contextLine: 'const x = 1;', inApp: true }, // resolved — untouched
+    { inApp: true }, // pathless
+  ];
+  const [anon, chunk, webpack, resolved, pathless] = sanitizeRawJsFrames(frames);
+  assert.equal(anon.inApp, false, '<anonymous> is not app code');
+  assert.equal(chunk.inApp, false, 'minified /_next/static chunk is not app code');
+  assert.equal(webpack.inApp, false, 'webpack runtime chunk is not app code');
+  assert.equal(resolved.inApp, true, 'symbolicated app frame keeps its classification');
+  assert.equal(pathless.inApp, false, 'pathless frame cannot be app code');
 });

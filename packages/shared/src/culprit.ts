@@ -6,7 +6,18 @@ import type { NormalizedFrame } from './domain';
  * the only in_app-flagged frame, with no real backtrace to the actual
  * trigger — see FR-GRP-3). Never usable as a culprit/display path.
  */
-const PLACEHOLDER_FILES = new Set(['unknown', '[internal]', '']);
+const PLACEHOLDER_FILES = new Set([
+  'unknown',
+  '[internal]',
+  '',
+  // JS runtime placeholders — `Array.reduce` in `<anonymous>` etc. carry no
+  // navigable file; showing them as the culprit/suspect is worse than the
+  // page-level fallback.
+  '<anonymous>',
+  'native',
+  '[native code]',
+  'eval',
+]);
 
 function isUsable(path: string | undefined | null): path is string {
   return !!path && !PLACEHOLDER_FILES.has(path.trim().toLowerCase());
@@ -29,6 +40,19 @@ function framePath(f: NormalizedFrame): string | undefined {
  */
 export function hasUsableFramePath(f: NormalizedFrame): boolean {
   return framePath(f) !== undefined;
+}
+
+/** Page-level culprit fallback: parameterized transaction when the SDK sent
+ * one, else the URL's pathname (some events — e.g. errors before routing
+ * settles — carry a url but no transaction). */
+export function pageOf(transaction?: string, url?: string): string | undefined {
+  if (transaction) return transaction;
+  if (!url) return undefined;
+  try {
+    return new URL(url).pathname;
+  } catch {
+    return undefined;
+  }
 }
 
 /**

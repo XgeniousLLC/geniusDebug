@@ -3,8 +3,8 @@ import { and, eq, inArray } from 'drizzle-orm';
 import { gunzipSync } from 'node:zlib';
 import type { NormalizedEvent, NormalizedFrame } from '@geniusdebug/shared';
 import { getObject, r2Configured } from './r2';
-import { symbolicateWithImages, FRAMEWORK_INTERNAL_RE } from './apply-map';
-import { computeCulprit, normalizeFramePath } from '@geniusdebug/shared';
+import { symbolicateWithImages, sanitizeRawJsFrames, FRAMEWORK_INTERNAL_RE } from './apply-map';
+import { computeCulprit, normalizeFramePath, pageOf } from '@geniusdebug/shared';
 
 /** Uploader gzips maps before PUT (build-time cost); gunzip on read here,
  * detected by magic bytes so pre-existing plain-JSON maps in R2 still work. */
@@ -63,6 +63,9 @@ export async function symbolicate(e: NormalizedEvent, projectId: string): Promis
         console.warn(`[symbolicate] map apply failed for [${[...artifacts.values()].join(', ')}], using raw frames:`, (err as Error).message);
       }
     }
+    // Frames still raw after (or without) map application: minified chunk
+    // URLs and runtime placeholders must not classify in-app (FR-MAP-5).
+    frames = sanitizeRawJsFrames(frames);
   } // FR-MAP-10
 
   // Deep-link any project source file to GitHub (FR-MAP-6) when a repo is linked —
@@ -75,7 +78,7 @@ export async function symbolicate(e: NormalizedEvent, projectId: string): Promis
   // Culprit was computed in normalize() from the raw (pre-symbolication) top
   // in-app frame — refresh it from the resolved frames so a successfully
   // symbolicated event doesn't keep showing the minified chunk path (FR-GRP-3).
-  const culprit = computeCulprit(frames, e.culprit, e.transaction);
+  const culprit = computeCulprit(frames, e.culprit, pageOf(e.transaction, e.url));
 
   return { ...e, frames, culprit };
 }

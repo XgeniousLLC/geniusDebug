@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeCulprit } from '@geniusdebug/shared';
+import { computeCulprit, pageOf } from '@geniusdebug/shared';
 import type { NormalizedFrame } from '@geniusdebug/shared';
 
 const f = (over: Partial<NormalizedFrame>): NormalizedFrame => ({ inApp: false, ...over });
@@ -57,5 +57,24 @@ test('no transaction → framework frame path still shown (better than nothing)'
   assert.equal(
     computeCulprit(frames),
     'node_modules/next/dist/compiled/react-dom/cjs/react-dom-client.production.js',
+  );
+});
+
+test('pageOf: transaction wins, URL pathname is the fallback, garbage URL → undefined', () => {
+  assert.equal(pageOf('/public/:workspace/meetings/:id', 'https://x.com/public/a/meetings/b'), '/public/:workspace/meetings/:id');
+  assert.equal(pageOf(undefined, 'https://app.taskip.net/templates/hr-audit?type=document'), '/templates/hr-audit');
+  assert.equal(pageOf(undefined, 'not a url'), undefined);
+  assert.equal(pageOf(undefined, undefined), undefined);
+});
+
+test('runtime placeholder frames (<anonymous>) never become the culprit', () => {
+  const frames = [
+    f({ absPath: 'app:///_next/static/chunks/77183-abc.js', inApp: false }),
+    f({ filename: '<anonymous>', function: 'Array.reduce', inApp: true }),
+  ];
+  assert.equal(
+    computeCulprit(frames, undefined, '/public/:workspace/meetings/:id'),
+    '/public/:workspace/meetings/:id',
+    'placeholder in-app frame skipped, page fallback used',
   );
 });

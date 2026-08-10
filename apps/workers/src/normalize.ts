@@ -1,5 +1,5 @@
 import type { SentryEventPayload, NormalizedEvent, NormalizedFrame, IssueLevel } from '@geniusdebug/shared';
-import { computeCulprit } from '@geniusdebug/shared';
+import { computeCulprit, pageOf } from '@geniusdebug/shared';
 import { decodeReactError } from './react-errors';
 
 function coerceMessage(m: SentryEventPayload['message']): string | undefined {
@@ -34,8 +34,9 @@ export function normalizeEvent(p: SentryEventPayload): NormalizedEvent {
   }));
 
   // Culprit = top in-app frame's module/abs_path (FR-GRP-3); framework-only
-  // stacks headline the transaction instead of a node_modules path.
-  const culprit = computeCulprit(frames, undefined, p.transaction);
+  // stacks headline the page (transaction, else URL pathname) instead of a
+  // node_modules path. Refreshed post-symbolication in symbolicate.ts.
+  const culprit = computeCulprit(frames, undefined, pageOf(p.transaction, p.request?.url));
 
   // Expand production "Minified React error #NNN" values into the real
   // developer-facing message (hydration mismatches etc.) so the issue title
