@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SourceMapGenerator } from 'source-map';
-import { symbolicateWithMap, symbolicateWithMaps } from './apply-map';
+import { symbolicateWithMap, symbolicateWithImages, debugIdForFrame } from './apply-map';
 import type { NormalizedFrame } from '@geniusdebug/shared';
 
 /** Build a fixture map: minified bundle.js:1:100 → the real crashing line 42. */
@@ -58,23 +58,94 @@ function secondChunkMap(): string {
   return g.toString();
 }
 
-test('multi-chunk stack: each frame resolves against whichever map actually covers it (FR-MAP-3)', async () => {
-  const appFrame: NormalizedFrame = { filename: 'bundle.js', lineno: 1, colno: 100, inApp: false };
-  const vendorFrame: NormalizedFrame = { filename: 'vendor.js', lineno: 5, colno: 20, inApp: false };
-  const [a, v] = await symbolicateWithMaps([appFrame, vendorFrame], [fixtureMap(), secondChunkMap()]);
+const BUNDLE_ID = '11111111-1111-1111-1111-111111111111';
+const VENDOR_ID = '22222222-2222-2222-2222-222222222222';
 
-  assert.equal(a.filename, 'stores/inbox/useInboxConversations.ts', 'app frame resolved via the first map');
-  assert.equal(v.filename, 'lib/format.ts', 'vendor frame resolved via the second map, not left raw');
+test('multi-chunk stack: each frame resolves ONLY through its own chunk\'s map, paired by debug_meta.images (FR-MAP-3)', async () => {
+  const appFrame: NormalizedFrame = { filename: 'bundle.js', absPath: 'app:///_next/static/chunks/bundle.js', lineno: 1, colno: 100, inApp: false };
+  const vendorFrame: NormalizedFrame = { filename: 'vendor.js', absPath: 'app:///_next/static/chunks/vendor.js', lineno: 5, colno: 20, inApp: false };
+  const [a, v] = await symbolicateWithImages(
+    [appFrame, vendorFrame],
+    new Map([
+      [BUNDLE_ID, fixtureMap()],
+      [VENDOR_ID, secondChunkMap()],
+    ]),
+    [
+      { codeFile: 'app:///_next/static/chunks/bundle.js', debugId: BUNDLE_ID },
+      { codeFile: 'app:///_next/static/chunks/vendor.js', debugId: VENDOR_ID },
+    ],
+  );
+
+  assert.equal(a.filename, 'stores/inbox/useInboxConversations.ts', 'app frame resolved via its own map');
+  assert.equal(v.filename, 'lib/format.ts', 'vendor frame resolved via its own map, not left raw');
   assert.equal(v.function, 'formatDate');
 });
 
-test('multi-chunk stack: a frame no map covers stays raw, others still resolve (FR-MAP-8)', async () => {
-  const unmatched: NormalizedFrame = { filename: 'other.js', lineno: 999, colno: 1, inApp: false };
-  const appFrame: NormalizedFrame = { filename: 'bundle.js', lineno: 1, colno: 100, inApp: false };
-  const [u, a] = await symbolicateWithMaps([unmatched, appFrame], [fixtureMap(), secondChunkMap()]);
+test('multi-chunk stack: a frame with no image entry stays raw, others still resolve (FR-MAP-8)', async () => {
+  const unmatched: NormalizedFrame = { filename: 'other.js', absPath: 'app:///_next/static/chunks/other.js', lineno: 999, colno: 1, inApp: false };
+  const appFrame: NormalizedFrame = { filename: 'bundle.js', absPath: 'app:///_next/static/chunks/bundle.js', lineno: 1, colno: 100, inApp: false };
+  const [u, a] = await symbolicateWithImages(
+    [unmatched, appFrame],
+    new Map([[BUNDLE_ID, fixtureMap()]]),
+    [{ codeFile: 'app:///_next/static/chunks/bundle.js', debugId: BUNDLE_ID }],
+  );
 
-  assert.equal(u.filename, 'other.js', 'no map matched — kept raw, not crashed or wrongly resolved');
+  assert.equal(u.filename, 'other.js', 'no image matched — kept raw, not crashed or wrongly resolved');
   assert.equal(a.filename, 'stores/inbox/useInboxConversations.ts', 'sibling frame in the same event still resolves');
+});
+
+test('REGRESSION: a wrong chunk\'s map covering the same coordinates must NOT win (mis-resolution bug)', async () => {
+  // A framework chunk's map that ALSO has a mapping at line 1 column 100 —
+  // exactly the coordinates of the app frame. Under the old try-every-map
+  // strategy this map could "successfully" resolve the app frame into
+  // node_modules/next internals; with image pairing it must never be applied
+  // to a frame from a different chunk.
+  const g = new SourceMapGenerator({ file: 'framework.js' });
+  g.addMapping({
+    generated: { line: 1, column: 100 },
+    original: { line: 49, column: 12 },
+    source: 'turbopack:///[project]/node_modules/next/src/client/app-bootstrap.ts',
+  });
+  g.setSourceContent(
+    'turbopack:///[project]/node_modules/next/src/client/app-bootstrap.ts',
+    Array.from({ length: 50 }, (_, i) => `// next internals line ${i + 1}`).join('\n'),
+  );
+  const FRAMEWORK_ID = '33333333-3333-3333-3333-333333333333';
+
+  const appFrame: NormalizedFrame = { filename: 'bundle.js', absPath: 'app:///_next/static/chunks/bundle.js', lineno: 1, colno: 100, inApp: false };
+  // Framework map listed FIRST — the old implementation would have used it.
+  const [a] = await symbolicateWithImages(
+    [appFrame],
+    new Map([
+      [FRAMEWORK_ID, g.toString()],
+      [BUNDLE_ID, fixtureMap()],
+    ]),
+    [
+      { codeFile: 'app:///_next/static/chunks/framework.js', debugId: FRAMEWORK_ID },
+      { codeFile: 'app:///_next/static/chunks/bundle.js', debugId: BUNDLE_ID },
+    ],
+  );
+
+  assert.equal(a.filename, 'stores/inbox/useInboxConversations.ts', 'app frame resolved via its OWN map');
+  assert.equal(a.inApp, true, 'and classifies in-app — not mis-resolved into Next.js internals');
+});
+
+test('debugIdForFrame: exact code_file match, and pathname-tail fallback across scheme/host differences', () => {
+  const images = [{ codeFile: 'app:///_next/static/chunks/bundle.js', debugId: BUNDLE_ID }];
+  assert.equal(
+    debugIdForFrame({ absPath: 'app:///_next/static/chunks/bundle.js', inApp: false }, images),
+    BUNDLE_ID,
+  );
+  assert.equal(
+    debugIdForFrame({ absPath: 'https://crm.example.com/_next/static/chunks/bundle.js', inApp: false }, images),
+    BUNDLE_ID,
+    'https frame path matches app:/// image path by /_next/... tail',
+  );
+  assert.equal(
+    debugIdForFrame({ absPath: 'https://crm.example.com/_next/static/chunks/nope.js', inApp: false }, images),
+    undefined,
+  );
+  assert.equal(debugIdForFrame({ inApp: false }, images), undefined, 'pathless frame → no pairing');
 });
 
 test('resolved source strips the webpack://_N_E/ scheme prefix (our uploader never runs rewriteSources)', async () => {

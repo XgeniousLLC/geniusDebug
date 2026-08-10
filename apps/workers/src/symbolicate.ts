@@ -3,7 +3,7 @@ import { and, eq, inArray } from 'drizzle-orm';
 import { gunzipSync } from 'node:zlib';
 import type { NormalizedEvent, NormalizedFrame } from '@geniusdebug/shared';
 import { getObject, r2Configured } from './r2';
-import { symbolicateWithMaps, FRAMEWORK_INTERNAL_RE } from './apply-map';
+import { symbolicateWithImages, FRAMEWORK_INTERNAL_RE } from './apply-map';
 import { computeCulprit, normalizeFramePath } from '@geniusdebug/shared';
 
 /** Uploader gzips maps before PUT (build-time cost); gunzip on read here,
@@ -29,27 +29,38 @@ export async function symbolicate(e: NormalizedEvent, projectId: string): Promis
   let frames: NormalizedFrame[] = e.frames;
 
   if (e.platform === 'javascript') {
-    // Debug-ID lookup → fetch every matching map from R2 → apply each (FR-MAP-3/4).
-    // A single error can span frames from multiple bundled chunks (app chunk +
-    // a vendor chunk, say), each with its own debug_id/map — fetching all of
-    // them (not just the first match) lets every frame resolve, not only
-    // whichever chunk happened to match first. Falls back to raw frames with a
-    // warning when none are found/available (FR-MAP-8).
+    // Debug-ID lookup → fetch every matching map from R2 → apply per frame
+    // (FR-MAP-3/4). A single error spans frames from multiple bundled chunks,
+    // each with its own debug_id/map; the event's debug_meta.images pairs tell
+    // us which chunk (code_file) each map (debug_id) covers, and every frame
+    // resolves ONLY through its own chunk's map — applying an unrelated map
+    // "successfully" mis-resolves frames (minified chunks are one long line).
+    // Falls back to raw frames with a warning when none are found (FR-MAP-8).
+    const images = e.debugImages ?? [];
     if (e.debugIds.length === 0) {
       console.warn(`[symbolicate] no debug_ids in event — source maps cannot be matched. Check that withSentryConfig sourcemaps.disable is NOT true.`);
+    } else if (images.length === 0) {
+      console.warn(`[symbolicate] event has debug_ids but no code_file pairs in debug_meta.images — frames cannot be paired to maps, keeping raw frames.`);
     }
-    const r2Keys = await findMapR2Keys(projectId, e.debugIds);
-    if (r2Keys.length === 0 && e.debugIds.length > 0) {
+    const artifacts = await findMapArtifacts(projectId, e.debugIds);
+    if (artifacts.size === 0 && e.debugIds.length > 0) {
       console.warn(`[symbolicate] debug_ids [${e.debugIds.join(', ')}] not found in source_map_artifacts — were maps uploaded and registered?`);
     }
-    if (r2Keys.length > 0 && (await r2Configured())) {
+    if (artifacts.size > 0 && images.length > 0 && (await r2Configured())) {
       try {
-        const bytesList = await Promise.all(r2Keys.map((k) => getObject(k)));
-        const maps = bytesList.filter((b): b is NonNullable<typeof b> => b != null).map(decodeMapBytes);
-        if (maps.length > 0) frames = await symbolicateWithMaps(frames, maps);
+        const mapsByDebugId = new Map<string, string>();
+        await Promise.all(
+          [...artifacts].map(async ([debugId, r2Key]) => {
+            const bytes = await getObject(r2Key);
+            if (bytes != null) mapsByDebugId.set(debugId, decodeMapBytes(bytes));
+          }),
+        );
+        if (mapsByDebugId.size > 0) {
+          frames = await symbolicateWithImages(frames, mapsByDebugId, images);
+        }
       } catch (err) {
         // eslint-disable-next-line no-console
-        console.warn(`[symbolicate] map apply failed for [${r2Keys.join(', ')}], using raw frames:`, (err as Error).message);
+        console.warn(`[symbolicate] map apply failed for [${[...artifacts.values()].join(', ')}], using raw frames:`, (err as Error).message);
       }
     }
   } // FR-MAP-10
@@ -69,22 +80,20 @@ export async function symbolicate(e: NormalizedEvent, projectId: string): Promis
   return { ...e, frames, culprit };
 }
 
-/** R2 key of every matching artifact for the event's Debug IDs (FR-MAP-2). One row per debug_id — a
- *  stack can span multiple chunks, so every match is fetched, not just the first. */
-async function findMapR2Keys(projectId: string, debugIds: string[]): Promise<string[]> {
-  if (debugIds.length === 0) return [];
+/** R2 key per matching debug_id for the event's Debug IDs (FR-MAP-2). Keyed by
+ *  debug_id so each frame can be paired to its own chunk's map; first row wins
+ *  when a debug_id has >1 registered row across redeploys. */
+async function findMapArtifacts(projectId: string, debugIds: string[]): Promise<Map<string, string>> {
+  if (debugIds.length === 0) return new Map();
   const rows = await db
     .select({ debugId: sourceMapArtifacts.debugId, r2Key: sourceMapArtifacts.r2Key })
     .from(sourceMapArtifacts)
     .where(and(eq(sourceMapArtifacts.projectId, projectId), inArray(sourceMapArtifacts.debugId, debugIds)));
-  const seen = new Set<string>();
-  const keys: string[] = [];
+  const byId = new Map<string, string>();
   for (const r of rows) {
-    if (seen.has(r.debugId)) continue; // dedupe — a debug_id can have >1 registered row across redeploys
-    seen.add(r.debugId);
-    keys.push(r.r2Key);
+    if (!byId.has(r.debugId)) byId.set(r.debugId, r.r2Key);
   }
-  return keys;
+  return byId;
 }
 
 interface GhCtx {

@@ -40,6 +40,15 @@ export function normalizeEvent(p: SentryEventPayload): NormalizedEvent {
       ? new Date(p.timestamp * 1000).toISOString()
       : p.timestamp ?? new Date().toISOString();
 
+  // Keep the code_file ↔ debug_id PAIRS, not just the ids: symbolication must
+  // resolve each frame only through its own chunk's map (see DebugImage docs).
+  const debugImages = (p.debug_meta?.images ?? [])
+    .filter(
+      (img): img is { code_file: string; debug_id: string } =>
+        typeof img.debug_id === 'string' && typeof img.code_file === 'string',
+    )
+    .map((img) => ({ codeFile: img.code_file, debugId: img.debug_id }));
+
   const debugIds = (p.debug_meta?.images ?? [])
     .map((img) => img.debug_id)
     .filter((x): x is string => typeof x === 'string');
@@ -77,5 +86,6 @@ export function normalizeEvent(p: SentryEventPayload): NormalizedEvent {
     replayId:
       (p.contexts?.replay as { replay_id?: string } | undefined)?.replay_id ?? p.tags?.replayId,
     debugIds,
+    debugImages,
   };
 }
