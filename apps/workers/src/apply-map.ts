@@ -1,5 +1,6 @@
 import { SourceMapConsumer } from 'source-map';
 import type { NormalizedFrame } from '@geniusdebug/shared';
+import { normalizeFramePath } from '@geniusdebug/shared';
 
 /**
  * Paths that are framework internals, not the app's own code, even though they
@@ -57,22 +58,19 @@ export async function symbolicateWithMaps(
   }
 }
 
-/**
- * Our own uploader reads .map files straight off disk — Sentry's own
- * `rewriteSources` normalization (which strips this) never runs, since that's
- * part of the SaaS-upload pipeline we don't use (no auth token). So every
- * resolved `sources` entry still carries webpack's raw `webpack://_N_E/...`
- * (or bare `webpack://...`) scheme prefix unless we strip it ourselves.
- */
-function cleanSourcePath(source: string): string {
-  return source.replace(/^webpack:\/\/(?:_N_E\/)?/, '');
-}
-
 export function resolveFrame(f: NormalizedFrame, consumer: SourceMapConsumer): NormalizedFrame {
   if (f.lineno == null) return f;
   const pos = consumer.originalPositionFor({ line: f.lineno, column: f.colno ?? 0 });
   if (!pos.source || pos.line == null) return f; // no mapping → keep raw frame (FR-MAP-8)
-  const source = cleanSourcePath(pos.source);
+  // Our own uploader reads .map files straight off disk — Sentry's own
+  // `rewriteSources` normalization (which strips this) never runs, since
+  // that's part of the SaaS-upload pipeline we don't use (no auth token). So
+  // every resolved `sources` entry still carries the bundler's raw scheme
+  // prefix (webpack://_N_E/..., turbopack:///[project]/...) unless we strip
+  // it ourselves — and FRAMEWORK_INTERNAL_RE's anchored `^src/...`
+  // alternative needs that stripped, normalized path to match consistently
+  // across bundlers.
+  const source = normalizeFramePath(pos.source) ?? pos.source;
 
   const resolved: NormalizedFrame = {
     ...f,

@@ -1,4 +1,5 @@
 import type { IssueDto, EventDto, NormalizedFrame } from '@geniusdebug/shared';
+import { normalizeFramePath, pickSuspectFrame } from '@geniusdebug/shared';
 
 /**
  * Serialize an issue + its latest event into a structured Markdown document
@@ -35,7 +36,7 @@ export function buildAgentMarkdown(issue: IssueDto, event: EventDto | null): str
     // In-app frames first, most-relevant last-to-first (crash frame last in array → show innermost first).
     const ordered = [...frames].reverse();
     for (const f of ordered) {
-      const loc = `${f.filename ?? f.module ?? '<unknown>'}${f.lineno ? `:${f.lineno}` : ''}`;
+      const loc = `${normalizeFramePath(f.filename ?? f.module) ?? '<unknown>'}${f.lineno ? `:${f.lineno}` : ''}`;
       L.push(`### ${loc} — \`${f.function ?? '<anonymous>'}\`${f.inApp ? ' _(in-app)_' : ''}`);
       if (f.githubUrl) L.push(`GitHub: ${f.githubUrl}`);
       if (f.contextLine || f.preContext?.length || f.postContext?.length) {
@@ -75,8 +76,8 @@ export function buildAgentMarkdown(issue: IssueDto, event: EventDto | null): str
     L.push('## Tags', ...tagKeys.map((k) => `- ${k}: ${tags[k]}`), '');
   }
 
-  const crashFrame = frames.find((f) => f.inApp) ?? frames[frames.length - 1];
-  const crashLoc = crashFrame ? `${crashFrame.filename ?? '<unknown>'}${crashFrame.lineno ? `:${crashFrame.lineno}` : ''}` : 'the top in-app frame';
+  const crashFrame = pickSuspectFrame(frames);
+  const crashLoc = crashFrame ? `${normalizeFramePath(crashFrame.filename) ?? '<unknown>'}${crashFrame.lineno ? `:${crashFrame.lineno}` : ''}` : 'the top in-app frame';
   L.push('## Task for the AI agent');
   L.push(
     `You are an expert debugger. Identify the **root cause** of the error above and propose a **minimal fix** as a unified diff.`,

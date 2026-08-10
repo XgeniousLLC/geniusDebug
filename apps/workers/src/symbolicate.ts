@@ -4,7 +4,7 @@ import { gunzipSync } from 'node:zlib';
 import type { NormalizedEvent, NormalizedFrame } from '@geniusdebug/shared';
 import { getObject, r2Configured } from './r2';
 import { symbolicateWithMaps, FRAMEWORK_INTERNAL_RE } from './apply-map';
-import { computeCulprit } from '@geniusdebug/shared';
+import { computeCulprit, normalizeFramePath } from '@geniusdebug/shared';
 
 /** Uploader gzips maps before PUT (build-time cost); gunzip on read here,
  * detected by magic bytes so pre-existing plain-JSON maps in R2 still work. */
@@ -115,12 +115,10 @@ async function resolveGithub(projectId: string, release?: string): Promise<GhCtx
 }
 
 function buildGithubUrl(gh: GhCtx, f: NormalizedFrame): string | undefined {
-  // Normalize to a repo-relative source path.
-  const path = (f.absPath ?? f.filename ?? '')
-    .replace(/^webpack-internal:\/\/\/(\(.*?\)\/)?/, '') // Next.js dev prefix
-    .replace(/^webpack:\/\/(?:_N_E\/)?/, '') // resolved-map scheme prefix (belt-and-suspenders — resolveFrame strips it too)
-    .replace(/^(https?:\/\/[^/]+\/)?_next\/(app|src)\//, '$2/') // built asset → src path
-    .replace(/^\.\//, '');
+  // Normalize to a repo-relative source path (belt-and-suspenders —
+  // resolveFrame already normalizes symbolicated frames; this also covers
+  // raw/unmapped frames, e.g. no source map found, FR-MAP-8).
+  const path = normalizeFramePath(f.absPath ?? f.filename);
   if (!path) return undefined;
   if (/^https?:\/\//.test(path)) return undefined; // remote asset, not a repo file
   if (FRAMEWORK_INTERNAL_RE.test(path)) return undefined; // dependency / Next.js internal, not the app's own repo
