@@ -566,7 +566,8 @@ export class AdminController {
     // Request seen in Vercel build logs), which both lost maps and stretched
     // taskip builds from ~5 to ~11 minutes on retries.
     let loggedSamples = 0;
-    const prepared = body.files.map((f) => {
+    const prepared: Array<{ buf: Buffer; isGzip: boolean; r2Key: string; debugId: string }> = [];
+    for (const [i, f] of body.files.entries()) {
       const buf = Buffer.from(f.content, 'base64');
 
       // Read the debug_id the build injected into the source map (sentry-cli
@@ -575,24 +576,47 @@ export class AdminController {
       // symbolicate() can look it up. Fall back to a content hash when the
       // field is missing (non-Sentry builds, manual uploads, etc.). Content
       // may arrive gzip-compressed (client-side, to cut upload size/time) —
-      // decode for JSON parsing but store the original bytes as-is.
+      // decode for extraction but store the original bytes as-is.
+      //
+      // Extraction is a regex scan, NOT JSON.parse: SSR maps run to tens of
+      // MB and parsing 50 of them per batch blocked the event loop for
+      // seconds — long enough that the NEXT batch's request couldn't be
+      // accepted and hit the uploader's 60s timeout (seen live: 3 lost/
+      // retried batches, ~9min builds). The debug id field sentry-cli writes
+      // sits at the top level as `"debug_id":"<uuid>"`; scanning the head
+      // and tail slices covers both prepend/append placements. Full parse
+      // only as a last resort for oddly-shaped maps.
       const { text, isGzip } = decodeMaybeGzip(buf);
-      let debugId: string;
+      let debugId: string | undefined;
       let source: string;
-      try {
-        const map = JSON.parse(text);
-        if (map.debugId) { debugId = map.debugId; source = 'debugId'; }
-        else if (map['debug_id']) { debugId = map['debug_id']; source = 'debug_id'; }
-        else { debugId = createHash('sha256').update(buf).digest('hex').slice(0, 32); source = 'sha256-fallback'; }
-      } catch {
-        debugId = createHash('sha256').update(buf).digest('hex').slice(0, 32);
-        source = 'parse-error-fallback';
+      const ID_RE = /"debug_?[iI]d"\s*:\s*"([0-9a-fA-F-]{32,36})"/;
+      const head = text.slice(0, 4096);
+      const tail = text.length > 8192 ? text.slice(-4096) : '';
+      const m = ID_RE.exec(head) ?? (tail ? ID_RE.exec(tail) : null);
+      if (m) {
+        debugId = m[1];
+        source = 'regex';
+      } else {
+        try {
+          const map = JSON.parse(text);
+          if (map.debugId) { debugId = map.debugId; source = 'debugId'; }
+          else if (map['debug_id']) { debugId = map['debug_id']; source = 'debug_id'; }
+          else { debugId = createHash('sha256').update(buf).digest('hex').slice(0, 32); source = 'sha256-fallback'; }
+        } catch {
+          debugId = createHash('sha256').update(buf).digest('hex').slice(0, 32);
+          source = 'parse-error-fallback';
+        }
       }
       if (loggedSamples < 3) { loggedSamples++; console.log(`[upload] ${f.name} → debugId=${debugId} (source=${source})`); }
 
       const r2Key = `sourcemaps/${projectId}/${debugId}.map`;
-      return { buf, isGzip, r2Key, debugId };
-    });
+      prepared.push({ buf, isGzip, r2Key, debugId: debugId! });
+
+      // Yield the event loop every few files so concurrent requests (the
+      // uploader's next batch, health checks) keep being accepted while a
+      // heavy batch is prepared.
+      if (i % 8 === 7) await new Promise((r) => setImmediate(r));
+    }
 
     // Register the artifact index synchronously — symbolication finds maps
     // through these rows, and a failed insert must fail the request.
