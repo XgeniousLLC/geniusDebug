@@ -7,6 +7,7 @@ import { Card, Skeleton, ErrorState } from '../components/ui';
 import { PlayIcon, PauseIcon, FullscreenIcon, ActivityIcon, TerminalIcon, GlobeIcon, AlertTriangleIcon } from '../components/icons';
 import { timeAgo } from '../lib/format';
 import { toast } from '../store/toast';
+import { useUi } from '../store/ui';
 
 // Warm the rrweb chunk as soon as this module evaluates (app load), not on
 // first mount — avoids the brief white flash while `import('rrweb')` resolves
@@ -17,6 +18,7 @@ interface Replay {
   id: string;
   issueId: string | null;
   traceId: string | null;
+  projectId?: string | null;
   user: Record<string, unknown> | null;
   contexts: { browser?: { name?: string; version?: string }; os?: { name?: string; version?: string }; device?: { family?: string; model?: string; brand?: string } } | null;
   url: string | null;
@@ -39,6 +41,8 @@ export function ReplayPlayer() {
   const { replayId = '' } = useParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const currentProjectId = useUi((s) => s.currentProjectId);
+  const setCurrentProject = useUi((s) => s.setCurrentProject);
   const seekRef = React.useRef<((ms: number) => void) | undefined>(undefined);
   const [currentMs, setCurrentMs] = React.useState(0);
 
@@ -71,6 +75,12 @@ export function ReplayPlayer() {
   // calling it after them broke rules-of-hooks (hook count changed once q.data
   // resolved) and crashed the whole page blank.
   const firstNav = React.useMemo(() => extractActivity(events).find((a) => a.kind === 'navigation'), [events]);
+
+  // Deep-link from email / issue may have wrong project in the sidebar — sync to replay's project.
+  React.useEffect(() => {
+    const pid = (q.data as Replay | null)?.projectId;
+    if (pid && pid !== currentProjectId) setCurrentProject(pid);
+  }, [q.data, currentProjectId, setCurrentProject]);
 
   if (q.isLoading) return <ReplayPlayerSkeleton />;
   if (q.isError || !q.data) return <div className="p-6"><ErrorState message="Replay not found." /></div>;

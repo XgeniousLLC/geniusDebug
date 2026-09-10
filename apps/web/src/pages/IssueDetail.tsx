@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import type { IssueDto, EventDto, NormalizedFrame } from "@geniusdebug/shared";
 import { normalizeFramePath, pickSuspectFrame } from "@geniusdebug/shared";
@@ -88,7 +88,10 @@ type Tab = "stack" | "breadcrumbs" | "tags" | "context" | "events" | "replay";
 export function IssueDetail() {
   const { shortId = "" } = useParams();
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const isAdmin = useUi((s) => s.user?.role === "admin");
+  const currentProjectId = useUi((s) => s.currentProjectId);
+  const setCurrentProject = useUi((s) => s.setCurrentProject);
   const [tab, setTab] = React.useState<Tab>("stack");
   const [eventIdx, setEventIdx] = React.useState(0);
   const [traceSheet, setTraceSheet] = React.useState(false);
@@ -117,6 +120,15 @@ export function IssueDetail() {
     queryKey: ["issue", shortId],
     queryFn: () => api<DetailResponse>(`/issues/${shortId}`),
   });
+
+  // When deep-linked from email (e.g. /issues/TASKIP-XXXX) the persisted
+  // currentProjectId may point at the wrong project. The issue payload
+  // carries its authoritative projectId — sync the sidebar switcher to it
+  // so the project dropdown reflects the issue being viewed (#email link).
+  React.useEffect(() => {
+    const pid = q.data?.issue?.projectId;
+    if (pid && pid !== currentProjectId) setCurrentProject(pid);
+  }, [q.data?.issue?.projectId, currentProjectId, setCurrentProject]);
 
   const act = useMutation({
     mutationFn: (action: string) =>
@@ -190,6 +202,8 @@ export function IssueDetail() {
     null,
   );
   const [shareOpen, setShareOpen] = React.useState(false);
+  const [replayMenuOpen, setReplayMenuOpen] = React.useState(false);
+  const replayMenuRef = React.useRef<HTMLDivElement | null>(null);
 
   // Correlate the selected occurrence to its exact replay session by shared
   // traceId (GD-169) — falls back to the newest session (existing behavior)
@@ -205,6 +219,18 @@ export function IssueDetail() {
     setSelectedReplay(match ? match.id : null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentEvent?.traceId, issueReplays.data]);
+
+  // Close the replay picker when clicking outside.
+  React.useEffect(() => {
+    if (!replayMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (replayMenuRef.current && !replayMenuRef.current.contains(e.target as Node)) setReplayMenuOpen(false);
+    };
+    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') setReplayMenuOpen(false); };
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onEsc);
+    return () => { window.removeEventListener('mousedown', onDown); window.removeEventListener('keydown', onEsc); };
+  }, [replayMenuOpen]);
 
   // AI fix suggestion (DeepSeek, FR-AIF) — diagnosis is inert; PR is human-gated.
   const suggestion = useQuery({
@@ -862,24 +888,64 @@ export function IssueDetail() {
                       (rep) => rep.traceId === currentEvent.traceId,
                     )
                   : undefined;
+                const replays = issueReplays.data!;
+                const handleOpenReplay = () => {
+                  if (replays.length === 1) {
+                    navigate(`/replays/${replays[0].id}`);
+                    return;
+                  }
+                  setReplayMenuOpen((v) => !v);
+                };
                 return (
                   <div className="flex flex-col gap-2">
                     <div className="text-small text-text-muted">
-                      {issueReplays.data!.length} replay
-                      {issueReplays.data!.length > 1 ? "s" : ""} captured for
+                      {replays.length} replay
+                      {replays.length > 1 ? "s" : ""} captured for
                       this issue.
                       {linked
-                        ? " One is linked to the selected occurrence (GD-169)."
+                        ? " One is linked to the selected occurrence."
                         : " None captured for this exact occurrence — showing the newest session."}
                     </div>
-                    <button
-                      onClick={() => {
-                        setTab("replay");
-                      }}
-                      className="inline-flex w-fit items-center gap-1.5 rounded-md bg-accent px-2.5 py-1 text-caption text-white hover:opacity-90"
-                    >
-                      <PlayIcon size={11} /> Open Replay
-                    </button>
+                    <div className="relative w-fit" ref={replayMenuRef}>
+                      <button
+                        onClick={handleOpenReplay}
+                        className="inline-flex items-center gap-1.5 rounded-md bg-accent px-2.5 py-1 text-caption text-white hover:opacity-90"
+                      >
+                        <PlayIcon size={11} /> Open Replay
+                        {replays.length > 1 && <span className="ml-1 text-[10px] leading-none">▾</span>}
+                      </button>
+                      {replayMenuOpen && replays.length > 1 && (
+                        <div className="absolute left-0 top-full z-20 mt-1.5 min-w-[280px] overflow-hidden rounded-md border border-border bg-surface shadow-lg">
+                          <div className="border-b border-border px-3 py-1.5 text-caption font-medium text-text-faint">Select a replay session</div>
+                          <div className="max-h-64 overflow-y-auto py-1">
+                            {replays.map((r) => {
+                              const isLinked = linked?.id === r.id;
+                              return (
+                                <button
+                                  key={r.id}
+                                  onClick={() => { setReplayMenuOpen(false); navigate(`/replays/${r.id}`); }}
+                                  className={`flex w-full items-center gap-2 px-3 py-2 text-left text-small hover:bg-surface-2 ${isLinked ? 'bg-accent/10' : ''}`}
+                                >
+                                  <PlayIcon size={11} className="shrink-0 text-accent" />
+                                  <span className="font-mono text-caption text-text">{(r.replayId ?? r.id).slice(0, 12)}…</span>
+                                  <span className="text-caption text-text-faint">{r.segments} seg · {((r.durationMs ?? 0)/1000).toFixed(1)}s</span>
+                                  <span className="ml-auto text-caption text-text-faint">{timeAgo(r.createdAt)} ago</span>
+                                  {isLinked && <span className="rounded-full bg-accent/15 px-1.5 py-0.5 text-[10px] font-medium text-accent">linked</span>}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <div className="border-t border-border p-1">
+                            <button
+                              onClick={() => { setReplayMenuOpen(false); setTab("replay"); }}
+                              className="w-full rounded px-2 py-1.5 text-left text-caption text-text-muted hover:bg-surface-2 hover:text-text"
+                            >
+                              View inline in this issue →
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 );
               })()
