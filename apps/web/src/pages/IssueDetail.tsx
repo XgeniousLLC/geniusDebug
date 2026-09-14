@@ -37,6 +37,7 @@ import {
 import { ReplayViewer } from "./ReplayPlayer";
 import { TraceSheet } from "./Traces";
 import { buildAgentMarkdown } from "../lib/agentMarkdown";
+import type { SuspectCommit } from "../lib/agentMarkdown";
 
 interface DetailResponse {
   issue: IssueDto;
@@ -202,6 +203,7 @@ export function IssueDetail() {
     null,
   );
   const [shareOpen, setShareOpen] = React.useState(false);
+  const [aiOpen, setAiOpen] = React.useState(false);
   const [replayMenuOpen, setReplayMenuOpen] = React.useState(false);
   const replayMenuRef = React.useRef<HTMLDivElement | null>(null);
 
@@ -359,20 +361,8 @@ export function IssueDetail() {
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
           <Button
             size="sm"
-            title="Copy the full error as Markdown for an AI coding agent"
-            onClick={() => {
-              const md = buildAgentMarkdown(issue, event);
-              navigator.clipboard
-                .writeText(md)
-                .then(() => toast.success("Copied AI-agent Markdown"));
-              // also offer a .md download
-              const blob = new Blob([md], { type: "text/markdown" });
-              const a = document.createElement("a");
-              a.href = URL.createObjectURL(blob);
-              a.download = `${issue.shortId}.md`;
-              a.click();
-              URL.revokeObjectURL(a.href);
-            }}
+            title="Preview the full error as Markdown for an AI coding agent"
+            onClick={() => setAiOpen(true)}
           >
             Copy for AI
           </Button>
@@ -436,6 +426,21 @@ export function IssueDetail() {
           eventId={event?.id ?? null}
           initialToken={q.data.shareToken ?? null}
           onClose={() => setShareOpen(false)}
+        />
+      )}
+      {aiOpen && (
+        <AiExportModal
+          shortId={issue.shortId}
+          issue={issue}
+          event={event ?? null}
+          occurrenceLabel={
+            events.length > 1
+              ? `Event ${events.length - eventIdx} of ${events.length}`
+              : undefined
+          }
+          replayId={selectedReplay}
+          suspectCommits={suspect.data?.commits}
+          onClose={() => setAiOpen(false)}
         />
       )}
 
@@ -1283,6 +1288,133 @@ function Row({ k, v }: { k: string; v: string }) {
     <div className="flex items-center justify-between py-1 text-small">
       <span className="text-text-muted">{k}</span>
       <span className="font-mono text-text">{v}</span>
+    </div>
+  );
+}
+
+/** AI-agent export preview (GD-142) — preview the Markdown, then Copy and/or Download. */
+function AiExportModal({
+  shortId,
+  issue,
+  event,
+  occurrenceLabel,
+  replayId,
+  suspectCommits,
+  onClose,
+}: {
+  shortId: string;
+  issue: IssueDto;
+  event: EventDto | null;
+  occurrenceLabel?: string;
+  replayId: string | null;
+  suspectCommits?: SuspectCommit[];
+  onClose: () => void;
+}) {
+  const [collapse, setCollapse] = React.useState(true);
+  const [includeBody, setIncludeBody] = React.useState(true);
+  const [copied, setCopied] = React.useState(false);
+  const origin = window.location.origin;
+  const md = React.useMemo(
+    () =>
+      buildAgentMarkdown(issue, event, {
+        collapseVendorFrames: collapse,
+        includeRequestBody: includeBody,
+        occurrenceLabel,
+        links: {
+          issueUrl: `${origin}/issues/${shortId}`,
+          traceUrl: event?.traceId
+            ? `${origin}/traces/${event.traceId}`
+            : undefined,
+          replayUrl: replayId ? `${origin}/replays/${replayId}` : null,
+          suspectCommits,
+        },
+      }),
+    [
+      issue,
+      event,
+      collapse,
+      includeBody,
+      occurrenceLabel,
+      origin,
+      shortId,
+      replayId,
+      suspectCommits,
+    ],
+  );
+  const copy = () => {
+    navigator.clipboard.writeText(md).then(() => {
+      setCopied(true);
+      toast.success("Copied AI-agent Markdown");
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
+  const download = () => {
+    const blob = new Blob([md], { type: "text/markdown" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${shortId}.md`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 pt-16"
+      onClick={onClose}
+    >
+      <Card className="flex max-h-[85vh] w-full max-w-3xl flex-col p-0">
+        <div
+          className="flex items-center justify-between border-b border-border px-5 py-3"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <h2 className="text-h2 font-semibold">Copy for AI agent</h2>
+          <button
+            onClick={onClose}
+            className="text-text-faint hover:text-text"
+            aria-label="Close"
+          >
+            ✕
+          </button>
+        </div>
+        <div
+          className="flex flex-col gap-3 overflow-y-auto px-5 py-4"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <label className="flex items-center gap-2 text-small text-text-muted">
+            <input
+              type="checkbox"
+              checked={collapse}
+              onChange={(e) => setCollapse(e.target.checked)}
+            />
+            Collapse framework/vendor frames (full context for app frames)
+          </label>
+          <label className="flex items-center gap-2 text-small text-text-muted">
+            <input
+              type="checkbox"
+              checked={includeBody}
+              onChange={(e) => setIncludeBody(e.target.checked)}
+            />
+            Include request body (scrubbed of secrets)
+          </label>
+          <pre className="max-h-[50vh] overflow-auto whitespace-pre-wrap rounded-md border border-border bg-bg p-3 font-mono text-caption leading-5 text-text">
+            {md}
+          </pre>
+          <div className="text-caption text-text-faint">
+            {(md.length / 1024).toFixed(1)} KB · secrets scrubbed (cookies,
+            auth headers, password/token values)
+          </div>
+        </div>
+        <div
+          className="flex items-center justify-end gap-2 border-t border-border px-5 py-3"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <Button size="sm" onClick={download}>
+            Download .md
+          </Button>
+          <Button size="sm" variant="primary" onClick={copy}>
+            {copied ? "Copied ✓" : "Copy"}
+          </Button>
+        </div>
+      </Card>
     </div>
   );
 }
